@@ -43,7 +43,42 @@ Chosen by Harsh over R2. Design rules, so the 3 GB database limit does not becom
 - Table `design_photos` (`id UUID`, `design_id`, `kind` full/thumb, `mime`, `bytes MEDIUMBLOB`, `byte_size`, `sha256`, timestamps). `designs` keeps only the photo ids (P4: no image text in a design row). **No list query ever selects `bytes`**; the screens get ids and fetch `GET /photos/<id>` with `Cache-Control: public, max-age=31536000, immutable` and an ETag (ids never change content).
 - Upload through the API only: owner and staff, one image per request, 2 MB cap, type decided from the first bytes (JPEG, PNG, WebP), browser resizes to at most 1200 px as in P2.
 - The nightly dump now contains the photos, so the separate photo-mirror job (B2, P5, `backup_runs.kind = photo_copy`, I12's second heartbeat) is **dropped**. The dump must stream blobs (hex or base64), about 1.33 times the data size.
-- **Budget:** photo size is an assumption, not measured: about 250 KB a full photo and 20 KB a thumbnail. 2,000 designs with 3 photos each is about 1.6 GB of the 3 GB. The owner dashboard shows the database size (`information_schema`) and goes red at **2 GB**; a limit of 5 photos per design is proposed. Siddhi's real design count is unknown and decides whether this holds; the table keeps a `storage_key` column and the code sits behind one `PhotoStore` interface so R2 can replace it later without touching the screens.
+### The 3 GB budget, measured (15 Oct 2026, `tests/i-size-budget.test.ts`)
+
+**Photos.** Siddhi's four product photos (`Client/design/`, WhatsApp shots of 960 x 1280, 91 to 178 KB each) were resized as the screen does (P2: longest side 1200 px, JPEG quality 82; thumbnail 320 px) with macOS `sips`, then stored 480 times in a `MEDIUMBLOB` table on MariaDB 11.8 (InnoDB):
+
+| | Average payload | Stored in InnoDB |
+|---|---|---|
+| full photo, 1200 px q82 | 206 KB (156 to 275 KB) | about 230 KB with InnoDB overhead |
+| thumbnail 320 px | 19 KB (17 to 22 KB) | about 21 KB |
+| **one photo (full + thumbnail)** | 225 KB | **about 250 KB** (overhead measured 9 to 13 percent in two runs) |
+| lean setting, 1000 px q72 | full 141 KB | pair about 180 KB (30 percent less) |
+
+**Business data** at the volumes of spec C2 (1,500 designs, 5,000 pieces, 2,000 customers, 3,000 bills with 7,500 lines, 4,500 receipts and allocations, every piece edited twice, 5 percent of bills cancelled), with the audit triggers on: **73 MB**, of which the audit log is **52 MB** (35,000 rows of about 1.5 KB). Every other table together is about 20 MB. If a year looks like that, year 5 is about 375 MB. These rows are generated (random values with the real column types and lengths), so treat the figure as a good estimate, not a measurement of Siddhi's data.
+
+**Total database size = photos + business data.** Limit 3,000 MB, owner dashboard red line 2,000 MB. Numbers in MB, business data counted at 75 (year 1) / 375 (year 5):
+
+| Designs | 1 photo each | 3 photos each | 5 photos each |
+|---|---|---|---|
+| 1,000 | 325 / 625 | 825 / 1,125 | 1,325 / 1,625 |
+| 1,500 | 450 / 750 | 1,200 / 1,500 | 1,950 / 2,250 |
+| 2,000 | 575 / 875 | 1,575 / 1,875 | 2,575 / 2,875 |
+| 3,000 | 825 / 1,125 | 2,325 / 2,625 | 3,825 / 4,125 |
+| 5,000 | 1,325 / 1,625 | 3,825 / 4,125 | 6,325 / 6,625 |
+
+How many designs fit (business data counted at year 3, 225 MB):
+
+| Photo size | 1 photo each | 3 photos each | 5 photos each |
+|---|---|---|---|
+| standard 250 KB (measured) | 7,100 to red line, 11,100 to limit | **2,370 / 3,700** | 1,420 / 2,220 |
+| lean 180 KB (1000 px q72) | 9,900 / 15,500 | 3,300 / 5,170 | 1,980 / 3,100 |
+| heavy 420 KB (assumed, detail-rich camera shots) | 4,200 / 6,600 | 1,410 / 2,200 | 850 / 1,320 |
+
+**Reading it:** with the standard setting and at most 3 photos a design, the database stays under the red line up to about **2,400 designs**. The spec's own ceiling is 5,000 pieces, and a design groups several pieces, so the number of designs is probably well below 5,000, but nobody knows it yet. 5,000 designs with 3 photos (3.8 GB) would not fit, and neither would 5 photos on more than about 2,200 designs.
+
+**Weak points of these numbers:** only four photos were measured (all already WhatsApp-compressed; fresh phone shots of detailed jewellery may be larger, hence the "heavy" row); the 3 GB limit comes from Hostinger's support table, not from this account, and it is not known whether Hostinger counts index space or only data; the design count and photos per design are Siddhi's to answer.
+
+**Decisions this suggests (not taken):** (1) ask Siddhi for the number of designs and photos per design; (2) cap photos at 3 per design in M1; (3) keep 1200 px q82 until the answer is in, and switch the two constants to 1000 px q72 if the count is above about 2,000 designs; (4) if the count is above about 3,500 designs, move photos to R2 behind `PhotoStore` (the design already allows it); (5) the audit log is the main business-data growth, so keep an eye on it (a yearly archive is possible later).
 
 ## 4. Still unknown (needs the new JewelVault database, or Harsh's SSH)
 
