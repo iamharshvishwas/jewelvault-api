@@ -181,6 +181,20 @@ describe('exportDatabase (B2)', () => {
     await s.c.end();
   });
 
+  it('keeps its own connection alive for the whole read: wait_timeout is 300 during the export (Hostinger cuts an idle connection after 20 s, and the nightly dump is ONE snapshot start to finish) and the caller\'s value is put back', async () => {
+    const s = await sourceShop('s13_e2');
+    const wt = async () => Number((((await s.c.query<any[]>('SELECT @@session.wait_timeout AS w'))[0]) as any[])[0].w);
+    await s.c.query('SET SESSION wait_timeout = 20'); // as Hostinger's server default
+    const seen: number[] = [];
+    await exportDatabase(s.c, memoryStore().sink, { between: async () => void seen.push(await wt()) });
+    expect(seen.length).toBeGreaterThan(5);
+    for (const v of seen) expect(v).toBe(300);
+    expect(await wt()).toBe(20);
+    await expect(exportDatabase(s.c, { file: () => { throw new Error('disk full'); } } as any)).rejects.toThrow('disk full');
+    expect(await wt()).toBe(20); // also after a failure
+    await s.c.end();
+  });
+
   it('leaves the isolation level of the caller alone and ends its transaction', async () => {
     const s = await sourceShop('s13_f');
     await exportDatabase(s.c, memoryStore().sink);

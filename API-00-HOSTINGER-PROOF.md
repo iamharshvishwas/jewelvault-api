@@ -150,6 +150,6 @@
 | S12 | app se database tak kitne millisecond (server India mein) | (sirf jaankari) |
 | S13 | 25 second idle chhodne par connection ka kya hua (Hostinger 20 second par kaat-ta hai); pool theek ho jaata hai | pool bina error ke |
 | S14 | database ka size (data + index) | (sirf jaankari) |
-| S15 | app se bahar internet (backup R2 ke liye). R2 wali line par `ERR_SSL` aana normal hai (naam nakli hai); baaki do `ok` hone chahiye | kam se kam ek ok |
+| S15 | app se bahar internet (sirf jaankari: backup ab R2 par nahi, plan ke folder mein jaata hai). R2 wali line par `ERR_SSL` aana normal hai (naam nakli hai) | kam se kam ek ok |
 
 `"verdicts"` mein sabse zaroori jawab ek jagah likhe aate hain.

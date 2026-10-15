@@ -99,6 +99,10 @@ export async function* tablePages(conn, meta, pageSize) {
 
 export async function exportDatabase(conn, sink, opts = {}) {
   const pageSize = opts.pageSize ?? 1000;
+  // The nightly dump is ONE snapshot start to finish, on one connection. Hostinger's server closes an idle connection after 20 seconds (wait_timeout), and a slow disk or a
+  // big table can leave this one idle that long between two pages, so the session asks for 300 seconds for the time of the export and the caller's value is put back.
+  const waitBefore = Number((await one(conn, 'SELECT @@session.wait_timeout AS w')).w);
+  await conn.query('SET SESSION wait_timeout = 300');
   await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
   await conn.query('START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT');
   try {
@@ -145,6 +149,8 @@ export async function exportDatabase(conn, sink, opts = {}) {
   } catch (e) {
     await conn.query('ROLLBACK').catch(() => undefined);
     throw e;
+  } finally {
+    await conn.query(`SET SESSION wait_timeout = ${waitBefore}`).catch(() => undefined);
   }
 }
 
