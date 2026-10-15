@@ -43,6 +43,7 @@ Chosen by Harsh over R2. Design rules, so the 3 GB database limit does not becom
 - Table `design_photos` (`id UUID`, `design_id`, `kind` full/thumb, `mime`, `bytes MEDIUMBLOB`, `byte_size`, `sha256`, timestamps). `designs` keeps only the photo ids (P4: no image text in a design row). **No list query ever selects `bytes`**; the screens get ids and fetch `GET /photos/<id>` with `Cache-Control: public, max-age=31536000, immutable` and an ETag (ids never change content).
 - Upload through the API only: owner and staff, one image per request, 2 MB cap, type decided from the first bytes (JPEG, PNG, WebP), browser resizes to at most 1200 px as in P2.
 - The nightly dump now contains the photos, so the separate photo-mirror job (B2, P5, `backup_runs.kind = photo_copy`, I12's second heartbeat) is **dropped**. The dump must stream blobs (hex or base64), about 1.33 times the data size.
+
 ### The 3 GB budget, measured (15 Oct 2026, `tests/i-size-budget.test.ts`)
 
 **Photos.** Siddhi's four product photos (`Client/design/`, WhatsApp shots of 960 x 1280, 91 to 178 KB each) were resized as the screen does (P2: longest side 1200 px, JPEG quality 82; thumbnail 320 px) with macOS `sips`, then stored 480 times in a `MEDIUMBLOB` table on MariaDB 11.8 (InnoDB):

@@ -142,7 +142,7 @@ All read on 15 Oct 2026 through the MariaDB docs repository (`mariadb-corporatio
 | `tests/helpers.ts`, `idem.ts`, `sim.ts` | connections, `runTx`, idempotency, the money-function model and invariant checks |
 | `oracle/pricing.ts` | read-only copy of the app's integer pricing |
 | `scripts/db-up.sh`, `db-down.sh` | start and remove the throw-away MariaDB |
-| `SPIKE-RUN-LOG.txt` | verbose output of the final run: 8 files passed, 79 tests passed (59 from step 1, 15 from step 2, 5 Hostinger-fact tests), 1 opt-in test skipped |
+| `SPIKE-RUN-LOG.txt` | verbose output of the final run: 9 files passed, 80 tests passed (59 from step 1, 15 from step 2, 5 Hostinger-fact tests, 1 size-budget test), 2 opt-in tests skipped (the repeat of F2 and the real-photo measurement) |
 
 ## 7. Step 2
 
