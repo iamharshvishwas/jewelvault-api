@@ -1,0 +1,141 @@
+
+ RUN  v3.2.7 /Users/harshvishwas/Desktop/Harsh Vishwas/Client/jewelvault-api
+
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > spec order, 8 workers x 150 operations, no retry: 0 deadlocks, 0 lock timeouts, 0 unexpected errors, all invariants hold
+[e] spec order: ok={"record_payment":223,"create_bill":103,"add_opening_balance":104,"cancel_bill":191,"reissue_bill":31} business={"JV_PIECE_UNAVAILABLE":482,"JV_BILL_CANCELLED":56} deadlocks=0 lockTimeouts=0 retries=0 other=0
+
+ ✓ tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > spec order, 8 workers x 150 operations, no retry: 0 deadlocks, 0 lock timeouts, 0 unexpected errors, all invariants hold 1959ms
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > spec order again with other random seeds (3 more runs of 8 x 150): still 0 deadlocks
+[e] spec order seed 2: ok={"create_bill":99,"add_opening_balance":97,"record_payment":214,"cancel_bill":199,"reissue_bill":37} business={"JV_PIECE_UNAVAILABLE":477,"JV_BILL_CANCELLED":77} deadlocks=0 lockTimeouts=0 retries=0 other=0
+
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > spec order again with other random seeds (3 more runs of 8 x 150): still 0 deadlocks
+[e] spec order seed 3: ok={"record_payment":233,"cancel_bill":209,"create_bill":101,"reissue_bill":42,"add_opening_balance":101} business={"JV_PIECE_UNAVAILABLE":432,"JV_BILL_CANCELLED":82} deadlocks=0 lockTimeouts=0 retries=0 other=0
+
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > spec order again with other random seeds (3 more runs of 8 x 150): still 0 deadlocks
+[e] spec order seed 4: ok={"reissue_bill":45,"create_bill":128,"record_payment":211,"cancel_bill":210,"add_opening_balance":94} business={"JV_PIECE_UNAVAILABLE":420,"JV_BILL_CANCELLED":92} deadlocks=0 lockTimeouts=0 retries=0 other=0
+
+ ✓ tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > spec order again with other random seeds (3 more runs of 8 x 150): still 0 deadlocks 7150ms
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > FINDING: a statement whose WHERE column has no index (UPDATE skus ... WHERE sold_bill_id = ?) scans and locks rows in InnoDB and DEADLOCKS even when the spec order is kept
+[e] spec order + unindexed UPDATE seed 21: ok={"create_bill":90,"record_payment":225,"cancel_bill":178,"reissue_bill":31,"add_opening_balance":95} business={"JV_PIECE_UNAVAILABLE":495,"JV_BILL_CANCELLED":59} deadlocks=27 lockTimeouts=0 retries=0 other=0
+
+ ✓ tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > FINDING: a statement whose WHERE column has no index (UPDATE skus ... WHERE sold_bill_id = ?) scans and locks rows in InnoDB and DEADLOCKS even when the spec order is kept 1773ms
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > NEGATIVE CONTROL: counter taken BEFORE the customer lock (and pieces in caller order) -> the harness sees deadlocks, and the retry wrapper repairs them
+[e] BAD order, no retry: ok={"record_payment":135,"create_bill":93,"cancel_bill":139,"add_opening_balance":60,"reissue_bill":27} business={"JV_PIECE_UNAVAILABLE":212,"JV_BILL_CANCELLED":55} deadlocks=65 lockTimeouts=0 retries=0 other=0
+
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > NEGATIVE CONTROL: counter taken BEFORE the customer lock (and pieces in caller order) -> the harness sees deadlocks, and the retry wrapper repairs them
+[e] BAD order, with retry: ok={"record_payment":160,"cancel_bill":137,"create_bill":68,"add_opening_balance":64,"reissue_bill":25} business={"JV_PIECE_UNAVAILABLE":291,"JV_BILL_CANCELLED":55} deadlocks=61 lockTimeouts=0 retries=61 other=0
+
+ ✓ tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > NEGATIVE CONTROL: counter taken BEFORE the customer lock (and pieces in caller order) -> the harness sees deadlocks, and the retry wrapper repairs them 3232ms
+stdout | tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > InnoDB itself reports the last deadlock (SHOW ENGINE INNODB STATUS needs PROCESS privilege, so the app counts error 1213 instead)
+[e] Innodb_deadlocks (global, whole spike): 724
+
+ ✓ tests/e-lock-order.test.ts > (e) lock order under 8 parallel clients > InnoDB itself reports the last deadlock (SHOW ENGINE INNODB STATUS needs PROCESS privilege, so the app counts error 1213 instead) 3ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > the connections run READ-COMMITTED (Hostinger value) 7ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > the second locker WAITS until the first commits, then sees the committed value 835ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > a plain SELECT is not blocked by a FOR UPDATE (so X0 must lock BEFORE it reads) 14ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > timeout: error 1205 / ER_LOCK_WAIT_TIMEOUT / HY000 after innodb_lock_wait_timeout (session value, no privilege needed) 2027ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > TRAP: a 1205 rolls back only the failing STATEMENT; earlier statements of the transaction survive a COMMIT 1048ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > SELECT ... FOR UPDATE WAIT n sets the timeout per statement; NOWAIT fails at once (both error 1205) 1023ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > a connection that dies (KILL, or the Node process crashing) releases its locks at once 318ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > READ-COMMITTED has no gap lock: FOR UPDATE on a row that does not exist does not block an insert of it 1020ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > why X0 locks the customer first: without the lock two writers spend the same advance twice; with it they cannot 990ms
+stdout | tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > the whole-call bound (spec C4 "statement_timeout") exists as a SESSION variable max_statement_time, error 1969, and also cuts a lock wait short
+[a] max_statement_time -> errno [33m1969[39m [90mundefined[39m | Query execution was interrupted (max_statement_time exceeded)
+
+stdout | tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > the whole-call bound (spec C4 "statement_timeout") exists as a SESSION variable max_statement_time, error 1969, and also cuts a lock wait short
+[a] lock wait under max_statement_time=1 -> [33m1969[39m [90mundefined[39m after [33m1004[39m ms
+
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > the whole-call bound (spec C4 "statement_timeout") exists as a SESSION variable max_statement_time, error 1969, and also cuts a lock wait short 2026ms
+ ✓ tests/a-row-locks.test.ts > (a) SELECT ... FOR UPDATE on a customer row > invariant checks need ONE snapshot: READ-COMMITTED re-reads per statement, REPEATABLE READ + consistent snapshot does not 15ms
+ ✓ tests/f-counter-gapless.test.ts > (f) counter table > a rolled-back transaction gives its number back: no gap 24ms
+ ✓ tests/f-counter-gapless.test.ts > (f) counter table > CONTRAST: AUTO_INCREMENT keeps the number after a rollback (a gap), which is why it is not used for bill numbers 14ms
+ ✓ tests/f-counter-gapless.test.ts > (f) counter table > 8 brand-new clients race to create the same series: numbers 1..8, no duplicate-key error, no gap 40ms
+stdout | tests/f-counter-gapless.test.ts > (f) counter table > 8 workers x 120 bills with 25% injected failures (after taking the number), 5% killed connections: issued numbers are exactly 1..N
+[f] attempted 960, injected failures 244, killed connections 54, committed 662, counter 662
+
+ ✓ tests/f-counter-gapless.test.ts > (f) counter table > 8 workers x 120 bills with 25% injected failures (after taking the number), 5% killed connections: issued numbers are exactly 1..N 1521ms
+ ✓ tests/f-counter-gapless.test.ts > (f) counter table > a lock timeout (1205) on the counter row issues nothing and burns no number; the caller rolls back and later succeeds 1034ms
+stdout | tests/f-counter-gapless.test.ts > (f) counter table > throughput: one hot counter row, 8 workers, 1,000 bills (shop volume is a few hundred a day)
+[f] 1000 numbered inserts through one counter row by 8 workers: 1656 ms (604 per second)
+
+ ✓ tests/f-counter-gapless.test.ts > (f) counter table > numbers already used by an import are skipped inside the same transaction (spec L3: at most 100 tries) 18ms
+ ✓ tests/f-counter-gapless.test.ts > (f) counter table > throughput: one hot counter row, 8 workers, 1,000 bills (shop volume is a few hundred a day) 1672ms
+stdout | tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > 3000 random bills (about 9000 lines, some at the caps): every line and bill figure equals the oracle
+[b] bills compared: 2546, lines compared: 7260, bills the oracle refused over the S4 caps: 454
+
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > the spec worked example: NW 35.42, rate 6920, labour 353, piroi 2.15, Retail, By Weight -> 257,612 8ms
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > 3000 random bills (about 9000 lines, some at the caps): every line and bill figure equals the oracle 3224ms
+stdout | tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > exact .5 ties round UP in DECIMAL (round half up); 20000 deliberate ties all match the oracle
+[b] ties checked: 20000; DECIMAL wrong: 0; DOUBLE columns would be wrong on 9987
+
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > exact .5 ties round UP in DECIMAL (round half up); 20000 deliberate ties all match the oracle 680ms
+stdout | tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > TRAP 1: more decimals than the column are silently rounded, not refused -> the Node layer must validate (S4)
+[b] warning for 1.239 into DECIMAL(12,2): []
+
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > JS numbers are float: money crosses the wire as text (mysql2 gives DECIMAL back as a string) 1ms
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > TRAP 1: more decimals than the column are silently rounded, not refused -> the Node layer must validate (S4) 4ms
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > TRAP 2: over-range values: STRICT mode refuses (1264), a non-strict session silently clamps to the maximum 11ms
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > CHECK constraints can hold the S4 caps (named, error 4025) and negative values are refused 3ms
+ ✓ tests/b-decimal-money.test.ts > (b) DECIMAL money against the BigInt oracle > negative round_off (-0.40) and a bill of exactly 0 after a full discount are exact 1ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > FACT: with mysql2 default flags a duplicate still reports affectedRows 1, so affectedRows cannot tell first from repeat 17ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > two overlapping identical requests: one bill, both callers get the same answer, the second waited for the first 959ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > if the first request fails and rolls back, the waiting identical request becomes the first and succeeds 648ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > the same request id with different arguments, or from another actor, is refused (JV_INVALID_INPUT), never answered with the first result 38ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > 8 identical requests fired at once: exactly one bill and one counter step, 7 replays 253ms
+stdout | tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > different request ids do NOT wait for each other: 8 workers x 30 transactions holding an uncommitted claim for 40 ms finish in about 1/8 of the serial time
+[c] 240 held claims by 8 workers took 1448 ms (fully serial would be about 9600 ms)
+
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > a later retry (after the first finished) replays the stored result and uses no number 20ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > different request ids do NOT wait for each other: 8 workers x 30 transactions holding an uncommitted claim for 40 ms finish in about 1/8 of the serial time 1463ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > a plain INSERT that fails with 1062 also works as the claim, but the transaction keeps running (the statement alone is rolled back) 23ms
+ ✓ tests/c-idempotency.test.ts > (c) idempotency with a UNIQUE request_id > TRAP: under REPEATABLE READ an old snapshot makes the duplicate-key insert fail with 1020 "Record has changed" (a false error); READ-COMMITTED is required 224ms
+stdout | tests/d-types-and-constraints.test.ts > (d1) CHECK constraints > what a CHECK cannot do: read another table, or call a non-deterministic function such as today (spec S4 already says built-ins only)
+[d] CHECK with subquery -> [33m1970[39m CHECK does not support subqueries or stored functions | CHECK with CURDATE() -> [33m1901[39m Function or expression 'curdate()' cannot be used in the CHECK clause of `y`
+
+stdout | tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > UUID type exists in 11.8, validates the text, stores 16 bytes and comes back as lower-case hyphenated text
+[d] invalid uuid -> [33m1292[39m Incorrect uuid value: 'not-a-uuid' for column `jv_d_types`.`u_native`.`id` at row 1
+
+stdout | tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > a UUID column can be a primary key, a foreign key target, and can join to a CHAR(36)? (it cannot be an FK to one)
+[d] FK UUID -> CHAR(36) -> [33m1005[39m Can't create table `jv_d_types`.`mixed_child` (errno: 150 "Foreign key constraint is incor
+
+ ✓ tests/d-types-and-constraints.test.ts > (d1) CHECK constraints > are enforced, named, error 4025, and can tie several columns together (spec D8, D13 shapes) 13ms
+ ✓ tests/d-types-and-constraints.test.ts > (d1) CHECK constraints > a CHECK passes when the expression is NULL (so every CHECK column must also be NOT NULL where it matters) 8ms
+ ✓ tests/d-types-and-constraints.test.ts > (d1) CHECK constraints > what a CHECK cannot do: read another table, or call a non-deterministic function such as today (spec S4 already says built-ins only) 4ms
+ ✓ tests/d-types-and-constraints.test.ts > (d1) CHECK constraints > a constraint can be dropped and re-added in a transaction-free ALTER (mutation tests in the nightly-check suite need this) 8ms
+ ✓ tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > UUID type exists in 11.8, validates the text, stores 16 bytes and comes back as lower-case hyphenated text 7ms
+ ✓ tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > a UUID column can be a primary key, a foreign key target, and can join to a CHAR(36)? (it cannot be an FK to one) 9ms
+stdout | tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > size and speed of 50,000 random (v4) ids: UUID vs CHAR(36) (random inserts, primary key)
+[d] 50k rows -> insert ms: native [33m182[39m char36 [33m181[39m | clustered size bytes: [{"t":"u_bench_char","data_bytes":"5783552"},{"t":"u_bench_native","data_bytes":"3686400"}]
+
+ ✓ tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > size and speed of 50,000 random (v4) ids: UUID vs CHAR(36) (random inserts, primary key) 409ms
+stdout | tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > "unique ignoring case" for text codes (design_no, sku_no, barcode) works with the default utf8mb4_unicode_ci collation
+[d] trailing space duplicate -> [33m1062[39m
+
+stdout | tests/d-types-and-constraints.test.ts > (d3) JSON columns > what mysql2 does with it: returns a parsed object on this server pair; always send JSON.stringify(...) in; money inside JSON must be a string
+[d] JSON column comes back as object
+
+stdout | tests/d-types-and-constraints.test.ts > (d5) things the schema will meet that are easy to miss > RESERVED WORDS: which spec column/table names need back-ticks or a rename
+[d] reserved (unquoted use fails): key, interval, rows, lines, condition, order, release, usage, range, read, write
+
+ ✓ tests/d-types-and-constraints.test.ts > (d2) UUID: native type vs CHAR(36) > "unique ignoring case" for text codes (design_no, sku_no, barcode) works with the default utf8mb4_unicode_ci collation 3ms
+ ✓ tests/d-types-and-constraints.test.ts > (d3) JSON columns > JSON is an alias for LONGTEXT + JSON_VALID: invalid text is refused by a CHECK, and the type is not a real json type 3ms
+ ✓ tests/d-types-and-constraints.test.ts > (d3) JSON columns > what mysql2 does with it: returns a parsed object on this server pair; always send JSON.stringify(...) in; money inside JSON must be a string 4ms
+ ✓ tests/d-types-and-constraints.test.ts > (d3) JSON columns > a JS object passed as a parameter is NOT turned into JSON by mysql2 (query() expands it into col = val pairs): a classic trap 1ms
+ ✓ tests/d-types-and-constraints.test.ts > (d3) JSON columns > JSON functions needed by the spec exist: JSON_VALUE, JSON_EXTRACT, JSON_TYPE, JSON_ARRAYAGG, JSON_TABLE (unpack p_items), and an array CHECK for tags 4ms
+ ✓ tests/d-types-and-constraints.test.ts > (d4) generated columns > PERSISTENT generated column + UNIQUE = a partial unique index: exactly one walk-in customer (spec D10) 6ms
+ ✓ tests/d-types-and-constraints.test.ts > (d4) generated columns > a unique key that only counts ACTIVE rows (one live line per piece), freed when the bill is cancelled (spec I2 as a constraint) 4ms
+ ✓ tests/d-types-and-constraints.test.ts > (d4) generated columns > a generated column can be indexed, used in a CHECK, and a VIRTUAL one costs no storage 3ms
+ ✓ tests/d-types-and-constraints.test.ts > (d5) things the schema will meet that are easy to miss > RESERVED WORDS: which spec column/table names need back-ticks or a rename 66ms
+ ✓ tests/d-types-and-constraints.test.ts > (d5) things the schema will meet that are easy to miss > timestamps: DATETIME(6) with ON UPDATE CURRENT_TIMESTAMP(6); NOW() is fixed per statement, SYSDATE() is the real clock; keyset order (updated_at, id) 38ms
+stdout | tests/d-types-and-constraints.test.ts > (d5) things the schema will meet that are easy to miss > triggers: the app user can create them here (log_bin is off locally); a BEFORE UPDATE trigger can refuse with SIGNAL (spec A8: nobody changes their own role)
+[d] local log_bin = 0 , log_bin_trust_function_creators = 0 (Hostinger values NOT yet known)
+
+ ✓ tests/d-types-and-constraints.test.ts > (d5) things the schema will meet that are easy to miss > triggers: the app user can create them here (log_bin is off locally); a BEFORE UPDATE trigger can refuse with SIGNAL (spec A8: nobody changes their own role) 8ms
+ ✓ tests/d-types-and-constraints.test.ts > (d5) things the schema will meet that are easy to miss > the app user is not SUPER: it cannot change global settings (so only SESSION settings are available on Hostinger) 6ms
+ ↓ tests/e2-unique-flag-deadlock.test.ts > (e2) unique key on a flipping generated column > reports deadlocks over up to 12 seeds (informational)
+
+ Test Files  6 passed | 1 skipped (7)
+      Tests  59 passed | 1 skipped (60)
+   Start at  15:11:26
+   Duration  37.97s (transform 144ms, setup 0ms, collect 497ms, tests 36.20s, environment 1ms, prepare 348ms)
+
