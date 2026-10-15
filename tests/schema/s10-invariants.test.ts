@@ -254,6 +254,19 @@ describe('the invariant files themselves', () => {
     expect(before).toBe('READ-COMMITTED');
     await c.end();
   });
+  it('runs with the split_materialized plan switched off (it made I10 take minutes after a bulk load) and puts the switch back, also after a failure', async () => {
+    const { c } = await world();
+    const sw = async () => String((((await c.query<any[]>('SELECT @@session.optimizer_switch AS s'))[0]) as any[])[0].s);
+    expect(await sw()).toContain('split_materialized=on');
+    const seen: string[] = [];
+    await runInvariants(c, { between: async () => void seen.push(await sw()) });
+    expect(seen.length).toBeGreaterThan(5);
+    for (const s of seen) expect(s).toContain('split_materialized=off');
+    expect(await sw()).toContain('split_materialized=on');
+    await expect(runInvariants(c, { between: async () => { throw new Error('boom'); } })).rejects.toThrow('boom');
+    expect(await sw()).toContain('split_materialized=on');
+    await c.end();
+  });
   it('a failing query rolls the snapshot back and rethrows (the connection is usable afterwards)', async () => {
     const { c } = await world();
     await expect(runInvariants(c, { between: async () => { throw new Error('boom'); } })).rejects.toThrow('boom');

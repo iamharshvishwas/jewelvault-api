@@ -30,6 +30,12 @@ export async function runInvariants(conn, opts = {}) {
   const counts = {};
   const rows = [];
   const ran = [];
+  // MariaDB may answer "customers joined to a grouped derived table" by re-building that derived table once per customer (split_materialized, shown as LATERAL DERIVED in EXPLAIN).
+  // With bad statistics (right after a bulk load or a restore) that took more than 500 seconds for I10 on 30,000 bills, against 0.1 second with it off. The switch is
+  // put back afterwards; the API's own one-customer reads keep it on, where it helps.
+  const switchBefore = String((await conn.query('SELECT @@session.optimizer_switch AS s'))[0][0].s);
+  const splitWasOn = /split_materialized=on/.test(switchBefore);
+  if (splitWasOn) await conn.query("SET SESSION optimizer_switch = 'split_materialized=off'");
   await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
   await conn.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
   try {
@@ -48,6 +54,8 @@ export async function runInvariants(conn, opts = {}) {
   } catch (e) {
     await conn.query('ROLLBACK').catch(() => undefined);
     throw e;
+  } finally {
+    if (splitWasOn) await conn.query("SET SESSION optimizer_switch = 'split_materialized=on'").catch(() => undefined);
   }
   return { ok: Object.values(counts).every((n) => n === 0), counts, rows, ran };
 }

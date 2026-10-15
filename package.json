@@ -10,6 +10,7 @@
     "test": "vitest run",
     "db:migrate": "node scripts/migrate.mjs",
     "db:schema": "node scripts/build-schema.mjs",
+    "db:import": "node scripts/import-cli.mjs",
     "test:schema": "vitest run tests/schema"
   },
   "devDependencies": {

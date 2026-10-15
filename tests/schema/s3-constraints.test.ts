@@ -380,6 +380,7 @@ describe('logs and system tables (D16 to D18, I8, L5)', () => {
     ['a photo copy row (D-Q11: the export leaves the photo bytes out, each photo is copied once)', 'backup_runs', () => ({ kind: 'photo_copy', ok: 1, bytes: 245000, detail: { photos: 3 } }), null],
     ['an unknown backup kind is refused', 'backup_runs', () => ({ kind: 'mirror', ok: 1, bytes: 0, detail: {} }), CHECK],
     ['a counter series', 'sys_counters', () => ({ series: `bill:JV:${u()}`, last_value: 5, seed_value: 0 }), null],
+    ['the series of a piece counter for the longest allowed design number (sku:<design_no>, spec L3, D6: 64 characters)', 'sys_counters', () => ({ series: `sku:${'D'.repeat(60)}${u().slice(0, 4)}`, last_value: 0, seed_value: 0 }), null],
     ['a counter below its seed value is refused', 'sys_counters', () => ({ series: `bill:JV:${u()}`, last_value: 1, seed_value: 5 }), CHECK],
     ['an idempotency row', 'sys_idempotency', () => ({ request_id: uuid(), fn: 'create_bill', actor: uuid(), args_hash: 'a'.repeat(64) }), null],
     ['an idempotency hash of the wrong length is refused', 'sys_idempotency', () => ({ request_id: uuid(), fn: 'create_bill', actor: uuid(), args_hash: 'abc' }), CHECK],

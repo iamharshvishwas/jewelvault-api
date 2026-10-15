@@ -11,8 +11,9 @@ SET SESSION time_zone = '+00:00';
 --   timestamps DATETIME(6) in UTC; every foreign key is RESTRICT; no UNIQUE index on a column that changes after insert (spike finding F2);
 --   no name needs quoting (key, lines, rows, order ... are reserved words in MariaDB); person columns (created_by ...) are plain UUIDs, no foreign key.
 
+-- series: bill:<PREFIX>:<YYYY>, opening, design:<CATEGORY PREFIX>, sku:<design_no>; a design number may be 64 characters (D6), so the series is 100 (found while writing the import).
 CREATE TABLE IF NOT EXISTS sys_counters (
-  series VARCHAR(60) NOT NULL,
+  series VARCHAR(100) NOT NULL,
   last_value BIGINT NOT NULL DEFAULT 0,
   seed_value BIGINT NOT NULL DEFAULT 0,
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
