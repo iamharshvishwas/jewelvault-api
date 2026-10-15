@@ -1,6 +1,8 @@
--- 0005 designs and photos (spec D6, P1 to P4 replaced by Harsh's decision of 15 Oct 2026: photos live in MariaDB).
+-- 0005 designs and photos (spec draft 4: D6, D26, P1 to P7; photos live in MariaDB, Harsh 15 Oct 2026; copy tracking from NODE-DESIGN D-Q11).
 -- designs keeps only photo ids (an ordered JSON array, at most 3, the first is the primary one). The bytes are in design_photos; no list query may ever select them.
 -- A photo is two rows with the same id: kind 'full' (longest side 1000 px, JPEG quality 72) and kind 'thumb' (320 px). Rules in settings key 'photos'.
+-- design_photos.design_id has NO foreign key: the screen uploads before the design exists (P2); the monthly sweep (P6) finds photos no design refers to.
+-- Rows are insert-only. Removing a photo is a tombstone UPDATE (removed_at set, bytes emptied): S7, nothing is deleted. Each photo is copied once to the off-site bucket (sys_photo_copies).
 
 CREATE TABLE IF NOT EXISTS designs (
   id UUID NOT NULL,
@@ -45,14 +47,30 @@ CREATE TABLE IF NOT EXISTS design_photos (
   mime VARCHAR(20) NOT NULL,
   byte_size INT NOT NULL,
   sha256 VARBINARY(32) NOT NULL,
-  bytes MEDIUMBLOB NOT NULL,
+  bytes MEDIUMBLOB NULL,
+  removed_at DATETIME(6) NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   created_by UUID NULL,
   PRIMARY KEY (id, kind),
   KEY ix_design_photos_design (design_id),
-  CONSTRAINT fk_design_photos_design FOREIGN KEY (design_id) REFERENCES designs (id) ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT chk_design_photos_kind CHECK (kind IN ('full', 'thumb')),
   CONSTRAINT chk_design_photos_mime CHECK (mime IN ('image/jpeg', 'image/png', 'image/webp')),
-  CONSTRAINT chk_design_photos_size CHECK (byte_size >= 1 AND byte_size <= 2097152 AND byte_size = OCTET_LENGTH(bytes)),
-  CONSTRAINT chk_design_photos_hash CHECK (OCTET_LENGTH(sha256) = 32)
+  CONSTRAINT chk_design_photos_size CHECK (byte_size >= 1 AND byte_size <= 2097152),
+  CONSTRAINT chk_design_photos_hash CHECK (OCTET_LENGTH(sha256) = 32),
+  CONSTRAINT chk_design_photos_state CHECK (
+    (removed_at IS NULL AND bytes IS NOT NULL AND byte_size = OCTET_LENGTH(bytes)) OR (removed_at IS NOT NULL AND bytes IS NULL)
+  )
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- One row per photo copy made to the off-site bucket (D-Q11). The nightly export leaves the bytes out; a photo never changes, so one copy is enough.
+-- The job copies the live photos that have no row here, oldest first, then inserts the row. The restore tool reads this table to know what to fetch.
+CREATE TABLE IF NOT EXISTS sys_photo_copies (
+  photo_id UUID NOT NULL,
+  kind VARCHAR(10) NOT NULL,
+  sha256 VARBINARY(32) NOT NULL,
+  object_key VARCHAR(200) NOT NULL,
+  copied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (photo_id, kind),
+  CONSTRAINT fk_photo_copies_photo FOREIGN KEY (photo_id, kind) REFERENCES design_photos (id, kind) ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT chk_photo_copies_hash CHECK (OCTET_LENGTH(sha256) = 32)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

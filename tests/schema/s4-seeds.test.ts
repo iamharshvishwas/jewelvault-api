@@ -60,7 +60,7 @@ describe('seeds', () => {
   });
 
   it('nothing else is seeded: no rates, designs, pieces, bills, receipts, users, sessions, counters', async () => {
-    for (const t of ['daily_rates', 'designs', 'design_photos', 'skus', 'sku_private', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'users', 'sessions', 'sys_counters', 'sys_idempotency', 'audit_log', 'check_runs', 'backup_runs']) {
+    for (const t of ['daily_rates', 'designs', 'design_photos', 'skus', 'sku_private', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'users', 'sessions', 'sys_counters', 'sys_idempotency', 'audit_log', 'check_runs', 'backup_runs', 'sys_photo_copies']) {
       const [r] = await c.query<any[]>(`SELECT COUNT(*) AS n FROM \`${t}\``);
       expect(Number(r[0].n), t).toBe(0);
     }

@@ -129,9 +129,26 @@ describe('designs and photos (D6, P1 to P4 replaced)', () => {
     ['a type other than jpeg, png or webp is refused', 'design_photos', () => photo({ mime: 'image/gif' }), CHECK],
     ['a size of 0 is refused', 'design_photos', () => photo({ byte_size: 0, bytes: Buffer.alloc(0) }), CHECK],
     ['a declared size that differs from the stored bytes is refused', 'design_photos', () => photo({ byte_size: 999 }), CHECK],
-    ['a photo for a design that does not exist is refused', 'design_photos', () => photo({ design_id: uuid() }), FK],
+    ['a photo for a design id that does not exist yet is ACCEPTED: the screen uploads before the design exists (spec P2, D26: no foreign key)', 'design_photos', () => photo({ design_id: uuid() }), null],
+    ['a removed photo has removed_at set and no bytes', 'design_photos', () => photo({ removed_at: '2026-10-15 12:00:00.000000', bytes: null }), null],
+    ['no bytes without removed_at is refused', 'design_photos', () => photo({ bytes: null }), CHECK],
+    ['removed_at with the bytes still there is refused', 'design_photos', () => photo({ removed_at: '2026-10-15 12:00:00.000000' }), CHECK],
+    ['a removed photo keeps its recorded size, which must still be 1 byte to 2 MiB', 'design_photos', () => photo({ removed_at: '2026-10-15 12:00:00.000000', bytes: null, byte_size: 0 }), CHECK],
     ['a sha256 of the wrong length is refused', 'design_photos', () => photo({ sha256: randomBytes(31) }), CHECK],
   ]);
+  it('removing a photo is a tombstone UPDATE: removed_at set and bytes emptied, the row stays (S7: nothing is deleted)', async () => {
+    const p = photo();
+    await insert(c, 'design_photos', p);
+    await c.query('UPDATE design_photos SET removed_at = ?, bytes = NULL WHERE id = ? AND kind = ?', ['2026-10-15 12:00:00.000000', p.id, 'full']);
+    const [r] = await c.query<any[]>('SELECT removed_at, bytes, byte_size FROM design_photos WHERE id = ? AND kind = ?', [p.id, 'full']);
+    expect(r).toHaveLength(1);
+    expect(r[0].bytes).toBeNull();
+    expect(Number(r[0].byte_size)).toBe(1000);
+    // emptying the bytes without setting removed_at is refused
+    const q = photo();
+    await insert(c, 'design_photos', q);
+    expect((await errorOf(() => c.query('UPDATE design_photos SET bytes = NULL WHERE id = ? AND kind = ?', [q.id, 'full'])))?.errno).toBe(CHECK);
+  });
   it('the full photo and its thumbnail share one photo id (primary key is id + kind)', async () => {
     const id = uuid();
     await insert(c, 'design_photos', photo({ id, kind: 'full' }));
@@ -351,12 +368,15 @@ describe('receipts and allocations (D13, D14, Y1, Y2)', () => {
 describe('logs and system tables (D16 to D18, I8, L5)', () => {
   run([
     ['an audit row for an insert', 'audit_log', () => ({ table_name: 'bills', row_id: uuid(), action: 'insert', new_row: { a: 1 } }), null],
-    ['an audit action other than insert or update is refused (nothing is deleted)', 'audit_log', () => ({ table_name: 'bills', row_id: uuid(), action: 'delete' }), CHECK],
+    ['an audit action other than insert, update or event is refused (nothing is deleted)', 'audit_log', () => ({ table_name: 'bills', row_id: uuid(), action: 'delete' }), CHECK],
+    ['an audit row for an event (login, failed login, password change, admin door, job run) carries its facts in new_row', 'audit_log', () => ({ table_name: 'users', row_id: uuid(), action: 'event', actor_role: 'admin-cli', new_row: { what: 'password changed' } }), null],
+    ['an audit row written by hand in phpMyAdmin may carry the role sql', 'audit_log', () => ({ table_name: 'bills', row_id: uuid(), action: 'update', actor_role: 'sql' }), null],
     ['an audit row with broken JSON is refused', 'audit_log', () => ({ table_name: 'bills', row_id: uuid(), action: 'update', old_row: '{broken' }), CHECK],
     ['a nightly check row', 'check_runs', () => ({ ok: 1, details: { I1: 0 } }), null],
     ['a dump row', 'backup_runs', () => ({ kind: 'db_dump', ok: 1, bytes: 12345, detail: {} }), null],
     ['a restore drill row', 'backup_runs', () => ({ kind: 'restore_drill', ok: 1, bytes: 0, detail: {} }), null],
-    ['there is no photo_copy backup kind any more (photos are in the dump)', 'backup_runs', () => ({ kind: 'photo_copy', ok: 1, bytes: 0, detail: {} }), CHECK],
+    ['a photo copy row (D-Q11: the export leaves the photo bytes out, each photo is copied once)', 'backup_runs', () => ({ kind: 'photo_copy', ok: 1, bytes: 245000, detail: { photos: 3 } }), null],
+    ['an unknown backup kind is refused', 'backup_runs', () => ({ kind: 'mirror', ok: 1, bytes: 0, detail: {} }), CHECK],
     ['a counter series', 'sys_counters', () => ({ series: `bill:JV:${u()}`, last_value: 5, seed_value: 0 }), null],
     ['a counter below its seed value is refused', 'sys_counters', () => ({ series: `bill:JV:${u()}`, last_value: 1, seed_value: 5 }), CHECK],
     ['an idempotency row', 'sys_idempotency', () => ({ request_id: uuid(), fn: 'create_bill', actor: uuid(), args_hash: 'a'.repeat(64) }), null],
@@ -368,6 +388,44 @@ describe('logs and system tables (D16 to D18, I8, L5)', () => {
     ['an error log row', 'sys_error_log', () => ({ level: 'error', code: 'JV_INTERNAL', message: 'x' }), null],
     ['an error level outside the list is refused', 'sys_error_log', () => ({ level: 'loud', code: 'X', message: 'x' }), CHECK],
   ]);
+  describe('photo copy tracking (D-Q11): which photos have been copied to the off-site bucket', () => {
+    const mk = async (o: Record<string, unknown> = {}) => {
+      const id = uuid();
+      const base = { id, kind: 'full', design_id: uuid(), mime: 'image/jpeg', byte_size: 3, sha256: randomBytes(32), bytes: Buffer.from([1, 2, 3]), ...o };
+      await insert(c, 'design_photos', base);
+      return base;
+    };
+    const copy = (p: { id: string; kind: string }, o: Record<string, unknown> = {}) => ({ photo_id: p.id, kind: p.kind, sha256: randomBytes(32), object_key: `photos/${p.id}/${p.kind}`, ...o });
+    it('a copy row needs an existing photo row and is made once per photo and kind', async () => {
+      const p = await mk();
+      await insert(c, 'sys_photo_copies', copy(p));
+      expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p))))?.errno).toBe(DUP);
+      expect((await errorOf(() => insert(c, 'sys_photo_copies', { photo_id: uuid(), kind: 'full', sha256: randomBytes(32), object_key: 'photos/x' })))?.errno).toBe(FK);
+    });
+    it('the hash must be 32 bytes, and a kind that no photo row has is refused by the foreign key', async () => {
+      const p = await mk();
+      expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p, { sha256: randomBytes(31) }))))?.errno).toBe(CHECK);
+      expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p, { kind: 'medium' }))))?.errno).toBe(FK);
+    });
+    it('the job\'s "not copied yet" list holds the live photos with no copy row, oldest first, and skips removed ones', async () => {
+      const design = uuid();
+      const a = await mk({ design_id: design });
+      const b = await mk({ design_id: design });
+      const gone = await mk({ design_id: design, removed_at: '2026-10-15 12:00:00.000000', bytes: null });
+      await insert(c, 'sys_photo_copies', copy(a));
+      const [todo] = await c.query<any[]>(
+        `SELECT p.id, p.kind FROM design_photos p LEFT JOIN sys_photo_copies k ON k.photo_id = p.id AND k.kind = p.kind
+         WHERE p.design_id = ? AND k.photo_id IS NULL AND p.removed_at IS NULL ORDER BY p.created_at, p.id LIMIT 20`, [design]);
+      expect(todo.map((r) => r.id)).toEqual([b.id]);
+      expect(todo.map((r) => r.id)).not.toContain(gone.id);
+    });
+    it('a photo that has a copy row cannot be deleted (and no photo row is ever deleted)', async () => {
+      const p = await mk();
+      await insert(c, 'sys_photo_copies', copy(p));
+      expect((await errorOf(() => c.query('DELETE FROM design_photos WHERE id = ? AND kind = ?', [p.id, p.kind])))?.errno).toBe(ER.ROW_IS_REFERENCED);
+    });
+  });
+
   it('one nightly job per name and day; one import batch per name', async () => {
     const job = `job_${u()}`;
     await insert(c, 'sys_job_runs', { job, run_date: '2026-10-16', status: 'ok' });

@@ -20,7 +20,7 @@ afterAll(async () => {
 const EXPECTED_TABLES = [
   'audit_log', 'backup_runs', 'bill_items', 'bills', 'categories', 'check_runs', 'customers', 'daily_rates', 'design_photos', 'designs',
   'receipt_allocations', 'receipts', 'schema_migrations', 'sessions', 'settings', 'sku_private', 'skus', 'subcategories',
-  'sys_counters', 'sys_error_log', 'sys_idempotency', 'sys_import_batches', 'sys_job_runs', 'sys_login_attempts', 'users',
+  'sys_counters', 'sys_error_log', 'sys_idempotency', 'sys_import_batches', 'sys_job_runs', 'sys_login_attempts', 'sys_photo_copies', 'users',
 ].sort();
 
 const cols = async () => {
@@ -110,6 +110,15 @@ describe('shape of the schema', () => {
       expect(x.d, `${x.t}.${x.n}`).toBe('RESTRICT');
       expect(x.u, `${x.t}.${x.n}`).toBe('RESTRICT');
     }
+  });
+
+  it('design_photos.design_id has NO foreign key (the screen uploads before the design exists, spec P2 and D26)', async () => {
+    const [r] = await c.query<any[]>(
+      "SELECT COUNT(*) AS n FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'design_photos' AND COLUMN_NAME = 'design_id' AND REFERENCED_TABLE_NAME IS NOT NULL"
+    );
+    expect(Number(r[0].n)).toBe(0);
+    const [i] = await c.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'design_photos' AND COLUMN_NAME = 'design_id'");
+    expect(Number(i[0].n)).toBeGreaterThan(0); // still indexed: the "fewer than 3 photos for this design id" count must not scan
   });
 
   it('person columns (created_by, updated_by, confirmed_by, ...) are plain UUIDs with NO foreign key (they must survive a retired user, and a FK would lock the users row)', async () => {

@@ -140,7 +140,7 @@
 | S02 | `127.0.0.1`, `localhost`, `srv2210.hstgr.io`, IP: kaun sa naam database se jud sakta hai | jo env mein diya wo chala |
 | S03 | database ke settings aur is user ke rights | (sirf jaankari) |
 | S04 | har connection par lagne wali 6 settings set ho sakti hain | sab ok |
-| S05 | **asli JewelVault schema aur seeds is database par lagte hain** (24 tables, native UUID) | UUID type chalta hai |
+| S05 | **asli JewelVault schema aur seeds is database par lagte hain** (25 tables, native UUID) | UUID type chalta hai |
 | S06 | `CREATE TRIGGER` ban sakta hai aur chalta hai | triggers allowed |
 | S07 | audit_log append-only triggers lagte hain aur chalte hain | ok |
 | S08 | constraints asli server par: PAN capital, Credit mode nahi, Sold ke liye bill, 4 photos refuse, out-of-range refuse | sab refuse hue |

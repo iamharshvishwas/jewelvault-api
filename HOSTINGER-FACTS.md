@@ -42,7 +42,7 @@ Chosen by Harsh over R2. Design rules, so the 3 GB database limit does not becom
 
 - Table `design_photos` (`id UUID`, `design_id`, `kind` full/thumb, `mime`, `bytes MEDIUMBLOB`, `byte_size`, `sha256`, timestamps). `designs` keeps only the photo ids (P4: no image text in a design row). **No list query ever selects `bytes`**; the screens get ids and fetch `GET /photos/<id>` with `Cache-Control: public, max-age=31536000, immutable` and an ETag (ids never change content).
 - Upload through the API only: owner and staff, one image per request, 2 MB cap, type decided from the first bytes (JPEG, PNG, WebP), browser resizes to at most 1200 px as in P2.
-- The nightly dump now contains the photos, so the separate photo-mirror job (B2, P5, `backup_runs.kind = photo_copy`, I12's second heartbeat) is **dropped**. The dump must stream blobs (hex or base64), about 1.33 times the data size.
+- **Changed on 15 Oct (D-Q11, Harsh):** the nightly export leaves `design_photos.bytes` out, and each photo is copied once to the off-site bucket (`sys_photo_copies` remembers which; `backup_runs.kind` has `photo_copy` again, I12's second heartbeat is back). Reason: 30 daily + 12 monthly exports with photos would be about 47 GB at 1,500 designs and about 16 GB even at 500, against R2's free 10 GB. Photos never change, so one copy is enough. (An earlier line here said the dump holds the photos and the photo copy is dropped; that is reversed.) `design_photos.design_id` has no foreign key (the screen uploads before the design exists) and a removed photo is a tombstone (`removed_at`, bytes NULL).
 
 ### The 3 GB budget, measured (15 Oct 2026, `tests/i-size-budget.test.ts`)
 
