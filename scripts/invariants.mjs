@@ -1,0 +1,53 @@
+// runInvariants(): spec section 12, the SQL half. It only reads.
+// Each file in db/invariants/ is one SELECT that returns the rows breaking one rule as (invariant, row_ref, detail); no rows means the rule holds.
+// The whole run uses ONE snapshot: REPEATABLE READ for the next transaction only (so the caller's session setting is left alone),
+// then START TRANSACTION WITH CONSISTENT SNAPSHOT, so a payment saved while the run is going cannot cause a false alarm.
+// At READ COMMITTED (the server's setting) every statement would read its own snapshot.
+// Not here: I6's re-pricing of each line and I11 (Node, they need pricing.ts), I8 and I9 (the job and the tests), I12 (database size and backup ages, a separate small query).
+//
+// The connection must not be inside a transaction: START TRANSACTION commits one that is open.
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'db', 'invariants');
+
+export function listInvariantFiles(dir = DIR) {
+  return readdirSync(dir)
+    .filter((f) => /^I\d+_.+\.sql$/.test(f))
+    .sort()
+    .map((f) => ({ id: `I${Number(/^I(\d+)_/.exec(f)[1])}`, name: f, sql: readFileSync(path.join(dir, f), 'utf8') }));
+}
+
+/** The file's single SELECT, ready to sit inside a derived table: no trailing semicolon. */
+function asSubquery(sql) {
+  return sql.trim().replace(/;+\s*$/, '');
+}
+
+export async function runInvariants(conn, opts = {}) {
+  const dir = opts.dir ?? DIR; // the Hostinger proof app keeps its own copy of the files
+  const sample = Number.isInteger(opts.sample) && opts.sample > 0 ? opts.sample : 20;
+  const counts = {};
+  const rows = [];
+  const ran = [];
+  await conn.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+  await conn.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+  try {
+    for (const f of listInvariantFiles(dir)) {
+      const body = asSubquery(f.sql);
+      const [[counted]] = await conn.query(`SELECT COUNT(*) AS n FROM (\n${body}\n) q`);
+      counts[f.id] = Number(counted.n);
+      if (counts[f.id] > 0) {
+        const [found] = await conn.query(`SELECT q.invariant, q.row_ref, q.detail FROM (\n${body}\n) q ORDER BY q.row_ref, q.detail LIMIT ${sample}`);
+        for (const r of found) rows.push({ invariant: String(r.invariant), row_ref: String(r.row_ref), detail: String(r.detail) });
+      }
+      ran.push(f.id);
+      if (opts.between) await opts.between(f.id);
+    }
+    await conn.query('COMMIT');
+  } catch (e) {
+    await conn.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  }
+  return { ok: Object.values(counts).every((n) => n === 0), counts, rows, ran };
+}

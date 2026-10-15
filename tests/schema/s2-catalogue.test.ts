@@ -26,7 +26,7 @@ const EXPECTED_TABLES = [
 const cols = async () => {
   const [r] = await c.query<any[]>(
     `SELECT TABLE_NAME AS t, COLUMN_NAME AS c, DATA_TYPE AS type, COLUMN_TYPE AS ctype, IS_NULLABLE AS nullable, COLUMN_DEFAULT AS dflt, EXTRA AS extra
-     FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, ORDINAL_POSITION`
+     FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE') ORDER BY TABLE_NAME, ORDINAL_POSITION`
   );
   return r as { t: string; c: string; type: string; ctype: string; nullable: string; dflt: string | null; extra: string }[];
 };
@@ -35,6 +35,12 @@ describe('shape of the schema', () => {
   it('has exactly the expected tables (adding one is a conscious change of this list)', async () => {
     const [r] = await c.query<any[]>("SELECT TABLE_NAME AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'");
     expect(r.map((x) => x.n).sort()).toEqual(EXPECTED_TABLES);
+  });
+
+  it('has exactly the four derived views of spec section 11, all SQL SECURITY INVOKER', async () => {
+    const [r] = await c.query<any[]>("SELECT TABLE_NAME n, SECURITY_TYPE s FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() ORDER BY 1");
+    expect(r.map((x) => x.n)).toEqual(['bill_summary', 'customer_balances', 'customer_ledger', 'daily_totals']);
+    for (const v of r) expect(v.s, v.n).toBe('INVOKER');
   });
 
   it('every table is InnoDB with utf8mb4_unicode_ci and has a primary key', async () => {

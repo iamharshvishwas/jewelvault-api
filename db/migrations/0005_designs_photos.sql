@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS designs (
   CONSTRAINT chk_designs_material CHECK (material IN ('Gold', 'Silver')),
   CONSTRAINT chk_designs_method CHECK (selling_method IN ('By Weight', 'Per Piece')),
   CONSTRAINT chk_designs_tags CHECK (JSON_TYPE(tags) = 'ARRAY'),
-  CONSTRAINT chk_designs_photos CHECK (JSON_TYPE(photo_ids) = 'ARRAY' AND JSON_LENGTH(photo_ids) <= 3)
+  CONSTRAINT chk_designs_photos CHECK (JSON_TYPE(photo_ids) = 'ARRAY' AND JSON_LENGTH(photo_ids) <= 3 AND JSON_SEARCH(photo_ids, 'one', 'data:%') IS NULL)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS design_photos (

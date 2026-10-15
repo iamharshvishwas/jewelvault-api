@@ -106,6 +106,8 @@ describe('designs and photos (D6, P1 to P4 replaced)', () => {
     ['photo_ids must be a JSON array', 'designs', () => V.design(w.categoryId, { photo_ids: { a: 1 } }), CHECK],
     ['at most 3 photos per design (Harsh, 15 Oct)', 'designs', () => V.design(w.categoryId, { photo_ids: [uuid(), uuid(), uuid(), uuid()] }), CHECK],
     ['3 photos are accepted', 'designs', () => V.design(w.categoryId, { photo_ids: [uuid(), uuid(), uuid()] }), null],
+    ['a photo "id" that is really image text (data:...) is refused (P4)', 'designs', () => V.design(w.categoryId, { photo_ids: ['data:image/png;base64,AAAA'] }), CHECK],
+    ['image text anywhere in the id list is refused', 'designs', () => V.design(w.categoryId, { photo_ids: [uuid(), 'data:image/jpeg;base64,/9j/4AAQ'] }), CHECK],
     ['a design needs an existing category', 'designs', () => V.design(uuid()), FK],
     ['an unknown purity is NOT checked in the database (purities are a setting)', 'designs', () => V.design(w.categoryId, { purity: 'Custom' }), null],
   ]);

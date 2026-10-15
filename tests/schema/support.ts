@@ -79,3 +79,109 @@ export async function world(c: Connection) {
   const allocation = await insert(c, 'receipt_allocations', V.allocation(receipt.id, bill.id, customer.id)) as { id: string };
   return { categoryId, customer, design, bill, sku, item, receipt, allocation };
 }
+
+/**
+ * The fixed data set of the views tests (spec T-B15): one customer with every kind of event, a second customer with none.
+ * All timestamps are UTC; the figures in s9-views.test.ts were worked out by hand from this list.
+ */
+export async function ledgerWorld(c: Connection) {
+  const [cats] = await c.query<any[]>('SELECT id FROM categories ORDER BY name LIMIT 1');
+  const design = (await insert(c, 'designs', V.design(cats[0].id))) as { id: string };
+  const c1 = (await insert(c, 'customers', V.customer({ name: 'Ledger Customer' }))) as { id: string };
+  const c2 = (await insert(c, 'customers', V.customer({ name: 'Empty Customer', mobile: '9123456780' }))) as { id: string };
+  const skus: string[] = [];
+  for (let i = 0; i < 4; i++) skus.push(((await insert(c, 'skus', V.sku(design.id))) as { id: string }).id);
+  const cancelled = { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_by: uuid() };
+  const ob = (await insert(c, 'bills', V.bill(c1.id, { bill_no: 'OB-0001', doc_type: 'opening_balance', bill_date: '2026-09-30', subtotal: '0.00', grand_total: '300.50', fine_weight_due: '2.000', request_id: null, created_at: '2026-09-30 05:00:00.000000' }))) as { id: string };
+  const b1 = (await insert(c, 'bills', V.bill(c1.id, { bill_no: 'JV-2026-0001', bill_date: '2026-10-01', subtotal: '1000.00', grand_total: '1000.00', created_at: '2026-10-01 05:00:00.000000' }))) as { id: string };
+  const b3 = (await insert(c, 'bills', V.bill(c1.id, { bill_no: 'JV-2026-0002', bill_date: '2026-10-03', subtotal: '500.00', grand_total: '500.00', created_at: '2026-10-03 05:00:00.000000', ...cancelled }))) as { id: string };
+  const b2 = (await insert(c, 'bills', V.bill(c1.id, { bill_no: 'JV-2026-0003', bill_date: '2026-10-05', sale_type: 'Wholesale', subtotal: '2000.00', grand_total: '2000.00', fine_weight_due: '10.000', created_at: '2026-10-05 05:00:00.000000' }))) as { id: string };
+  await insert(c, 'bill_items', V.billItem(b1.id, skus[0], { line_no: 1 }));
+  await insert(c, 'bill_items', V.billItem(b1.id, skus[1], { line_no: 2 }));
+  await insert(c, 'bill_items', V.billItem(b2.id, skus[2], { line_no: 1 }));
+  await insert(c, 'bill_items', V.billItem(b3.id, skus[3], { line_no: 1 }));
+  const rc = async (o: Record<string, unknown>) => (await insert(c, 'receipts', V.receipt(c1.id, o))) as { id: string };
+  const voided = (at: string) => ({ status: 'voided', void_reason: 'entered twice', voided_at: at, voided_by: uuid() });
+  const r1 = await rc({ amount: '400.00', mode: 'Cash', paid_on: '2026-10-02', created_at: '2026-10-02 06:00:00.000000' });
+  const r9 = await rc({ amount: '100.00', mode: 'Cash', paid_on: '2026-10-03', created_at: '2026-10-03 06:00:00.000000' });
+  const r2 = await rc({ amount: '600.00', mode: 'UPI', paid_on: '2026-10-06', created_at: '2026-10-06 06:00:00.000000' });
+  const r3 = await rc({ kind: 'fine_silver', mode: null, amount: '0.00', fine_grams: '4.000', paid_on: '2026-10-07', created_at: '2026-10-07 06:00:00.000000' });
+  const r4 = await rc({ kind: 'fine_cash', mode: 'Cash', amount: '270.00', fine_grams: '3.000', silver_rate: '90.00', paid_on: '2026-10-08', created_at: '2026-10-08 06:00:00.000000' });
+  const r5 = await rc({ amount: '150.00', mode: 'Cash', paid_on: '2026-10-09', created_at: '2026-10-09 06:00:00.000000', ...voided('2026-10-10 10:00:00.000000') });
+  const r6 = await rc({ kind: 'refund', amount: '50.00', mode: 'Cash', paid_on: '2026-10-11', created_at: '2026-10-11 06:00:00.000000' });
+  const r7 = await rc({ kind: 'refund', amount: '25.00', mode: 'UPI', paid_on: '2026-10-12', created_at: '2026-10-12 06:00:00.000000', ...voided('2026-10-12 20:00:00.000000') });
+  const r8 = await rc({ amount: '100.00', mode: 'Other', is_opening: 1, paid_on: '2026-09-30', created_at: '2026-09-30 06:00:00.000000' });
+  const al = async (receipt: { id: string }, bill: { id: string }, o: Record<string, unknown>) => insert(c, 'receipt_allocations', V.allocation(receipt.id, bill.id, c1.id, o));
+  await al(r1, ob, { amount: '300.50' });
+  await al(r1, b1, { amount: '99.50' });
+  await al(r2, b1, { amount: '600.00' });
+  await al(r3, ob, { amount: '0.00', fine_grams: '2.000' });
+  await al(r3, b2, { amount: '0.00', fine_grams: '2.000' });
+  await al(r4, b2, { amount: '0.00', fine_grams: '3.000' });
+  await al(r9, b3, { amount: '100.00', released_at: '2026-10-04 09:00:00.000000' }); // the bill was cancelled: released, the money stays as an advance
+  await al(r5, b2, { amount: '50.00' }); // R5 was voided: this allocation must NOT count although it was never released
+  return { c1, c2, ob, b1, b2, b3, r: { r1, r2, r3, r4, r5, r6, r7, r8, r9 }, skus };
+}
+
+/**
+ * A consistent data set for the invariants tests: every figure agrees, so runInvariants() must return nothing.
+ * Customer A: a sold bill, a cancelled bill, opening dues with silver, money, silver, an opening advance, a voided receipt.
+ * Customer D: fully paid with an advance, a refund and a voided refund. The walk-in: a paid bill.
+ */
+export async function cleanWorld(c: Connection) {
+  const [cats] = await c.query<any[]>('SELECT id FROM categories ORDER BY name LIMIT 1');
+  const design = (await insert(c, 'designs', V.design(cats[0].id))) as { id: string };
+  const a = (await insert(c, 'customers', V.customer({ name: 'Customer A' }))) as { id: string };
+  const d = (await insert(c, 'customers', V.customer({ name: 'Customer D', mobile: '9123456780' }))) as { id: string };
+  const walkin = '00000000-0000-4000-8000-000000000001';
+  const line = (billId: string, skuId: string, no: number, metal: string, labour: string, total: string) =>
+    insert(c, 'bill_items', V.billItem(billId, skuId, { line_no: no, metal_amount: metal, labour_amount: labour, item_total: total }));
+  const sku = async (o: Record<string, unknown> = {}) => (await insert(c, 'skus', V.sku(design.id, o))) as { id: string };
+  const bill = async (customer: string, o: Record<string, unknown>) => (await insert(c, 'bills', V.bill(customer, o))) as { id: string };
+  const cancelled = { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_by: uuid() };
+
+  const aB1 = await bill(a.id, { bill_no: 'JV-2026-0001', bill_date: '2026-10-01', subtotal: '1000.00', grand_total: '1000.00', created_at: '2026-10-01 05:00:00.000000' });
+  const aB2 = await bill(a.id, { bill_no: 'JV-2026-0002', bill_date: '2026-10-03', subtotal: '500.00', grand_total: '500.00', created_at: '2026-10-03 05:00:00.000000', ...cancelled });
+  const aOb = await bill(a.id, { bill_no: 'OB-0001', doc_type: 'opening_balance', bill_date: '2026-09-30', subtotal: '0.00', grand_total: '300.50', fine_weight_due: '2.000', request_id: null, created_at: '2026-09-30 05:00:00.000000' });
+  const dB1 = await bill(d.id, { bill_no: 'JV-2026-0003', bill_date: '2026-10-05', subtotal: '500.00', grand_total: '500.00', created_at: '2026-10-05 05:00:00.000000' });
+  const wB1 = await bill(walkin, { bill_no: 'JV-2026-0004', bill_date: '2026-10-06', subtotal: '250.00', grand_total: '250.00', created_at: '2026-10-06 05:00:00.000000' });
+  const s1 = await sku({ status: 'Sold', sold_bill_id: aB1.id });
+  const s2 = await sku({ status: 'Sold', sold_bill_id: aB1.id });
+  const s3 = await sku(); // was on the cancelled bill, back in stock
+  const s4 = await sku({ status: 'Sold', sold_bill_id: dB1.id });
+  const s5 = await sku({ status: 'Sold', sold_bill_id: wB1.id });
+  await line(aB1.id, s1.id, 1, '500.00', '100.00', '600.00');
+  await line(aB1.id, s2.id, 2, '300.00', '100.00', '400.00');
+  await line(aB2.id, s3.id, 1, '400.00', '100.00', '500.00');
+  await line(dB1.id, s4.id, 1, '400.00', '100.00', '500.00');
+  await line(wB1.id, s5.id, 1, '150.00', '100.00', '250.00');
+
+  const rc = async (customer: string, o: Record<string, unknown>) => (await insert(c, 'receipts', V.receipt(customer, o))) as { id: string };
+  const voided = (at: string) => ({ status: 'voided', void_reason: 'entered twice', voided_at: at, voided_by: uuid() });
+  const ra1 = await rc(a.id, { amount: '400.00', mode: 'Cash', paid_on: '2026-10-02', created_at: '2026-10-02 06:00:00.000000' });
+  const ra2 = await rc(a.id, { amount: '200.00', mode: 'UPI', paid_on: '2026-10-06', created_at: '2026-10-06 06:00:00.000000' });
+  const ra3 = await rc(a.id, { kind: 'fine_silver', mode: null, amount: '0.00', fine_grams: '2.000', paid_on: '2026-10-07', created_at: '2026-10-07 06:00:00.000000' });
+  const ra4 = await rc(a.id, { amount: '100.00', mode: 'Other', is_opening: 1, paid_on: '2026-09-30', created_at: '2026-09-30 06:00:00.000000' });
+  const ra5 = await rc(a.id, { amount: '75.00', mode: 'Cash', paid_on: '2026-10-09', created_at: '2026-10-09 06:00:00.000000', ...voided('2026-10-10 10:00:00.000000') });
+  const ra6 = await rc(a.id, { amount: '100.00', mode: 'Cash', paid_on: '2026-10-03', created_at: '2026-10-03 06:00:00.000000' });
+  const rd1 = await rc(d.id, { amount: '600.00', mode: 'Cash', paid_on: '2026-10-05', created_at: '2026-10-05 06:00:00.000000' });
+  const rd2 = await rc(d.id, { kind: 'refund', amount: '50.00', mode: 'Cash', paid_on: '2026-10-11', created_at: '2026-10-11 06:00:00.000000' });
+  const rd3 = await rc(d.id, { kind: 'refund', amount: '20.00', mode: 'UPI', paid_on: '2026-10-12', created_at: '2026-10-12 06:00:00.000000', ...voided('2026-10-12 20:00:00.000000') });
+  const rw1 = await rc(walkin, { amount: '250.00', mode: 'Cash', paid_on: '2026-10-06', created_at: '2026-10-06 06:00:00.000000' });
+
+  const al = async (customer: string, receipt: { id: string }, b: { id: string }, o: Record<string, unknown>) =>
+    (await insert(c, 'receipt_allocations', V.allocation(receipt.id, b.id, customer, o))) as { id: string };
+  const x = {
+    a1: await al(a.id, ra1, aOb, { amount: '300.50' }),
+    a2: await al(a.id, ra1, aB1, { amount: '99.50' }),
+    a3: await al(a.id, ra2, aB1, { amount: '200.00' }),
+    a4: await al(a.id, ra3, aOb, { amount: '0.00', fine_grams: '2.000' }),
+    a5: await al(a.id, ra4, aB1, { amount: '100.00' }),
+    a6: await al(a.id, ra6, aB2, { amount: '100.00', released_at: '2026-10-04 09:00:00.000000' }), // released when the bill was cancelled
+    a7: await al(a.id, ra6, aB1, { amount: '100.00' }), // and the money went on to the next bill
+    d1: await al(d.id, rd1, dB1, { amount: '500.00' }),
+    w1: await al(walkin, rw1, wB1, { amount: '250.00' }),
+  };
+  await c.query("INSERT INTO sys_counters (series, last_value, seed_value) VALUES ('bill:JV:2026', 4, 0), ('opening', 1, 0) ON DUPLICATE KEY UPDATE last_value = VALUES(last_value)");
+  return { a, d, walkin, design, bills: { aB1, aB2, aOb, dB1, wB1 }, skus: { s1, s2, s3, s4, s5 }, receipts: { ra1, ra2, ra3, ra4, ra5, ra6, rd1, rd2, rd3, rw1 }, allocations: x };
+}

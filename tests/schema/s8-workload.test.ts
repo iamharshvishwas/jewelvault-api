@@ -3,6 +3,7 @@ import type { Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { appConn, dropDb, ER, rng, runTx, type DbError } from '../helpers';
 import { formatGrams, formatRupees, parseGrams, parseRupees, priceBill } from '../../oracle/pricing';
+import { runInvariants } from '../../scripts/invariants.mjs';
 import { V, insert, migratedDb } from './support';
 
 // The spike's lock-order workload (tests/e-lock-order) on the REAL schema: foreign keys, composite keys, CHECK constraints and indexes
@@ -203,35 +204,10 @@ async function workload(seed: number): Promise<Stats> {
   return stats;
 }
 
+/** The real thing: the SQL half of spec section 12 (scripts/invariants.mjs), one consistent snapshot. */
 async function invariants(): Promise<string[]> {
-  const bad: string[] = [];
-  const q = async (sql: string) => (await admin.query<any[]>(sql))[0];
-  const i1 = await q(`SELECT s.id FROM skus s LEFT JOIN bill_items i ON i.sku_id = s.id LEFT JOIN bills b ON b.id = i.bill_id AND b.status = 'active'
-                      WHERE s.id IN (SELECT sku_id FROM bill_items) AND ((s.status = 'Sold') <> EXISTS (SELECT 1 FROM bill_items i2 JOIN bills b2 ON b2.id = i2.bill_id WHERE i2.sku_id = s.id AND b2.status = 'active'))`);
-  if (i1.length) bad.push(`I1: ${i1.length} piece(s) Sold state does not match an active bill`);
-  const i2 = await q(`SELECT i.sku_id FROM bill_items i JOIN bills b ON b.id = i.bill_id WHERE b.status = 'active' GROUP BY i.sku_id HAVING COUNT(*) > 1`);
-  if (i2.length) bad.push(`I2: ${i2.length} piece(s) on two active bills`);
-  const i3 = await q(`SELECT b.id FROM bills b WHERE b.status = 'active' AND (SELECT COALESCE(SUM(a.amount),0) FROM receipt_allocations a WHERE a.bill_id = b.id AND a.released_at IS NULL) > b.grand_total`);
-  if (i3.length) bad.push(`I3: ${i3.length} bill(s) over-allocated`);
-  const i3b = await q(`SELECT r.id FROM receipts r WHERE (SELECT COALESCE(SUM(a.amount),0) FROM receipt_allocations a WHERE a.receipt_id = r.id AND a.released_at IS NULL) > r.amount`);
-  if (i3b.length) bad.push(`I3: ${i3b.length} receipt(s) over-spent`);
-  const i3c = await q(`SELECT a.id FROM receipt_allocations a JOIN bills b ON b.id = a.bill_id WHERE a.released_at IS NULL AND b.status <> 'active'`);
-  if (i3c.length) bad.push(`I3: ${i3c.length} live allocation(s) on a cancelled bill`);
-  const i10 = await q(`
-    SELECT c.id,
-      (SELECT COALESCE(SUM(r.amount),0) FROM receipts r WHERE r.customer_id = c.id AND r.status = 'active')
-        - (SELECT COALESCE(SUM(a.amount),0) FROM receipt_allocations a WHERE a.customer_id = c.id AND a.released_at IS NULL) AS advance,
-      (SELECT COALESCE(SUM(b.grand_total),0) FROM bills b WHERE b.customer_id = c.id AND b.status = 'active')
-        - (SELECT COALESCE(SUM(a.amount),0) FROM receipt_allocations a WHERE a.customer_id = c.id AND a.released_at IS NULL) AS outstanding
-    FROM customers c`);
-  for (const r of i10) if (Number(r.advance) > 0 && Number(r.outstanding) > 0) bad.push(`I10: customer ${r.id} has advance ${r.advance} and outstanding ${r.outstanding}`);
-  for (const [prefix, series] of [['JV-2026-', 'bill:JV:2026'], ['OB-', 'opening']] as const) {
-    const nums = (await q(`SELECT CAST(SUBSTRING(bill_no, ${prefix.length + 1}) AS UNSIGNED) AS n FROM bills WHERE bill_no LIKE '${prefix}%' ORDER BY n`)).map((r: any) => Number(r.n));
-    const last = (await q(`SELECT last_value FROM sys_counters WHERE series = '${series}'`))[0]?.last_value;
-    if (JSON.stringify(nums) !== JSON.stringify(nums.map((_, i) => i + 1))) bad.push(`I5: ${series} has a gap or a repeat`);
-    if (nums.length && Number(last) !== nums.length) bad.push(`I5: ${series} counter ${last} but ${nums.length} numbers issued`);
-  }
-  return bad;
+  const r = await runInvariants(admin);
+  return r.rows.map((x) => `${x.invariant}: ${x.row_ref} ${x.detail}`);
 }
 
 describe('the lock-order workload on the real schema', () => {

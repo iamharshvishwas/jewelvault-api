@@ -27,6 +27,11 @@ async function schemaDump(c: Awaited<ReturnType<typeof migrationConn>>): Promise
     // AUTO_INCREMENT counters are data, not schema
     out.push(String(r[0]['Create Table']).replace(/ AUTO_INCREMENT=\d+/, ''));
   }
+  const [views] = await c.query<any[]>("SELECT TABLE_NAME AS n FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() ORDER BY 1");
+  for (const v of views) {
+    const [r] = await c.query<any[]>(`SHOW CREATE VIEW \`${v.n}\``);
+    out.push(String(r[0]['Create View']));
+  }
   return out.join('\n\n');
 }
 
