@@ -106,7 +106,7 @@ Model (`tests/sim.ts`, a small version of X1, X2, X5, X10, X12): idempotency cla
 
 - Counter SQL: `INSERT INTO counters (series, last_value) VALUES (?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE last_value = LAST_INSERT_ID(last_value + 1)`, then `SELECT LAST_INSERT_ID()` (per connection, so no second lock). Works for the first number of a new series too.
 - Rolled-back transaction gives the number back (1, 2, rollback, then 3 again). **AUTO_INCREMENT does not** (proved: gap after rollback), so it is not used for bill numbers.
-- 8 brand-new connections racing to create the same series: numbers 1 to 8, no duplicate-key error.
+- 8 brand-new connections racing to create the same series: numbers 1 to 8, no duplicate-key error, **as long as the first one does not roll back** (see F3 in section 8).
 - 8 workers x 120 attempts with **244 injected failures after the number was taken** and **54 killed connections**: the 662 committed bills carry exactly 1 to 662, counter = 662, no gap, no repeat.
 - A 1205 on the counter row issues nothing and burns no number; the next attempt continues the series.
 - Numbers already used by an import are skipped inside the same transaction (L3): counter at 4, bills 5 to 7 exist, next issued 8.
@@ -147,3 +147,7 @@ All read on 15 Oct 2026 through the MariaDB docs repository (`mariadb-corporatio
 ## 7. Step 2
 
 The Part A mapping (which spec rules cannot be done in MariaDB as written, what replaces each, what is still unknown on Hostinger) is in `PART-A-MARIADB-MAPPING.md`, backed by 15 more tests in `tests/g-parta-replacements.test.ts`. The Hostinger values and the photo decision (photos in MariaDB) are in `HOSTINGER-FACTS.md`, with 5 tests in `tests/h-hostinger-facts.test.ts`.
+
+## 8. Correction found on 15 Oct (F3): create the counter row BEFORE the transaction
+
+The Hostinger proof kit (`../jewelvault-proof`, runbook `API-00-HOSTINGER-PROOF.md`) reran the counter with a rolled-back first user and met error 1213. Reproduced locally and now a test (`tests/f-counter-gapless.test.ts`, last test): **when a series does not exist yet and its first user's transaction rolls back while two others wait, one of the two gets a deadlock** (`[null, 1213]`). Cause: the waiters take shared locks on the row that is being rolled back away, then both want it exclusively. **Rule:** a series row is created first with a single autocommit statement outside any transaction, `INSERT INTO sys_counters (series, last_value) VALUES (?, 0) ON DUPLICATE KEY UPDATE series = series`, and inside the transaction the number is taken with `UPDATE sys_counters SET last_value = LAST_INSERT_ID(last_value + 1) WHERE series = ?` followed by `SELECT LAST_INSERT_ID()`. With that, the same scenario gave `[null, null]` and numbers 1 and 2 (no gap). It matters for `bill:<prefix>:<year>` on 1 January, for `opening` and for `design:<prefix>` on first use; `sku:<design_no>` is made inside X8 where nobody else can know the new design number. The API's retry on 1213 would also have repaired it, but the number step should not rely on that.

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Connection } from 'mysql2/promise';
-import { appConn, dropDb, errorOf, ER, freshDb, rng, rootConn, runTx, sleep } from './helpers';
+import { appConn, dropDb, errorOf, ER, freshDb, rng, rootConn, runTx, sleep, type DbError } from './helpers';
 import { nextNumber } from './sim';
 
 // Spike (f): a counter table gives bill numbers without gaps or repeats, also under rollback, kill and timeout.
@@ -158,4 +158,38 @@ describe('(f) counter table', () => {
     expect(Number(rows[0].n)).toBe(1000);
     expect(Number(rows[0].mx)).toBe(1000);
   }, 120000);
+
+  it('FINDING (found by the Hostinger proof kit): the FIRST insert of a new series inside a transaction can deadlock when its transaction rolls back while two others wait; a series row created beforehand (autocommit) cannot', async () => {
+    const takeFirst = (conn: Connection, series: string) =>
+      conn.query('INSERT INTO counters (series, last_value) VALUES (?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE last_value = LAST_INSERT_ID(last_value + 1)', [series]);
+    const takeExisting = (conn: Connection, series: string) =>
+      conn.query('UPDATE counters SET last_value = LAST_INSERT_ID(last_value + 1) WHERE series = ?', [series]);
+    const scenario = async (series: string, take: (conn: Connection, s: string) => Promise<unknown>) => {
+      const [c1, c2, c3] = await Promise.all([c(), c(), c()]);
+      await c1.query('START TRANSACTION');
+      await take(c1, series); // the first user holds the row, not yet committed
+      const waiting = [c2, c3].map(async (x) => {
+        await x.query('START TRANSACTION');
+        try {
+          await take(x, series);
+          await x.query('COMMIT');
+          return null;
+        } catch (e) {
+          await x.query('ROLLBACK').catch(() => undefined);
+          return (e as DbError).errno ?? null;
+        }
+      });
+      await sleep(400); // both are now waiting for c1
+      await c1.query('ROLLBACK'); // the first user fails and gives the number back
+      return Promise.all(waiting);
+    };
+    const naive = await scenario('NAIVE-NEW', takeFirst);
+    console.log('[f] new series, first user rolls back, two waiters:', JSON.stringify(naive));
+    expect(naive).toContain(ER.DEADLOCK); // the trap is real on this server
+    await (await c()).query("INSERT INTO counters (series, last_value) VALUES ('SAFE-NEW', 0) ON DUPLICATE KEY UPDATE series = series"); // autocommit, before any transaction
+    const safe = await scenario('SAFE-NEW', takeExisting);
+    expect(safe).toEqual([null, null]);
+    const [[row]] = await (await c()).query<any[][]>("SELECT last_value FROM counters WHERE series = 'SAFE-NEW'");
+    expect((row as any).last_value).toBe('2'); // c1 rolled back, so the two waiters took 1 and 2: no gap
+  });
 });

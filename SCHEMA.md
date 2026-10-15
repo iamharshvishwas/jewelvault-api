@@ -64,7 +64,7 @@ Added tables: `users`, `sessions`, `sys_login_attempts`, `sys_job_runs`, `sys_er
 | D-Q1 | `users`, `sessions`, `sys_login_attempts` (email_hash, ip_hash, at), `sys_job_runs` (job, run_date unique, status), `sys_error_log`, `sys_idempotency` with `result` JSON. Done |
 | D-Q2 | Node writes audit rows and touches. The only trigger file is `db/optional/0900` (audit_log append-only), applied only if a trigger test on the real database passes |
 | D-Q3 | both: Node sets `updated_at` from its clock; the database default and `ON UPDATE` are a backstop (an explicit value in an UPDATE wins) |
-| D-Q4 | the spike's counter SQL on `sys_counters`; gapless under rollback, kill and timeout (spike f) and 0 deadlocks on the real schema (s8) |
+| D-Q4 | the spike's counter SQL on `sys_counters`, with one correction (spike F3): **create the series row first, in autocommit, outside the transaction**, then take numbers with `UPDATE ... SET last_value = LAST_INSERT_ID(last_value + 1)`; the first insert inside a transaction can deadlock when that transaction rolls back. Gapless under rollback, kill and timeout (spike f) and 0 deadlocks on the real schema (s8) |
 | D-Q5 | native `UUID` for every id and foreign key (tested: no CHAR(36) anywhere; a test fails on any other type). **Must be proved on Hostinger**: the first migration there fails at once if the server rejects `UUID` |
 | D-Q6 | not done in this step (views V1 to V4); default stays "MariaDB views, filtered by Node". Window functions and `SQL SECURITY INVOKER` views were tested to work |
 | D-Q7 | CHECKs for the S4 caps (named, 4025), the walk-in generated key; "one live line per piece" deliberately not a constraint (see above) |

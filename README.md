@@ -2,7 +2,7 @@
 
 Backend of JewelVault: Node.js + MariaDB 11.8 (Hostinger Business). Local git only, no remote.
 
-State on 15 Oct 2026: **steps 1, 2 and 3 are done** (`SCHEMA.md` is the draft schema, `db/` the SQL, `tests/schema` its 199 tests): `SPIKE-REPORT.md` (the spike) and `PART-A-MARIADB-MAPPING.md` (which Part A rules change on MariaDB). `HOSTINGER-FACTS.md` holds the values read from Harsh's account and the photo decision (photos in MariaDB). Nothing has been applied to Hostinger.
+State on 15 Oct 2026: **steps 1, 2 and 3 are done** (`SCHEMA.md` is the draft schema, `db/` the SQL, `tests/schema` its 199 tests): `SPIKE-REPORT.md` (the spike) and `PART-A-MARIADB-MAPPING.md` (which Part A rules change on MariaDB). `HOSTINGER-FACTS.md` holds the values read from Harsh's account and the photo decision (photos in MariaDB). Nothing has been applied to Hostinger. `API-00-HOSTINGER-PROOF.md` is the step-by-step proof Harsh runs in hPanel (the code is in the sibling repo `jewelvault-proof`).
 
 ```bash
 npm install
