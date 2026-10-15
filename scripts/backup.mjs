@@ -7,9 +7,9 @@
 // read in keyset pages, newline-delimited JSON: one object per row, every value text (DECIMAL and dates exactly as the server prints them, binary columns as hex, NULL as null).
 // Nothing depends on how the connection was configured. It holds NO table definitions (the migration files are the schema, B4), and it leaves out sessions, the login counters and the
 // idempotency rows older than 90 days. The connection must not be inside a transaction (START TRANSACTION commits one that is open).
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, mkdirSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { link, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import { once } from 'node:events';
@@ -254,13 +254,21 @@ export function directoryPhotos(dir) {
     throw e;
   };
   return {
+    // create-once like the bucket's If-None-Match: * (B2): written to a temporary name and linked into place, which fails when the name exists; the same bytes again are accepted
     put: async (id, kind, bytes) => {
       mkdirSync(dir, { recursive: true });
-      await new Promise((resolve, reject) => {
-        const s = createWriteStream(file(id, kind));
-        s.on('error', reject);
-        s.end(bytes, resolve);
-      });
+      const target = file(id, kind);
+      const tmp = `${target}.tmp-${randomUUID()}`;
+      await writeFile(tmp, bytes, { flag: 'wx' });
+      try {
+        await link(tmp, target);
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e;
+        const existing = await readFile(target);
+        if (!existing.equals(bytes)) throw new Error(`photo ${id}-${kind} already exists with different content; photos never change, nothing was overwritten`);
+      } finally {
+        await unlink(tmp).catch(() => undefined);
+      }
     },
     head: async (id, kind) => stat(file(id, kind)).then((s) => ({ size: s.size }), missing),
     get: async (id, kind) => readFile(file(id, kind)).catch(missing),

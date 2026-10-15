@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import mysql, { type Connection } from 'mysql2/promise';
@@ -275,6 +275,40 @@ describe('copyPhotosOnce (B2 part 2, D25)', () => {
     expect(Number((((await s.c.query<any[]>('SELECT COUNT(*) AS n FROM sys_photo_copies'))[0]) as any[])[0].n)).toBe(4);
     expect((await copyPhotosOnce(s.c, memoryPhotos())).copied).toBe(0);
     await s.c.end();
+  });
+});
+
+describe('directoryPhotos: the backup folder on the Hostinger plan (Harsh, 15 Oct: no R2) keeps the create-once rule of the bucket', () => {
+  const folder = () => {
+    const d = mkdtempSync(path.join(tmpdir(), 'jv-photos-'));
+    dirs.push(d);
+    return d;
+  };
+  it('an object is created once: the same bytes again are accepted and change nothing, other bytes under the same name are refused and the original stays', async () => {
+    const dir = folder();
+    const store = directoryPhotos(dir);
+    const id = uuid();
+    const a = randomBytes(500);
+    await store.put(id, 'full', a);
+    await store.put(id, 'full', a); // a retry after a half-finished run is safe
+    await expect(store.put(id, 'full', randomBytes(500))).rejects.toThrow(/already exists with different content/);
+    expect(readFileSync(path.join(dir, `${id}-full`))).toEqual(a);
+    expect(await store.head(id, 'full')).toEqual({ size: 500 });
+  });
+  it('writes atomically: no temporary file is left, and ten parallel puts of one photo give one intact file', async () => {
+    const dir = folder();
+    const store = directoryPhotos(dir);
+    const id = uuid();
+    const bytes = randomBytes(300_000);
+    await Promise.all(Array.from({ length: 10 }, () => store.put(id, 'thumb', bytes)));
+    expect(readdirSync(dir)).toEqual([`${id}-thumb`]);
+    expect(readFileSync(path.join(dir, `${id}-thumb`))).toEqual(bytes);
+  });
+  it('names are photos/<id>-<kind> flat in the folder, a missing object is null for head and get', async () => {
+    const dir = folder();
+    const store = directoryPhotos(dir);
+    expect(await store.head(uuid(), 'full')).toBeNull();
+    expect(await store.get(uuid(), 'thumb')).toBeNull();
   });
 });
 

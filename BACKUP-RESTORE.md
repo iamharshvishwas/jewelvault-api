@@ -9,8 +9,8 @@ Date: 15 October 2026. Draft, not run on Hostinger. Code: `scripts/backup.mjs` (
 | Read the database: a consistent read-only export, the once-only photo copy with the bucket's size check, row counts and hashes | `scripts/backup.mjs` | done, tested |
 | Rebuild an **empty** database from the migration files, the export and the photo copy, and prove it equal | `scripts/restore.mjs` | done, tested |
 | Age of the last good export and photo copy, last check, database size (P5), Delete/Drop rights | `scripts/health.mjs` | done, tested |
-| Spool each file to disk inside the snapshot, close it, then gzip, AES-256-GCM encrypt (per-file key wrapped by the RSA public key), upload with `If-None-Match: *`, bucket locks, slices of about 40 seconds, pruning `daily/` | the API's backup job (hourly tick, I8) | **not done**: plugs in through `Sink` and `PhotoStore` |
-| Download, decrypt, start a throw-away MariaDB 11.8 in Docker, call `restoreDatabase`, tick the runbook list, own read-only R2 token | the restore tool on Harsh's Mac | **not done**: plugs in through `Source` and `PhotoStore` |
+| Spool each file to disk inside the snapshot, close it, then gzip, AES-256-GCM encrypt (per-file key wrapped by the RSA public key), write to the backup folder (create-once), slices of about 40 seconds, pruning `daily/` | the API's backup job (hourly tick, I8) | **not done**: plugs in through `Sink` and `PhotoStore` |
+| Fetch from the plan's backup folder, decrypt, start a throw-away MariaDB 11.8 in Docker, call `restoreDatabase`, tick the runbook list | the restore tool on Harsh's Mac | **not done**: plugs in through `Source` and `PhotoStore` |
 | Writing the `backup_runs` rows (`db_dump`, `photo_copy`, `restore_drill`): `ok` only for a complete phase | the job / the tool | not done (the table and the checks exist) |
 
 ## The export (B2)
@@ -49,6 +49,10 @@ Measured locally: 63,000 rows (30,000 bills) export in about 1 second and restor
 - Size (P5): `DATA_LENGTH + INDEX_LENGTH` of every table except `design_photos`, after an `ANALYZE TABLE` of each, plus `SUM(byte_size)` of the live photos, plus 12 percent. `information_schema` alone lags badly for a few large rows (65 MB of photos read as 0.0 MB). `analyze: false` skips the ANALYZE when the API caches the answer.
 - Red: the last check says Problem; a check, export or photo copy older than 26 hours **or never run**; size above 2 GiB. Amber: nothing red but a Delete or Drop right is on (S11). `rights.extra` lists any other box of A3 that is on although it should be off (the start-up check notes it in the log, T-F08). "Never run" is red on purpose: a new shop is not backed up until the first tick has run.
 
+## Where the copies go (Harsh's decision of 15 Oct: no Cloudflare R2)
+
+The export files and the once-only photo copies go to a backup folder on the Hostinger plan (`~/domains/<site>/jv-backup/`, which survives redeploys) instead of an R2 bucket; same layout, same encryption, same create-once rule. In this code that is `directoryStore` (the export spool) and `directoryPhotos` (the photo copy): `put` links a temporary file into place, so a name is created once, the same bytes again are accepted (a retry after a half-finished run) and other bytes under the same name are refused; `head` is `stat`. `sys_photo_copies` and `backup_runs.kind = photo_copy` are unchanged. What is given up (per the API-design session): the off-site copy and the bucket locks, so a compromised app could delete backup files; Hostinger's own daily backup and the delete triggers are the only other protection, and the plan expires on 22 March 2027. The restore tool on the Mac must fetch the folder (SSH/SFTP) and hand `restoreDatabase` a `Source` and a `PhotoStore` over it.
+
 ## Left for the API session
 
-The hourly tick (I8) decides what is due, runs the phases in slices, writes `backup_runs`, `check_runs` and `sys_job_runs` rows, and owns encryption, the bucket, the 130-second limit and `GET /internal/jobs/health`. If the tick cannot reach the bucket from Hostinger (O48), the same `exportDatabase` runs from the Mac through Remote MySQL (O49) with a directory sink.
+The hourly tick (I8) decides what is due, runs the phases in slices, writes `backup_runs`, `check_runs` and `sys_job_runs` rows, and owns encryption, the backup folder, the 130-second limit and `GET /internal/jobs/health`. If the tick cannot write the backup folder (O48), the same `exportDatabase` runs from the Mac through Remote MySQL (O49) with a directory sink.

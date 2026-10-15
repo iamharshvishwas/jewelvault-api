@@ -4,11 +4,11 @@ import type { Connection } from 'mysql2/promise';
 export interface Sink { file(path: string): { write(chunk: string): Promise<void>; close(): Promise<void> } }
 /** Where an export is read from (restore). */
 export interface Source { text(path: string): Promise<string>; lines(path: string): AsyncIterable<string> }
-/** The photo copy: objects named photos/<photo id>-<kind> in the off-site bucket, a folder, or memory. */
+/** The photo copy: objects named <photo id>-<kind> in a backup folder (on the Hostinger plan since Harsh dropped R2 on 15 Oct, or any bucket), or in memory. */
 export interface PhotoStore {
-  /** Upload once. A key that already exists with the same size and sha256 counts as success (R2 answers 412, B2). */
+  /** Create once. A name that already exists with the same bytes counts as success; other bytes under the same name are an error and nothing is overwritten (R2 answered 412; the folder store links a temporary file into place). */
   put(id: string, kind: string, bytes: Buffer): Promise<void>;
-  /** HEAD: the stored size, or null when there is no such object. A copy is recorded only after this confirms the size (D25). */
+  /** The stored size, or null when there is no such object (a HEAD request, or stat on the folder). A copy is recorded only after this confirms the size (D25). */
   head(id: string, kind: string): Promise<{ size: number } | null>;
   get(id: string, kind: string): Promise<Buffer | null>;
 }
