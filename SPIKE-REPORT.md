@@ -151,4 +151,8 @@ All read on 15 Oct 2026 through the MariaDB docs repository (`mariadb-corporatio
 | `tests/helpers.ts`, `idem.ts`, `sim.ts` | connections, `runTx`, idempotency, the money-function model and invariant checks |
 | `oracle/pricing.ts` | read-only copy of the app's integer pricing |
 | `scripts/db-up.sh`, `db-down.sh` | start and remove the throw-away MariaDB |
-| `SPIKE-RUN-LOG.txt` | verbose output of the final run: 6 files passed, 59 tests passed, 1 skipped |
+| `SPIKE-RUN-LOG.txt` | verbose output of the final run: 7 files passed, 74 tests passed (59 from step 1, 15 from step 2), 1 opt-in test skipped |
+
+## 7. Step 2
+
+The Part A mapping (which spec rules cannot be done in MariaDB as written, what replaces each, what is still unknown on Hostinger) is in `PART-A-MARIADB-MAPPING.md`, backed by 15 more tests in `tests/g-parta-replacements.test.ts`.
