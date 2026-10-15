@@ -125,18 +125,9 @@ Model (`tests/sim.ts`, a small version of X1, X2, X5, X10, X12): idempotency cla
 9. **Names**: rename `settings.key` to `setting_key`, never name a table `lines`/`rows`/`order`; always back-tick generated SQL.
 10. **Text codes** trimmed in Node; **JSON** written with `JSON.stringify`, read as an object, money inside it as strings.
 
-## 4. Not verified: needs Harsh's Hostinger (read-only, nothing is created)
+## 4. Hostinger values (read on 15 Oct 2026, after this report's first version)
 
-Run in phpMyAdmin's SQL tab on the Business plan's database server; `SHOW`/`SELECT` only:
-
-```sql
-SHOW VARIABLES WHERE Variable_name IN ('sql_mode','log_bin','log_bin_trust_function_creators','max_connections','max_user_connections','wait_timeout','innodb_lock_wait_timeout','innodb_rollback_on_timeout','max_statement_time','time_zone','system_time_zone','event_scheduler','transaction_isolation','default_storage_engine','character_set_server','collation_server','innodb_deadlock_detect');
-SHOW GRANTS FOR CURRENT_USER();
-```
-
-What each answer decides: `sql_mode` (strict or not), `log_bin` + `log_bin_trust_function_creators` + grants (can we create triggers at all; if not, the audit/touch/forced-column logic moves into Node), `max_user_connections` (pool size), `innodb_rollback_on_timeout`, `max_statement_time` (default 0 = unlimited).
-
-Also untested: network latency and connection limits between Hostinger's Node and its database (the model ran on loopback); database backups (hPanel); hPanel cron (step 2); behaviour with the real spec functions (this spike used a model of them).
+Read from Harsh's account, read only: see `HOSTINGER-FACTS.md`. Headlines: `sql_mode` is **not strict**, idle connections die after **20 s**, `max_statement_time` 120 s, 75 connections per user, `log_bin` OFF, `event_scheduler` OFF, READ-COMMITTED, UTC, a Node.js cron type exists (every minute at the shortest), Delete/Drop can be unticked per user in hPanel. Still untested on Hostinger itself: creating a trigger, the database host name a Node app must use, whether cron sees the app's environment variables. Network latency between Hostinger's Node and its database is also still untested (the model ran on loopback); the server is in India.
 
 ## 5. Official documentation used
 
@@ -151,8 +142,8 @@ All read on 15 Oct 2026 through the MariaDB docs repository (`mariadb-corporatio
 | `tests/helpers.ts`, `idem.ts`, `sim.ts` | connections, `runTx`, idempotency, the money-function model and invariant checks |
 | `oracle/pricing.ts` | read-only copy of the app's integer pricing |
 | `scripts/db-up.sh`, `db-down.sh` | start and remove the throw-away MariaDB |
-| `SPIKE-RUN-LOG.txt` | verbose output of the final run: 7 files passed, 74 tests passed (59 from step 1, 15 from step 2), 1 opt-in test skipped |
+| `SPIKE-RUN-LOG.txt` | verbose output of the final run: 8 files passed, 79 tests passed (59 from step 1, 15 from step 2, 5 Hostinger-fact tests), 1 opt-in test skipped |
 
 ## 7. Step 2
 
-The Part A mapping (which spec rules cannot be done in MariaDB as written, what replaces each, what is still unknown on Hostinger) is in `PART-A-MARIADB-MAPPING.md`, backed by 15 more tests in `tests/g-parta-replacements.test.ts`.
+The Part A mapping (which spec rules cannot be done in MariaDB as written, what replaces each, what is still unknown on Hostinger) is in `PART-A-MARIADB-MAPPING.md`, backed by 15 more tests in `tests/g-parta-replacements.test.ts`. The Hostinger values and the photo decision (photos in MariaDB) are in `HOSTINGER-FACTS.md`, with 5 tests in `tests/h-hostinger-facts.test.ts`.

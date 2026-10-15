@@ -2,7 +2,7 @@
 
 Backend of JewelVault: Node.js + MariaDB 11.8 (Hostinger Business). Local git only, no remote.
 
-State on 15 Oct 2026: **steps 1 and 2 are done**: `SPIKE-REPORT.md` (the spike) and `PART-A-MARIADB-MAPPING.md` (which Part A rules change on MariaDB). The schema (step 3) starts only after Harsh says go.
+State on 15 Oct 2026: **steps 1 and 2 are done**: `SPIKE-REPORT.md` (the spike) and `PART-A-MARIADB-MAPPING.md` (which Part A rules change on MariaDB). `HOSTINGER-FACTS.md` holds the values read from Harsh's account and the photo decision (photos in MariaDB). The schema (step 3) starts only after Harsh says go.
 
 ```bash
 npm install
