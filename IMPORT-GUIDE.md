@@ -1,6 +1,6 @@
 # Import guide (spec 6.3, IM1 to IM8)
 
-Date: 15 October 2026. Draft, not run on Hostinger. The code is `scripts/import.mjs` (library), `scripts/import-cli.mjs` (the command) and `scripts/rebalance.mjs` (Y6, shared with the API's X12). 39 tests in `tests/schema/s15-import.test.ts`, 13 in `s14-rebalance.test.ts`.
+Date: 15 October 2026 (checked against spec draft 5). Draft, not run on Hostinger. The code is `scripts/import.mjs` (library), `scripts/import-cli.mjs` (the command) and `scripts/rebalance.mjs` (Y6, shared with the API's X12). 39 tests in `tests/schema/s15-import.test.ts`, 13 in `s14-rebalance.test.ts`.
 
 ## What it does and does not do
 
@@ -65,6 +65,6 @@ The report lists, per table, rows in the source, imported and rejected; the open
 
 ## What happens inside the transaction
 
-1. the batch row (`sys_import_batches`, name unique) 2. customers 3. designs 4. pieces and `sku_private` 5. opening bills (numbers from the `opening` counter, `OB-0001` on) and opening advances 6. rebalance of every customer with dues AND an advance of the same kind (`rebalance.mjs`) 7. one `audit_log` row per inserted row, no actor, role `import` (use `--audit none` if the database's own triggers write the audit, to avoid two rows) 8. `seedCounters` (IM3): `design:<prefix>`, `sku:<design_no>`, `bill:<prefix>:<year>` and `opening` continue after the largest number found, and the series' `seed_value` is raised so the nightly check (I5) leaves imported numbers alone 9. every written row gets the same fresh `updated_at` and `settings.data_epoch` moves (C4) 10. reconciliation. Then commit, `ANALYZE TABLE` for the tables that changed, and the nightly check.
+1. the batch row (`sys_import_batches`, name unique) 2. customers 3. designs 4. pieces and `sku_private` 5. opening bills (numbers from the `opening` counter, `OB-0001` on; the number is the `insertId` of the counter UPDATE, RM4-6) and opening advances 6. rebalance of every customer with dues AND an advance of the same kind (`rebalance.mjs`) 7. one `audit_log` row per inserted row, no actor, role `import` (use `--audit none` if the database's own triggers write the audit, to avoid two rows) 8. `seedCounters` (IM3): `design:<prefix>`, `sku:<design_no>`, `bill:<prefix>:<year>` and `opening` continue after the largest number found, and the series' `seed_value` is raised so the nightly check (I5) leaves imported numbers alone 9. every written row gets the same fresh `updated_at` and `settings.data_epoch` moves (C4) 10. reconciliation. Then commit, `ANALYZE TABLE` for the tables that changed, and the nightly check.
 
 Measured locally: 1,000 customers, 2,000 designs and 6,000 pieces go in in about 4 seconds (the limit of IM1 is 20 seconds per batch); a larger load is split into several packs with different batch names.

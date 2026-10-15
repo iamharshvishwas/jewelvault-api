@@ -1,8 +1,11 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { Connection } from 'mysql2/promise';
 import { afterAll, describe, expect, it } from 'vitest';
 import { dropDb } from '../helpers';
 import { listInvariantFiles, runInvariants, type InvariantRow } from '../../scripts/invariants.mjs';
-import { V, cleanWorld, insert, migratedDb, uuid } from './support';
+import { Q, V, cleanWorld, insert, migratedDb, uuid } from './support';
 
 // Spec section 12: runInvariants() returns the rows that break each rule; nothing means the books are right.
 // Mutation tests (T-B18): each test damages exactly one thing with direct SQL and expects the run to name that invariant and that row.
@@ -100,26 +103,25 @@ describe('mutation tests: one damaged thing, the right invariant names it', () =
     await c.end();
     await w2.c.end();
   });
-  it('I4: when V2 and V3 disagree with the base tables (a view that forgot the receipts)', async () => {
+  it('I4: when V3 disagrees with V2 and the base tables (an old ledger query that forgot the receipts), injected as the query', async () => {
     const { c, w } = await world();
-    await c.query(`CREATE OR REPLACE VIEW customer_ledger AS
-      SELECT customer_id, bill_date AS entry_date, created_at AS entry_at, 1 AS kind_rank, id,
+    const wrongV3 = `SELECT customer_id, bill_date AS entry_date, created_at AS entry_at, 1 AS kind_rank, id,
              SUM(grand_total) OVER (PARTITION BY customer_id ORDER BY bill_date, created_at, id) AS balance,
              SUM(fine_weight_due) OVER (PARTITION BY customer_id ORDER BY bill_date, created_at, id) AS fine_balance
-      FROM bills`);
-    const r = await runInvariants(c);
+      FROM bills`;
+    const r = await runInvariants(c, { queries: { V3: wrongV3 } });
     expect(has(r.rows, 'I4', w.a.id)).toBe(true);
+    expect((await runInvariants(c)).rows).toEqual([]); // the real V3 is back with the next run: nothing was changed in the database
     await c.end();
   });
-  it('I4: when V2 itself is wrong (a view that forgot refunds)', async () => {
+  it('I4: when V2 itself is wrong (an old query that forgot refunds)', async () => {
     const { c, w } = await world();
-    await c.query(`CREATE OR REPLACE VIEW customer_balances AS
-      SELECT cu.id, cu.updated_at, COALESCE(b.billed, 0) - COALESCE(r.received, 0) AS balance, 0.000 AS fine_balance,
+    const wrongV2 = `SELECT cu.id, cu.updated_at, COALESCE(b.billed, 0) - COALESCE(r.received, 0) AS balance, 0.000 AS fine_balance,
              0.00 AS outstanding, 0.00 AS advance, 0.000 AS fine_outstanding, 0.000 AS fine_advance
       FROM customers cu
       LEFT JOIN (SELECT customer_id, SUM(grand_total) billed FROM bills WHERE status = 'active' GROUP BY customer_id) b ON b.customer_id = cu.id
-      LEFT JOIN (SELECT customer_id, SUM(amount) received FROM receipts WHERE status = 'active' AND kind = 'money' GROUP BY customer_id) r ON r.customer_id = cu.id`);
-    expect(has((await runInvariants(c)).rows, 'I4', w.d.id)).toBe(true); // customer D has a refund
+      LEFT JOIN (SELECT customer_id, SUM(amount) received FROM receipts WHERE status = 'active' AND kind = 'money' GROUP BY customer_id) r ON r.customer_id = cu.id`;
+    expect(has((await runInvariants(c, { queries: { V2: wrongV2 } })).rows, 'I4', w.d.id)).toBe(true); // customer D has a refund
     await c.end();
   });
   it('I5: a gap in a bill-number series, and a counter that does not match', async () => {
@@ -202,16 +204,24 @@ describe('mutation tests: one damaged thing, the right invariant names it', () =
     expect(has((await runInvariants(d.c)).rows, 'I10', d.w.d.id)).toBe(true);
     for (const x of [a, b, d]) await x.c.end();
   });
-  it('I13: when V4 is wrong (a view that counts opening advances and ignores voids), the cash book no longer ties to the receipts', async () => {
+  it('I13: when V4 is wrong (an old query that counts opening advances and ignores voids), the cash book no longer ties to the receipts', async () => {
     const { c } = await world();
-    await c.query(`CREATE OR REPLACE VIEW daily_totals AS
-      SELECT paid_on AS business_date, mode,
+    const wrongV4 = `SELECT paid_on AS business_date, mode,
              SUM(CASE WHEN kind IN ('money', 'fine_cash') THEN amount ELSE 0 END) AS money_in,
              SUM(CASE WHEN kind = 'refund' THEN amount ELSE 0 END) AS money_out,
              SUM(CASE WHEN kind IN ('money', 'fine_cash') THEN amount ELSE -amount END) AS net
-      FROM receipts WHERE status = 'active' GROUP BY paid_on, mode`);
-    const r = await runInvariants(c);
+      FROM receipts WHERE status = 'active' GROUP BY paid_on, mode`;
+    const r = await runInvariants(c, { queries: { V4: wrongV4 } });
     expect(has(r.rows, 'I13', 'Other')).toBe(true); // the opening advance of 100 is counted
+    await c.end();
+  });
+  it('I13: the case of spec 12: a void of an OPENING receipt reverses money that V4 never counted (the real V4 with the is_opening filter taken out of its void branch)', async () => {
+    const { c, w } = await world();
+    await insert(c, 'receipts', V.receipt(w.d.id, { amount: '70.00', mode: 'Other', is_opening: 1, paid_on: '2026-09-30', status: 'voided', void_reason: 'wrong figure', voided_at: '2026-10-08 05:00:00.000000', voided_on: '2026-10-08', voided_by: uuid() }));
+    expect((await runInvariants(c)).rows.filter((x) => x.invariant === 'I13')).toEqual([]); // the real V4 adds nothing for it
+    const brokenV4 = Q.V4.replace("WHERE status = 'voided' AND is_opening = 0 AND", "WHERE status = 'voided' AND");
+    expect(brokenV4).not.toBe(Q.V4);
+    expect(has((await runInvariants(c, { queries: { V4: brokenV4 } })).rows, 'I13', 'Other')).toBe(true);
     await c.end();
   });
   it('counts are per invariant and rows are limited to the sample size', async () => {
@@ -252,6 +262,16 @@ describe('the invariant files themselves', () => {
     await runInvariants(c);
     expect(await level()).toBe(before);
     expect(before).toBe('READ-COMMITTED');
+    await c.end();
+  });
+  it('the invariant files reach V1 to V4 only through {{V1}} to {{V4}} (queries, not views), and an unknown placeholder is refused', async () => {
+    for (const f of listInvariantFiles()) expect(f.sql, f.name).not.toMatch(/\b(bill_summary|customer_balances|customer_ledger|daily_totals)\b/);
+    const { c } = await world();
+    const dir = mkdtempSync(path.join(tmpdir(), 'jv-inv-'));
+    writeFileSync(path.join(dir, 'I99_fake.sql'), "-- I99 (spec 12) a fake file\nSELECT 'I99' AS invariant, 'x' AS row_ref, 'y' AS detail FROM {{V9}} t");
+    await expect(runInvariants(c, { dir })).rejects.toThrow(/\{\{V9\}\}/);
+    rmSync(dir, { recursive: true, force: true });
+    await c.query('SELECT 1'); // the connection is still usable
     await c.end();
   });
   it('runs with the split_materialized plan switched off (it made I10 take minutes after a bulk load) and puts the switch back, also after a failure', async () => {

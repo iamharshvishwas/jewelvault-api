@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dropDb, errorOf } from '../helpers';
-import { migratedDb } from './support';
+import { Q, migratedDb } from './support';
 
 // Catalogue tests: the shape of the whole schema, read from information_schema. They replace the Supabase advisor (A7, T-D11).
 
@@ -37,10 +37,16 @@ describe('shape of the schema', () => {
     expect(r.map((x) => x.n).sort()).toEqual(EXPECTED_TABLES);
   });
 
-  it('has exactly the four derived views of spec section 11, all SQL SECURITY INVOKER', async () => {
-    const [r] = await c.query<any[]>("SELECT TABLE_NAME n, SECURITY_TYPE s FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() ORDER BY 1");
-    expect(r.map((x) => x.n)).toEqual(['bill_summary', 'customer_balances', 'customer_ledger', 'daily_totals']);
-    for (const v of r) expect(v.s, v.n).toBe('INVOKER');
+  it('has NO database view (S7, S9, section 11: a view can be created once and never changed without the Drop right) and the four derived reads are query files', async () => {
+    const [r] = await c.query<any[]>("SELECT TABLE_NAME n FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE()");
+    expect(r).toEqual([]);
+    expect(Object.keys(Q).sort()).toEqual(['V1', 'V2', 'V2_one', 'V3', 'V4']);
+    for (const [name, sql] of Object.entries(Q)) expect(sql, name).toMatch(/^SELECT\b/);
+  });
+
+  it('receipt_allocations has an index that starts with customer_id (D19): the balance of one customer reads by it (RM4-14)', async () => {
+    const [r] = await c.query<any[]>("SELECT INDEX_NAME AS i FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'receipt_allocations' AND SEQ_IN_INDEX = 1 AND COLUMN_NAME = 'customer_id'");
+    expect(r.length).toBeGreaterThan(0);
   });
 
   it('every table is InnoDB with utf8mb4_unicode_ci and has a primary key', async () => {
@@ -147,7 +153,7 @@ describe('shape of the schema', () => {
       'sys_job_runs(job,run_date)', 'sys_import_batches(name)',
     ].sort();
     expect(found).toEqual(allowed);
-    const mutable = ['status', 'archived_at', 'released_at', 'voided_at', 'active', 'role', 'is_live', 'cancelled_at', 'updated_at', 'sold_bill_id'];
+    const mutable = ['status', 'archived_at', 'released_at', 'voided_at', 'voided_on', 'active', 'role', 'is_live', 'cancelled_at', 'cancelled_on', 'updated_at', 'sold_bill_id'];
     for (const x of r) for (const col of String(x.cols).split(',')) expect(mutable, `${x.t}.${col} is mutable`).not.toContain(col);
   });
 

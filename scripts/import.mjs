@@ -15,10 +15,12 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { one } from './backup.mjs';
 import { runInvariants } from './invariants.mjs';
+import { loadQueries } from './queries.mjs';
 import { fromUnits, rebalanceCustomer, toUnits } from './rebalance.mjs';
 
 const LIMITS = JSON.parse(readFileSync(new URL('../db/limits.json', import.meta.url), 'utf8'));
 const WALKIN_ID = '00000000-0000-4000-8000-000000000001';
+const Q = loadQueries(); // V2 customer_balances as a query (section 11: not a view)
 const STRICT_MODE = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
 const CUSTOMER_TYPES = ['Retail', 'Semi-Wholesale', 'Wholesale'];
 const IMPORT_STATUSES = ['In Stock', 'Reserved', 'On Approval', 'Returned', 'Repair', 'Transferred', 'Missing', 'Damaged'];
@@ -415,7 +417,7 @@ export async function runImport(conn, pack, opts = {}) {
     await hook('skus');
 
     // ---- step: opening rows (D15)
-    const walkBefore = await one(conn, 'SELECT outstanding, advance FROM customer_balances WHERE id = ?', [WALKIN_ID]);
+    const walkBefore = await one(conn, `SELECT outstanding, advance FROM (${Q.V2_one}) cb`, [WALKIN_ID]);
     const opening = customers.filter((c) => c.dues.units > 0n || c.fine_due.units > 0n || c.advance.units > 0n || c.fine_advance.units > 0n);
     const billCols = ['id', 'bill_no', 'customer_id', 'bill_date', 'doc_type', 'sale_type', 'status', 'subtotal', 'grand_total', 'fine_weight_due', 'import_batch_id'];
     const billRows = [];
@@ -501,7 +503,7 @@ export async function runImport(conn, pack, opts = {}) {
     };
     const ids = customers.map((c) => c.id);
     const balances = new Map();
-    for (const part of chunks(ids, 500)) for (const r of (await conn.query('SELECT id, outstanding, advance, fine_outstanding, fine_advance FROM customer_balances WHERE id IN (?)', [part]))[0]) balances.set(r.id, r);
+    for (const part of chunks(ids, 500)) for (const r of (await conn.query(`SELECT cb.id, cb.outstanding, cb.advance, cb.fine_outstanding, cb.fine_advance FROM (${Q.V2}) cb WHERE cb.id IN (?)`, [part]))[0]) balances.set(r.id, r);
     const net = (a, b) => (a > b ? [a - b, 0n] : [0n, b - a]);
     for (const c of customers) {
       const got = balances.get(c.id);
@@ -546,13 +548,16 @@ function finish(report) {
   return report;
 }
 
-/** OB-nnnn from the counter of the series 'opening' (L3), skipping any number that already exists (at most 100 tries). */
+/**
+ * OB-nnnn from the counter of the series 'opening' (L3), skipping any number that already exists (at most 100 tries). The number is the insertId of the counter UPDATE
+ * (the OK packet of LAST_INSERT_ID(expr)), with no statement between: a SELECT LAST_INSERT_ID() could answer an audit id (RM4-6).
+ */
 async function nextOpeningNumber(conn) {
   await conn.query("INSERT INTO sys_counters (series, last_value) VALUES ('opening', 0) ON DUPLICATE KEY UPDATE series = series");
   for (let tries = 0; tries < 100; tries++) {
-    await conn.query("UPDATE sys_counters SET last_value = LAST_INSERT_ID(last_value + 1) WHERE series = 'opening'");
-    const r = await one(conn, 'SELECT LAST_INSERT_ID() AS n');
-    const billNo = `OB-${String(Number(r.n)).padStart(4, '0')}`;
+    const [res] = await conn.query("UPDATE sys_counters SET last_value = LAST_INSERT_ID(last_value + 1) WHERE series = 'opening'");
+    if (!res.insertId) throw new Error('the counter UPDATE did not return the new number');
+    const billNo = `OB-${String(Number(res.insertId)).padStart(4, '0')}`;
     const [exists] = await conn.query('SELECT 1 FROM bills WHERE bill_no = ?', [billNo]);
     if (exists.length === 0) return billNo;
   }

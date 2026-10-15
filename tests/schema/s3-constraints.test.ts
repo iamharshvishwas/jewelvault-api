@@ -241,7 +241,7 @@ describe('customers (D10, K5)', () => {
 
 describe('bills (D11, R8, K1, K6)', () => {
   const cancelled = (o: Record<string, unknown> = {}) =>
-    V.bill(w.customer.id, { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-15 11:00:00.000000', cancelled_by: uuid(), ...o });
+    V.bill(w.customer.id, { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-15 11:00:00.000000', cancelled_on: '2026-10-15', cancelled_by: uuid(), ...o });
   run([
     ['a valid estimate', 'bills', () => V.bill(w.customer.id), null],
     ['an unknown document type is refused', 'bills', () => V.bill(w.customer.id, { doc_type: 'invoice' }), CHECK],
@@ -251,6 +251,8 @@ describe('bills (D11, R8, K1, K6)', () => {
     ['cancelled without a reason is refused', 'bills', () => cancelled({ cancel_reason: null }), CHECK],
     ['cancelled without a time is refused', 'bills', () => cancelled({ cancelled_at: null }), CHECK],
     ['cancelled without a person is refused', 'bills', () => cancelled({ cancelled_by: null }), CHECK],
+    ['cancelled without a business day is refused (D11: cancelled_on, from the API\'s Asia/Kolkata clock, so no query converts a UTC stamp)', 'bills', () => cancelled({ cancelled_on: null }), CHECK],
+    ['an active bill with a cancelled_on is refused', 'bills', () => V.bill(w.customer.id, { cancelled_on: '2026-10-15' }), CHECK],
     ['an active bill with cancel data is refused', 'bills', () => V.bill(w.customer.id, { cancel_reason: 'x' }), CHECK],
     ['an estimate total with paise is refused (R8: always a whole rupee)', 'bills', () => V.bill(w.customer.id, { grand_total: '1000.50' }), CHECK],
     ['an opening-balance bill may carry paise', 'bills', () => V.bill(w.customer.id, { doc_type: 'opening_balance', subtotal: '0.00', grand_total: '1000.50' }), null],
@@ -320,7 +322,7 @@ describe('bill_items (D12, R6, R7)', () => {
 
 describe('receipts and allocations (D13, D14, Y1, Y2)', () => {
   const voided = (o: Record<string, unknown> = {}) =>
-    V.receipt(w.customer.id, { status: 'voided', void_reason: 'entered twice', voided_at: '2026-10-15 12:00:00.000000', voided_by: uuid(), ...o });
+    V.receipt(w.customer.id, { status: 'voided', void_reason: 'entered twice', voided_at: '2026-10-15 12:00:00.000000', voided_on: '2026-10-15', voided_by: uuid(), ...o });
   run([
     ['a cash receipt', 'receipts', () => V.receipt(w.customer.id), null],
     ['there is no "Credit" mode (Y2)', 'receipts', () => V.receipt(w.customer.id, { mode: 'Credit' }), CHECK],
@@ -387,28 +389,43 @@ describe('logs and system tables (D16 to D18, I8, L5)', () => {
     ['a job run', 'sys_job_runs', () => ({ job: `nightly_${u()}`, run_date: '2026-10-15', status: 'running' }), null],
     ['a job status outside running, ok, failed is refused', 'sys_job_runs', () => ({ job: `nightly_${u()}`, run_date: '2026-10-15', status: 'weird' }), CHECK],
     ['an import batch', 'sys_import_batches', () => ({ id: uuid(), name: `b-${u()}`, row_counts: { designs: 3 } }), null],
-    ['a login attempt', 'sys_login_attempts', () => ({ email_hash: randomBytes(32), ip_hash: randomBytes(32) }), null],
+    ['a login counter (D24): a scope, a slot, the window start and a count', 'sys_login_attempts', () => ({ scope: 'email', slot: 700 + Math.floor(Math.random() * 300), window_start: '2026-10-15 10:00:00.000000', n: 1 }), null],
+    ['the hourly failure count of the audit summary is one more row (scope audit, slot 0)', 'sys_login_attempts', () => ({ scope: 'audit', slot: 0, window_start: '2026-10-15 10:00:00.000000', n: 3 }), null],
+    ['a scope outside email, addr, any and audit is refused', 'sys_login_attempts', () => ({ scope: 'user', slot: 1, window_start: '2026-10-15 10:00:00.000000', n: 1 }), CHECK],
+    ['a slot of 1024 or more is refused: the table can never hold more than 2,050 rows whatever is sent', 'sys_login_attempts', () => ({ scope: 'addr', slot: 1024, window_start: '2026-10-15 10:00:00.000000', n: 1 }), CHECK],
+    ['a negative slot is refused', 'sys_login_attempts', () => ({ scope: 'addr', slot: -1, window_start: '2026-10-15 10:00:00.000000', n: 1 }), CHECK],
+    ['a negative count is refused', 'sys_login_attempts', () => ({ scope: 'any', slot: 0, window_start: '2026-10-15 10:00:00.000000', n: -1 }), CHECK],
     ['an error log row', 'sys_error_log', () => ({ level: 'error', code: 'JV_INTERNAL', message: 'x' }), null],
     ['an error level outside the list is refused', 'sys_error_log', () => ({ level: 'loud', code: 'X', message: 'x' }), CHECK],
   ]);
-  describe('photo copy tracking (D-Q11): which photos have been copied to the off-site bucket', () => {
+  describe('photo copy tracking (D25, B2): which photo objects are safely in the off-site bucket', () => {
     const mk = async (o: Record<string, unknown> = {}) => {
       const id = uuid();
       const base = { id, kind: 'full', design_id: uuid(), mime: 'image/jpeg', byte_size: 3, sha256: randomBytes(32), bytes: Buffer.from([1, 2, 3]), ...o };
       await insert(c, 'design_photos', base);
       return base;
     };
-    const copy = (p: { id: string; kind: string }, o: Record<string, unknown> = {}) => ({ photo_id: p.id, kind: p.kind, sha256: randomBytes(32), object_key: `photos/${p.id}/${p.kind}`, ...o });
-    it('a copy row needs an existing photo row and is made once per photo and kind', async () => {
+    const copy = (p: { id: string; kind: string }, o: Record<string, unknown> = {}) => ({ photo_id: p.id, kind: p.kind, sha256: randomBytes(32), size: 3, ...o });
+    it('a copy row is made once per photo and kind', async () => {
       const p = await mk();
       await insert(c, 'sys_photo_copies', copy(p));
       expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p))))?.errno).toBe(DUP);
-      expect((await errorOf(() => insert(c, 'sys_photo_copies', { photo_id: uuid(), kind: 'full', sha256: randomBytes(32), object_key: 'photos/x' })))?.errno).toBe(FK);
+      await insert(c, 'sys_photo_copies', copy(p, { kind: 'thumb' }));
     });
-    it('the hash must be 32 bytes, and a kind that no photo row has is refused by the foreign key', async () => {
+    it('it has NO foreign key (D25): a removed photo keeps its copy row, and the row says what the bucket holds', async () => {
+      const p = await mk();
+      await insert(c, 'sys_photo_copies', copy(p));
+      await c.query("UPDATE design_photos SET removed_at = '2026-10-15 12:00:00.000000', bytes = NULL WHERE id = ? AND kind = ?", [p.id, p.kind]); // P3: the owner removes the photo
+      const [r] = await c.query<any[]>('SELECT COUNT(*) AS n FROM sys_photo_copies WHERE photo_id = ?', [p.id]);
+      expect(Number(r[0].n)).toBe(1);
+      await insert(c, 'sys_photo_copies', copy({ id: uuid(), kind: 'full' })); // not even a photo row is needed
+    });
+    it('the hash must be 32 bytes, the size 1 byte to 2 MiB, and the kind full or thumb', async () => {
       const p = await mk();
       expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p, { sha256: randomBytes(31) }))))?.errno).toBe(CHECK);
-      expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p, { kind: 'medium' }))))?.errno).toBe(FK);
+      expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p, { size: 0 }))))?.errno).toBe(CHECK);
+      expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p, { size: 2097153 }))))?.errno).toBe(CHECK);
+      expect((await errorOf(() => insert(c, 'sys_photo_copies', copy(p, { kind: 'medium' }))))?.errno).toBe(CHECK);
     });
     it('the job\'s "not copied yet" list holds the live photos with no copy row, oldest first, and skips removed ones', async () => {
       const design = uuid();
@@ -421,11 +438,6 @@ describe('logs and system tables (D16 to D18, I8, L5)', () => {
          WHERE p.design_id = ? AND k.photo_id IS NULL AND p.removed_at IS NULL ORDER BY p.created_at, p.id LIMIT 20`, [design]);
       expect(todo.map((r) => r.id)).toEqual([b.id]);
       expect(todo.map((r) => r.id)).not.toContain(gone.id);
-    });
-    it('a photo that has a copy row cannot be deleted (and no photo row is ever deleted)', async () => {
-      const p = await mk();
-      await insert(c, 'sys_photo_copies', copy(p));
-      expect((await errorOf(() => c.query('DELETE FROM design_photos WHERE id = ? AND kind = ?', [p.id, p.kind])))?.errno).toBe(ER.ROW_IS_REFERENCED);
     });
   });
 

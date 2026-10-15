@@ -6,8 +6,8 @@ SELECT 'I4' AS invariant,
        CONCAT_WS('; ',
          IF(t.v2_balance <> t.calc_balance, CONCAT('rupee balance: view ', t.v2_balance, ' but base tables give ', t.calc_balance), NULL),
          IF(t.v2_fine <> t.calc_fine, CONCAT('silver balance: view ', t.v2_fine, ' g but base tables give ', t.calc_fine, ' g'), NULL),
-         IF(t.v2_balance <> t.ledger_balance, CONCAT('rupee balance: customer_balances ', t.v2_balance, ' but the last ledger row says ', t.ledger_balance), NULL),
-         IF(t.v2_fine <> t.ledger_fine, CONCAT('silver balance: customer_balances ', t.v2_fine, ' g but the last ledger row says ', t.ledger_fine, ' g'), NULL)
+         IF(t.v2_balance <> t.ledger_balance, CONCAT('rupee balance: V2 ', t.v2_balance, ' but the last ledger row says ', t.ledger_balance), NULL),
+         IF(t.v2_fine <> t.ledger_fine, CONCAT('silver balance: V2 ', t.v2_fine, ' g but the last ledger row says ', t.ledger_fine, ' g'), NULL)
        ) AS detail
 FROM (
   SELECT cu.id AS id,
@@ -21,12 +21,12 @@ FROM (
          COALESCE(l.balance, 0) AS ledger_balance,
          COALESCE(l.fine_balance, 0) AS ledger_fine
   FROM customers cu
-  JOIN customer_balances cb ON cb.id = cu.id
+  JOIN {{V2}} cb ON cb.id = cu.id
   LEFT JOIN (
     SELECT x.customer_id AS customer_id, x.balance AS balance, x.fine_balance AS fine_balance
     FROM (SELECT cl.customer_id, cl.balance, cl.fine_balance,
                  ROW_NUMBER() OVER (PARTITION BY cl.customer_id ORDER BY cl.entry_date DESC, cl.entry_at DESC, cl.kind_rank DESC, cl.id DESC) AS rn
-          FROM customer_ledger cl) x
+          FROM {{V3}} cl) x
     WHERE x.rn = 1
   ) l ON l.customer_id = cu.id
 ) t

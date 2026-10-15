@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dropDb, rng } from '../helpers';
 import { runInvariants } from '../../scripts/invariants.mjs';
 import { fromUnits, rebalanceCustomer, toUnits } from '../../scripts/rebalance.mjs';
-import { V, insert, migratedDb, uuid } from './support';
+import { T, V, insert, migratedDb, uuid } from './support';
 
 // Spec Y3, Y6, Y9, K5 and I10 (T-B07, T-B14, T-B21, T-B22 database half): the advance is applied to the oldest pending bills, oldest receipt first, never changing an existing allocation.
 
@@ -29,7 +29,7 @@ const live = async (cu: string) =>
   ((await c.query<any[]>(
     `SELECT al.receipt_id, al.bill_id, al.amount, al.fine_grams FROM receipt_allocations al JOIN receipts r ON r.id = al.receipt_id
       WHERE al.customer_id = ? AND al.released_at IS NULL AND r.status = 'active' ORDER BY al.created_at, al.id`, [cu]))[0]) as any[];
-const v2 = async (cu: string) => ((await c.query<any[]>('SELECT outstanding, advance, fine_outstanding, fine_advance, balance FROM customer_balances WHERE id = ?', [cu]))[0] as any[])[0];
+const v2 = async (cu: string) => ((await c.query<any[]>(`SELECT outstanding, advance, fine_outstanding, fine_advance, balance FROM ${T.customer_balances} WHERE id = ?`, [cu]))[0] as any[])[0];
 
 describe('exact units', () => {
   it('paise and milligrams are integers inside, text outside; more decimals than the scale are refused', () => {
@@ -109,10 +109,10 @@ describe('rebalanceCustomer: money', () => {
 
   it('ignores a cancelled bill, a voided receipt and an allocation that was released', async () => {
     const cu = await customer();
-    const cancelled = { status: 'cancelled', cancel_reason: 'x', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_by: uuid() };
+    const cancelled = { status: 'cancelled', cancel_reason: 'x', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_on: '2026-10-04', cancelled_by: uuid() };
     await bill(cu.id, '2026-10-01', '800.00', cancelled);
     const open = await bill(cu.id, '2026-10-02', '200.00');
-    await money(cu.id, '2026-10-01', '500.00', { status: 'voided', void_reason: 'x', voided_at: '2026-10-03 09:00:00.000000', voided_by: uuid() });
+    await money(cu.id, '2026-10-01', '500.00', { status: 'voided', void_reason: 'x', voided_at: '2026-10-03 09:00:00.000000', voided_on: '2026-10-03', voided_by: uuid() });
     const good = await money(cu.id, '2026-10-03', '120.00');
     const old = await bill(cu.id, '2026-09-20', '999.00', cancelled);
     await insert(c, 'receipt_allocations', V.allocation(good.id, old.id, cu.id, { amount: '120.00', released_at: '2026-10-04 09:00:00.000000' })); // released when the bill was cancelled
@@ -194,14 +194,14 @@ describe('rebalanceCustomer: property test against the nightly check (I3, I4, I1
         const cancelled = rand() < 0.15;
         bills.push((await bill(cu.id, `2026-0${1 + Math.floor(rand() * 9)}-1${Math.floor(rand() * 9)}`, fmt(total), {
           fine_weight_due: rand() < 0.4 ? (cents(40) / 100).toFixed(3) : '0.000',
-          ...(cancelled ? { status: 'cancelled', cancel_reason: 'x', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_by: uuid() } : {}),
+          ...(cancelled ? { status: 'cancelled', cancel_reason: 'x', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_on: '2026-10-04', cancelled_by: uuid() } : {}),
         })).id);
       }
       let received = 0;
       for (let j = 0, k = Math.floor(rand() * 4); j < k; j++) {
         const amt = cents(60);
         received += amt;
-        const voided = rand() < 0.15 ? { status: 'voided', void_reason: 'x', voided_at: '2026-10-05 09:00:00.000000', voided_by: uuid() } : {};
+        const voided = rand() < 0.15 ? { status: 'voided', void_reason: 'x', voided_at: '2026-10-05 09:00:00.000000', voided_on: '2026-10-05', voided_by: uuid() } : {};
         if (Object.keys(voided).length) received -= amt;
         await money(cu.id, `2026-0${1 + Math.floor(rand() * 9)}-0${1 + Math.floor(rand() * 9)}`, fmt(amt), voided);
         if (rand() < 0.3) await silver(cu.id, `2026-0${1 + Math.floor(rand() * 9)}-2${Math.floor(rand() * 9)}`, (cents(30) / 100).toFixed(3));

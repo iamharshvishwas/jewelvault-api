@@ -1,26 +1,47 @@
-// B4 / T-R02, the database half: rebuild an EMPTY database from an export (scripts/backup.mjs) and the photo copy, then prove it equal.
+// B4 / T-R02 (draft 5), the database half: rebuild an EMPTY database from an export (scripts/backup.mjs) and the photo copy, then prove it equal.
 // Decryption, downloading from the bucket and the throw-away Docker database are the Mac tool's job; it hands this function a Source and a PhotoStore.
 //
-// What it does, in order, and why:
-//  1. refuses a database that already has any table (a restore must never touch live data);
-//  2. checks the sha256 of every data file against the manifest BEFORE creating anything (a damaged or edited file stops here);
-//  3. creates the tables from the recorded SHOW CREATE TABLE statements (foreign keys off while loading: bills.reissue_of points at another bill),
-//     loads the rows in batches, puts each live photo's bytes back from the photo copy (checking its sha256), then creates the views and the triggers
-//     (triggers last, so they cannot fire on the load; the DEFINER of the source account is dropped);
-//  4. switches the foreign keys on and looks for orphans; exports the restored database again and compares every table's content hash with the manifest;
-//     checks every restored photo against its recorded sha256 inside the database; runs the nightly check (runInvariants) on the copy.
-// The report says ok only if all of that is clean. A failed restore leaves a partly filled database: drop it and start again.
+// The order of B4, and why:
+//  0. refuse a database that already has any table or view (a restore must never touch live data), refuse an export in another format, check the sha256 of EVERY data file against the
+//     manifest and the migration files against the ones the export was made with: all before anything is created;
+//  1. apply the migration files (without the trigger files) as the restricted user of A3, so that schema_migrations agrees with the repository: the export holds no table definitions;
+//  2. load the data in FOREIGN-KEY order, parents before children, the order derived from the foreign keys the migrations made (the keys stay ON; a table that points at itself,
+//     bills.reissue_of, is loaded in waves, the replaced bill first);
+//  3. insert each live design_photos row TOGETHER with its bytes from the photo copy (size and sha256 checked): the export has no bytes and the CHECK of D26 refuses a live row without
+//     them. A photo that is missing or does not match is inserted as a TOMBSTONE (removed_at = the restore time) and listed; the owner decides about each one;
+//  4. tombstones are restored as they are;
+//  5. the trigger files last (when the source had triggers), so that loading writes no audit rows of its own;
+//  6. ANALYZE, a foreign-key check, the export read again and every table's content hash compared with the manifest (so the row counts too), every restored photo checked against its
+//     sha256 inside the database, and the nightly check run on the copy.
+// The report says ok only if all of that is clean and no photo had to be tombstoned. A failed restore leaves a partly filled database: drop it and start again.
 import { createHash } from 'node:crypto';
-import { EXCLUDED, FORMAT, exportDatabase, memoryStore, one, q, stripDefiner } from './backup.mjs';
+import { FORMAT, exportDatabase, memoryStore, one, q } from './backup.mjs';
 import { runInvariants } from './invariants.mjs';
+import { listMigrations, migrate } from './migrate.mjs';
 
-const STRICT = "STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION";
 const BATCH_BYTES = 4 * 1024 * 1024;
 
 async function sha256OfLines(source, file) {
   const hash = createHash('sha256');
   for await (const line of source.lines(file)) hash.update(line + '\n');
   return hash.digest('hex');
+}
+
+/** Tables in an order where every table comes after the tables it points at (self-references aside). Ties by name. */
+function loadOrder(names, fks) {
+  const deps = new Map(names.map((n) => [n, new Set()]));
+  for (const f of fks) if (f.t !== f.r && deps.has(f.t) && deps.has(f.r)) deps.get(f.t).add(f.r);
+  const order = [];
+  const done = new Set();
+  while (order.length < names.length) {
+    const ready = names.filter((n) => !done.has(n) && [...deps.get(n)].every((d) => done.has(d)));
+    if (ready.length === 0) throw new Error(`the foreign keys form a cycle between tables: ${names.filter((n) => !done.has(n)).join(', ')}`);
+    for (const n of ready) {
+      order.push(n);
+      done.add(n);
+    }
+  }
+  return order;
 }
 
 export async function restoreDatabase(conn, source, photos, opts = {}) {
@@ -38,94 +59,119 @@ export async function restoreDatabase(conn, source, photos, opts = {}) {
     if (actual !== t.sha256) throw new Error(`restore refused: the file of table ${t.name} (${t.file}) does not match the hash in the manifest; it was changed or damaged after the export`);
   }
 
-  await conn.query(`SET SESSION sql_mode = '${STRICT}'`);
-  await conn.query('SET SESSION foreign_key_checks = 0');
-  const missing = [];
-  const mismatched = [];
-  const skippedPhotos = new Set();
-  let restoredPhotos = 0;
-  try {
-    for (const t of manifest.tables) await conn.query(t.create);
-
-    // design_photos first: its rows need their bytes, and sys_photo_copies rows of a skipped photo must be skipped too
-    const order = [...manifest.tables].sort((a, b) => (a.name === 'design_photos' ? -1 : b.name === 'design_photos' ? 1 : 0));
-    for (const t of order) {
-      const isPhotos = t.name === 'design_photos';
-      const cols = [...t.columns, ...(isPhotos ? [{ name: 'bytes', binary: true, raw: true }] : [])];
-      const colSql = cols.map((c) => q(c.name)).join(', ');
-      const cell = (c) => (c.binary && !c.raw ? 'UNHEX(?)' : '?');
-      const rowSql = `(${cols.map(cell).join(', ')})`;
-      let batch = [];
-      let batchBytes = 0;
-      const flush = async () => {
-        if (batch.length === 0) return;
-        await conn.query(`INSERT INTO ${q(t.name)} (${colSql}) VALUES ${batch.map(() => rowSql).join(', ')}`, batch.flat());
-        batch = [];
-        batchBytes = 0;
-      };
-      for await (const line of source.lines(t.file)) {
-        const row = JSON.parse(line);
-        if (t.name === 'sys_photo_copies' && skippedPhotos.has(`${row.photo_id}/${row.kind}`)) continue;
-        const values = t.columns.map((c) => (row[c.name] === undefined ? null : row[c.name]));
-        let size = line.length;
-        if (isPhotos) {
-          let bytes = null;
-          if (row.removed_at === null) {
-            bytes = await photos.get(row.id, row.kind);
-            if (bytes === null) {
-              missing.push({ id: row.id, kind: row.kind });
-              skippedPhotos.add(`${row.id}/${row.kind}`);
-              continue;
-            }
-            if (createHash('sha256').update(bytes).digest('hex').toUpperCase() !== String(row.sha256).toUpperCase() || bytes.length !== Number(row.byte_size)) {
-              mismatched.push({ id: row.id, kind: row.kind });
-              continue;
-            }
-            restoredPhotos += 1;
-            size += bytes.length;
-          }
-          values.push(bytes);
-        }
-        batch.push(values);
-        batchBytes += size;
-        if (batch.length >= pageSize || batchBytes >= BATCH_BYTES) await flush();
-      }
-      await flush();
+  const repo = listMigrations(opts.migrationsDir);
+  const wanted = manifest.migrations ?? [];
+  for (let i = 0; i < Math.max(repo.length, wanted.length); i++) {
+    const a = repo[i];
+    const b = wanted[i];
+    if (!a || !b || a.version !== b.version || a.checksum !== b.checksum) {
+      throw new Error(`restore refused: the migration files here are not the ones the export was made with (migration ${(b ?? a).version}${b ? '' : ' is not in the export'}${a ? '' : ' is missing here'}); the files are the schema, use the repository state of the export`);
     }
-
-    if (mismatched.length) throw new Error(`restore failed: ${mismatched.length} photo(s) in the photo copy do not match their recorded sha256: ${mismatched.slice(0, 10).map((m) => `${m.id}/${m.kind}`).join(', ')}`);
-    if (missing.length && !opts.allowMissingPhotos) {
-      throw new Error(`restore failed: ${missing.length} photo(s) are missing from the photo copy: ${missing.slice(0, 10).map((m) => `${m.id}/${m.kind}`).join(', ')}`);
-    }
-    if (missing.length) problems.push(`${missing.length} photo(s) missing from the photo copy and skipped: ${missing.map((m) => `${m.id}/${m.kind}`).join(', ')}`);
-
-    for (const v of manifest.views) await conn.query(stripDefiner(v.create));
-    for (const tr of manifest.triggers) await conn.query(stripDefiner(tr.create));
-  } finally {
-    await conn.query('SET SESSION foreign_key_checks = 1').catch(() => undefined);
   }
 
-  // fresh statistics after the bulk load: the planner needs them for the checks below and for the API's first reads
-  for (const t of manifest.tables) await conn.query(`ANALYZE TABLE ${q(t.name)}`);
+  // ---- 1. the schema, from the migration files (no seeds: the data is the export's; no trigger files yet)
+  await migrate(conn, { dir: opts.migrationsDir, seeds: false, optional: false });
 
-  // ---- proof
+  // ---- 2 to 4. the data
+  const [fkRows] = await conn.query(
+    `SELECT TABLE_NAME AS t, REFERENCED_TABLE_NAME AS r, COLUMN_NAME AS c, REFERENCED_COLUMN_NAME AS rc
+       FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND REFERENCED_TABLE_NAME IS NOT NULL`
+  );
+  const names = manifest.tables.map((t) => t.name);
+  const byName = new Map(manifest.tables.map((t) => [t.name, t]));
+  const restoreTime = (await one(conn, "SELECT DATE_FORMAT(UTC_TIMESTAMP(6), '%Y-%m-%d %H:%i:%s.%f') AS t")).t;
+  const tombstoned = [];
+  let restoredPhotos = 0;
+
+  for (const name of loadOrder(names, fkRows)) {
+    const t = byName.get(name);
+    const isPhotos = name === 'design_photos';
+    const cols = [...t.columns, ...(isPhotos ? [{ name: 'bytes', binary: true, raw: true }] : [])];
+    const colSql = cols.map((c) => q(c.name)).join(', ');
+    const rowSql = `(${cols.map((c) => (c.binary && !c.raw ? 'UNHEX(?)' : '?')).join(', ')})`;
+    let batch = [];
+    let batchBytes = 0;
+    const flush = async () => {
+      if (batch.length === 0) return;
+      await conn.query(`INSERT INTO ${q(name)} (${colSql}) VALUES ${batch.map(() => rowSql).join(', ')}`, batch.flat());
+      batch = [];
+      batchBytes = 0;
+    };
+    const add = async (row, size) => {
+      let values = t.columns.map((c) => (row[c.name] === undefined ? null : row[c.name]));
+      if (isPhotos) {
+        let bytes = null;
+        if (row.removed_at === null) {
+          // a live photo: its bytes come from the photo copy, checked, or the row becomes a tombstone
+          const got = await photos.get(row.id, row.kind);
+          let reason = null;
+          if (got === null) reason = 'missing';
+          else if (got.length !== Number(row.byte_size)) reason = 'size';
+          else if (createHash('sha256').update(got).digest('hex').toUpperCase() !== String(row.sha256).toUpperCase()) reason = 'sha256';
+          if (reason) {
+            tombstoned.push({ id: row.id, kind: row.kind, reason });
+            values = t.columns.map((c) => (c.name === 'removed_at' ? restoreTime : row[c.name] === undefined ? null : row[c.name]));
+          } else {
+            bytes = got;
+            restoredPhotos += 1;
+            size += got.length;
+          }
+        }
+        values.push(bytes);
+      }
+      batch.push(values);
+      batchBytes += size;
+      if (batch.length >= pageSize || batchBytes >= BATCH_BYTES) await flush();
+    };
+    const selfKey = fkRows.find((f) => f.t === name && f.r === name);
+    if (selfKey) {
+      // a table that points at itself: the replaced row must exist before the row that replaces it
+      let pending = [];
+      for await (const line of source.lines(t.file)) pending.push(JSON.parse(line));
+      const loaded = new Set();
+      while (pending.length) {
+        const ready = pending.filter((r) => r[selfKey.c] === null || loaded.has(r[selfKey.c]));
+        if (ready.length === 0) throw new Error(`restore failed: ${pending.length} row(s) of ${name} point at a ${selfKey.c} that is not in the export`);
+        const rest = pending.filter((r) => !(r[selfKey.c] === null || loaded.has(r[selfKey.c])));
+        for (const r of ready) {
+          await add(r, 200);
+          loaded.add(r[selfKey.rc]);
+        }
+        await flush(); // the parents are in before the next wave points at them
+        pending = rest;
+      }
+    } else {
+      for await (const line of source.lines(t.file)) await add(JSON.parse(line), line.length);
+    }
+    await flush();
+  }
+  for (const p of tombstoned) {
+    problems.push(`photo ${p.id}/${p.kind}: ${p.reason === 'missing' ? 'not in the photo copy' : p.reason === 'size' ? 'its size in the photo copy is not the recorded one' : 'its sha256 in the photo copy is not the recorded one'}; it was restored as a tombstone (the owner decides)`);
+  }
+
+  // ---- 5. triggers last
+  let triggerCount = 0;
+  if (manifest.has_triggers && opts.triggers !== false) {
+    await migrate(conn, { dir: opts.migrationsDir, seeds: false, optional: true });
+    triggerCount = Number((await one(conn, 'SELECT COUNT(*) AS n FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE()')).n);
+  }
+
+  // ---- 6. proof
+  for (const n of names) await conn.query(`ANALYZE TABLE ${q(n)}`); // fresh statistics for the checks below and for the API's first reads
   const orphans = await findOrphans(conn);
   for (const o of orphans) problems.push(`${o.rows} row(s) of ${o.table} point nowhere (${o.constraint})`);
 
   const again = memoryStore();
   const reread = await exportDatabase(conn, again.sink, { pageSize: 1000 });
-  const byName = new Map(reread.tables.map((t) => [t.name, t]));
+  const reByName = new Map(reread.tables.map((t) => [t.name, t]));
   const tables = manifest.tables.map((t) => {
-    const r = byName.get(t.name);
+    const r = reByName.get(t.name);
     const hash_ok = !!r && r.sha256 === t.sha256;
-    if (!hash_ok) problems.push(`table ${t.name}: restored content differs from the export (${r ? r.rows : 0} rows, expected ${t.rows})`);
+    // the photos that became tombstones already have their own lines above
+    if (!hash_ok && !(t.name === 'design_photos' && tombstoned.length)) problems.push(`table ${t.name}: restored content differs from the export (${r ? r.rows : 0} rows, expected ${t.rows})`);
     return { name: t.name, rows_expected: t.rows, rows_restored: r ? r.rows : 0, hash_ok };
   });
   for (const r of reread.tables) if (!byName.has(r.name)) problems.push(`unexpected table ${r.name}`);
-  const views = reread.views.length;
-  const triggers = reread.triggers.length;
-  if (views !== manifest.views.length) problems.push(`${views} views restored, expected ${manifest.views.length}`);
-  if (triggers !== manifest.triggers.length) problems.push(`${triggers} triggers restored, expected ${manifest.triggers.length}`);
 
   const badBytes = await one(conn, 'SELECT COUNT(*) AS n FROM design_photos WHERE bytes IS NOT NULL AND UNHEX(SHA2(bytes, 256)) <> sha256');
   if (Number(badBytes.n) > 0) problems.push(`${badBytes.n} restored photo(s) do not match their sha256 inside the database`);
@@ -142,9 +188,8 @@ export async function restoreDatabase(conn, source, photos, opts = {}) {
   return {
     ok: problems.length === 0,
     tables,
-    views,
-    triggers,
-    photos: { live_expected: manifest.live_photos, restored: restoredPhotos, missing },
+    triggers: triggerCount,
+    photos: { live_expected: manifest.live_photos, restored: restoredPhotos, tombstoned },
     fk_orphans: orphans,
     invariants,
     problems,
@@ -152,7 +197,7 @@ export async function restoreDatabase(conn, source, photos, opts = {}) {
   };
 }
 
-/** Child rows whose foreign key matches no parent row. Reads the constraints from the restored database itself. */
+/** Child rows whose foreign key matches no parent row (the keys are ON, so this should never find any; it is the belt to the braces). */
 async function findOrphans(conn) {
   const [fks] = await conn.query(
     `SELECT CONSTRAINT_NAME AS c, TABLE_NAME AS t, COLUMN_NAME AS col, REFERENCED_TABLE_NAME AS rt, REFERENCED_COLUMN_NAME AS rcol
@@ -173,3 +218,4 @@ async function findOrphans(conn) {
   }
   return found;
 }
+

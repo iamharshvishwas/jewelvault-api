@@ -12,9 +12,9 @@ SELECT 'I10' AS invariant,
          IF(cb.fine_advance > 0 AND cb.fine_outstanding <> 0, CONCAT('silver advance ', cb.fine_advance, ' g is held while ', cb.fine_outstanding, ' g is outstanding'), NULL),
          IF(cu.is_walkin = 1 AND (cb.advance <> 0 OR cb.fine_advance <> 0), CONCAT('the walk-in customer holds an advance of ', cb.advance, ' / ', cb.fine_advance, ' g'), NULL)) AS detail
 FROM customers cu
-JOIN customer_balances cb ON cb.id = cu.id
+JOIN {{V2}} cb ON cb.id = cu.id
 LEFT JOIN (SELECT bs.customer_id AS customer_id, SUM(bs.pending) AS pending, SUM(bs.fine_pending) AS fine_pending
-           FROM bill_summary bs
+           FROM {{V1}} bs
            WHERE bs.status = 'active'
            GROUP BY bs.customer_id) v1 ON v1.customer_id = cu.id
 WHERE COALESCE(v1.pending, 0) <> cb.outstanding

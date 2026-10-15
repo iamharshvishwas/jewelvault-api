@@ -6,6 +6,8 @@
 // (or none exists), or the database is above 2 GB. Amber: nothing is red but the user has a Delete or Drop right. Otherwise green.
 // "Never ran" is red on purpose: on a new shop nothing is backed up until the first tick has run, and the owner should see that.
 
+import { one } from './backup.mjs';
+
 export const RED_AFTER_HOURS = 26;
 export const DB_RED_LINE_BYTES = 2 * 1024 * 1024 * 1024;
 
@@ -23,9 +25,14 @@ function scopeMatches(pattern, dbName) {
   return new RegExp(`^${re}$`, 'i').test(dbName);
 }
 
+// The 18 boxes of hPanel's Change Permissions (A3). Ten are ticked; Delete, Drop and these six are not.
+const ALL_BOXES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'CREATE', 'DROP', 'REFERENCES', 'INDEX', 'ALTER', 'CREATE TEMPORARY TABLES', 'LOCK TABLES', 'EXECUTE', 'CREATE VIEW', 'SHOW VIEW', 'CREATE ROUTINE', 'ALTER ROUTINE', 'EVENT', 'TRIGGER'];
+const TICKED = new Set(['SELECT', 'INSERT', 'UPDATE', 'CREATE', 'ALTER', 'INDEX', 'REFERENCES', 'TRIGGER', 'CREATE TEMPORARY TABLES', 'LOCK TABLES']);
+
 async function readRights(conn, dbName) {
   const [grants] = await conn.query('SHOW GRANTS FOR CURRENT_USER()');
-  const rights = { delete: false, drop: false };
+  const rights = { delete: false, drop: false, extra: [] };
+  const held = new Set();
   for (const row of grants) {
     const line = String(Object.values(row)[0]);
     const m = /^GRANT (.+?) ON (.+?) TO /.exec(line);
@@ -39,10 +46,13 @@ async function readRights(conn, dbName) {
     if (list.includes('ALL PRIVILEGES') || list.includes('ALL')) {
       rights.delete = true;
       rights.drop = true;
+      for (const b of ALL_BOXES) held.add(b);
     }
     if (list.includes('DELETE')) rights.delete = true;
     if (list.includes('DROP')) rights.drop = true;
+    for (const p of list) held.add(p);
   }
+  rights.extra = [...held].filter((p) => ALL_BOXES.includes(p) && !TICKED.has(p)).sort();
   return rights;
 }
 
@@ -58,20 +68,30 @@ export async function readHealth(conn, opts = {}) {
   const dumpAt = await lastGood('db_dump');
   const photoAt = await lastGood('photo_copy');
 
-  const [sizeRows] = await conn.query(
-    `SELECT COALESCE(SUM(DATA_LENGTH), 0) AS d, COALESCE(SUM(INDEX_LENGTH), 0) AS i FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'`
-  );
-  const size = sizeRows[0];
+  // P5: DATA_LENGTH + INDEX_LENGTH of the other tables after ANALYZE TABLE of each (the user may run it), plus SUM(byte_size) of the live photos, plus 12 percent for InnoDB overhead.
+  // information_schema alone lags badly for a table of few large rows: it said 0.0 MB after 65 MB of photos were inserted and 69.5 MB after ANALYZE TABLE.
+  const injected = typeof opts.sizeBytes === 'number';
+  let dataBytes = 0;
+  let indexBytes = 0;
+  let photoBytes = 0;
+  if (!injected) {
+    const [tables] = await conn.query("SELECT TABLE_NAME AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME <> 'design_photos' ORDER BY TABLE_NAME");
+    if (opts.analyze !== false) for (const t of tables) await conn.query(`ANALYZE TABLE \`${String(t.n).replace(/`/g, '``')}\``);
+    const sizeRows = (await conn.query("SELECT COALESCE(SUM(DATA_LENGTH), 0) AS d, COALESCE(SUM(INDEX_LENGTH), 0) AS i FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME <> 'design_photos'"))[0];
+    dataBytes = Number(sizeRows[0].d);
+    indexBytes = Number(sizeRows[0].i);
+    const photoRow = await one(conn, 'SELECT COALESCE(SUM(byte_size), 0) AS b FROM design_photos WHERE removed_at IS NULL');
+    photoBytes = Number(photoRow.b);
+  }
   const [nameRows] = await conn.query('SELECT DATABASE() AS name');
   const dbRow = nameRows[0];
 
   const check = { last_at: chk?.at ?? null, age_hours: chk?.at ? hoursBetween(now, chk.at) : null, ok: chk?.at ? Number(chk.ok) === 1 : null };
   const db_dump = { last_at: dumpAt, age_hours: dumpAt ? hoursBetween(now, dumpAt) : null };
   const photo_copy = { last_at: photoAt, age_hours: photoAt ? hoursBetween(now, photoAt) : null };
-  const injected = typeof opts.sizeBytes === 'number';
-  const data_bytes = injected ? opts.sizeBytes : Number(size.d);
-  const index_bytes = injected ? 0 : Number(size.i);
-  const db_size = { bytes: data_bytes + index_bytes, data_bytes, index_bytes, red_line_bytes: DB_RED_LINE_BYTES, injected };
+  const db_size = injected
+    ? { bytes: opts.sizeBytes, data_bytes: opts.sizeBytes, index_bytes: 0, photo_bytes: 0, overhead_percent: 12, red_line_bytes: DB_RED_LINE_BYTES, injected: true }
+    : { bytes: Math.round((dataBytes + indexBytes + photoBytes) * 1.12), data_bytes: dataBytes, index_bytes: indexBytes, photo_bytes: photoBytes, overhead_percent: 12, red_line_bytes: DB_RED_LINE_BYTES, injected: false };
   const rights = await readRights(conn, dbRow.name);
 
   const reasons = [];

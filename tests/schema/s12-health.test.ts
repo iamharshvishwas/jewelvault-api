@@ -1,8 +1,9 @@
+import { createHash, randomBytes } from 'node:crypto';
 import mysql, { type Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { HOST, PORT, dropDb, rootConn } from '../helpers';
 import { DB_RED_LINE_BYTES, RED_AFTER_HOURS, readHealth } from '../../scripts/health.mjs';
-import { insert, migratedDb } from './support';
+import { insert, migratedDb, uuid } from './support';
 
 // Spec I12 + the dashboard line + T-R03 (database half): how old the last good export and photo copy and the last check are, how big the database is, and what the user may do.
 // All ages are measured in hours from one fixed "now", so the tests do not depend on the clock.
@@ -112,14 +113,44 @@ describe('readHealth: the dashboard line', () => {
     expect((await readHealth(c, { now: NOW })).reasons).not.toContain('check_problem');
   });
 
-  it('the database size is measured from information_schema, in bytes, and is above zero', async () => {
+  it('the size is worked out as P5 says: the other tables after ANALYZE TABLE, plus the live photo bytes, plus 12 percent', async () => {
     await healthy();
     const h = await readHealth(c, { now: NOW });
     expect(h.db_size.injected).toBe(false);
-    expect(h.db_size.bytes).toBeGreaterThan(100_000);
-    expect(h.db_size.bytes).toBe(h.db_size.data_bytes + h.db_size.index_bytes);
+    expect(h.db_size.overhead_percent).toBe(12);
+    expect(h.db_size.photo_bytes).toBe(0);
+    expect(h.db_size.data_bytes + h.db_size.index_bytes).toBeGreaterThan(100_000);
+    expect(h.db_size.bytes).toBe(Math.round((h.db_size.data_bytes + h.db_size.index_bytes + h.db_size.photo_bytes) * 1.12));
     expect(h.db_size.red_line_bytes).toBe(DB_RED_LINE_BYTES);
     expect(h.reasons).not.toContain('db_size');
+  });
+
+  it('live photo bytes are counted by SUM(byte_size), which information_schema lags behind (it said 0.0 MB after 65 MB of photos): removed photos count nothing', async () => {
+    await healthy();
+    const before = await readHealth(c, { now: NOW });
+    const design = uuid();
+    for (let i = 0; i < 3; i++) {
+      const bytes = randomBytes(1_500_000);
+      await insert(c, 'design_photos', { id: uuid(), kind: 'full', design_id: design, mime: 'image/jpeg', byte_size: bytes.length, sha256: createHash('sha256').update(bytes).digest(), bytes });
+    }
+    await insert(c, 'design_photos', { id: uuid(), kind: 'full', design_id: design, mime: 'image/jpeg', byte_size: 1_000_000, sha256: Buffer.alloc(32), bytes: null, removed_at: '2026-10-10 05:00:00.000000' });
+    const after = await readHealth(c, { now: NOW });
+    expect(after.db_size.photo_bytes).toBe(4_500_000);
+    expect(after.db_size.bytes - before.db_size.bytes).toBeGreaterThanOrEqual(Math.round(4_500_000 * 1.12));
+    expect(after.db_size.bytes - before.db_size.bytes).toBeLessThan(Math.round(4_500_000 * 1.12) + 600_000); // the other tables barely moved
+  });
+
+  it('runs ANALYZE TABLE on every base table except design_photos (whose rows are few and large) before it measures, and not at all with analyze: false', async () => {
+    await healthy();
+    const seen: string[] = [];
+    const spy = new Proxy(c, { get: (t, k) => (k === 'query' ? (sql: any, ...rest: any[]) => { seen.push(String(sql)); return (t as any).query(sql, ...rest); } : (t as any)[k]) }) as Connection;
+    await readHealth(spy, { now: NOW });
+    const analysed = seen.filter((q) => /^ANALYZE TABLE/i.test(q)).map((q) => q.replace(/^ANALYZE TABLE /i, '').replace(/`/g, ''));
+    const [tables] = await c.query<any[]>("SELECT TABLE_NAME AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'");
+    expect([...analysed].sort()).toEqual(tables.map((t) => t.n).filter((n) => n !== 'design_photos').sort());
+    seen.length = 0;
+    await readHealth(spy, { now: NOW, analyze: false });
+    expect(seen.filter((q) => /^ANALYZE/i.test(q))).toEqual([]);
   });
 
   it('above 2 GB is red; exactly 2 GB is not (an injected size)', async () => {
@@ -167,7 +198,7 @@ describe('readHealth: what the database user may do (amber)', () => {
   it('a user with ALL PRIVILEGES can delete and drop: amber', async () => {
     await healthy();
     const h = await readHealth(c, { now: NOW });
-    expect(h.rights).toEqual({ delete: true, drop: true });
+    expect(h.rights).toMatchObject({ delete: true, drop: true });
     expect(h.level).toBe('amber');
     expect(h.reasons).toEqual(['delete_or_drop_right']);
   });
@@ -175,18 +206,27 @@ describe('readHealth: what the database user may do (amber)', () => {
   it('a user without Delete and Drop (the S7 setting) is green', async () => {
     await healthy();
     const h = await readHealth(limited, { now: NOW });
-    expect(h.rights).toEqual({ delete: false, drop: false });
+    expect(h.rights).toMatchObject({ delete: false, drop: false });
     expect(h.level).toBe('green');
     expect(h.reasons).toEqual([]);
+  });
+
+  it('rights outside the ten ticked boxes of A3 are listed (T-F08: the start-up check notes them in the log)', async () => {
+    await healthy();
+    expect((await readHealth(limited, { now: NOW })).rights.extra).toEqual([]); // Select, Insert, Update, Create, Alter, Index, References, Trigger, Create temporary tables, Lock tables
+    expect((await readHealth(c, { now: NOW })).rights.extra).toEqual(['ALTER ROUTINE', 'CREATE ROUTINE', 'CREATE VIEW', 'DELETE', 'DROP', 'EVENT', 'EXECUTE', 'SHOW VIEW']);
+    await rootC.query(`GRANT EVENT, SHOW VIEW ON \`${db}\`.* TO 'jv_limited'@'%'`);
+    expect((await readHealth(limited, { now: NOW })).rights.extra).toEqual(['EVENT', 'SHOW VIEW']);
+    await rootC.query(`REVOKE EVENT, SHOW VIEW ON \`${db}\`.* FROM 'jv_limited'@'%'`);
   });
 
   it('either right alone is enough for amber', async () => {
     await healthy();
     await rootC.query(`GRANT DELETE ON \`${db}\`.* TO 'jv_limited'@'%'`);
-    expect((await readHealth(limited, { now: NOW })).rights).toEqual({ delete: true, drop: false });
+    expect((await readHealth(limited, { now: NOW })).rights).toMatchObject({ delete: true, drop: false });
     await rootC.query(`REVOKE DELETE ON \`${db}\`.* FROM 'jv_limited'@'%'`);
     await rootC.query(`GRANT DROP ON \`${db}\`.* TO 'jv_limited'@'%'`);
-    expect((await readHealth(limited, { now: NOW })).rights).toEqual({ delete: false, drop: true });
+    expect((await readHealth(limited, { now: NOW })).rights).toMatchObject({ delete: false, drop: true });
     await rootC.query(`REVOKE DROP ON \`${db}\`.* FROM 'jv_limited'@'%'`);
   });
 

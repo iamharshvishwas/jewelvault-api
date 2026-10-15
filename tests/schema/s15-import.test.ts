@@ -7,7 +7,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { HOST, PORT, dropDb } from '../helpers';
 import { formatReport, normaliseMobile, runImport, seedCounters, type ImportPack } from '../../scripts/import.mjs';
 import { runInvariants } from '../../scripts/invariants.mjs';
-import { V, insert, migratedDb, uuid } from './support';
+import { T, V, insert, migratedDb, uuid } from './support';
 
 // Spec section 6.3 (IM1 to IM8) and T-C16, T-B21 (database half): the import of designs, pieces, customers and opening balances.
 // The Mac script reads a normalised pack (JSON) and writes it in ONE transaction; these tests run it against a throw-away database.
@@ -62,7 +62,7 @@ function pack(over: Partial<ImportPack> = {}): ImportPack {
 }
 const count = async (c: Connection, table: string, where = '1=1', params: unknown[] = []) =>
   Number((((await c.query<any[]>(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE ${where}`, params))[0]) as any[])[0].n);
-const v2 = async (c: Connection, id: string) => ((await c.query<any[]>('SELECT * FROM customer_balances WHERE id = ?', [id]))[0] as any[])[0];
+const v2 = async (c: Connection, id: string) => ((await c.query<any[]>(`SELECT * FROM ${T.customer_balances} WHERE id = ?`, [id]))[0] as any[])[0];
 const byName = async (c: Connection, name: string) => ((await c.query<any[]>('SELECT * FROM customers WHERE name = ?', [name]))[0] as any[])[0];
 
 describe('normaliseMobile (IM6)', () => {
@@ -170,7 +170,7 @@ describe('runImport: the happy path (IM1, IM2, IM6, T-C16)', () => {
     ]);
     expect(rc.every((x) => x.reference === 'Opening advance')).toBe(true);
     // not money received today, not a sale: the cash book and the sales figures leave them out
-    expect(await count(c, 'daily_totals')).toBe(0);
+    expect(Number((((await c.query<any[]>(`SELECT COUNT(*) AS n FROM ${T.daily_totals}`))[0]) as any[])[0].n)).toBe(0);
     await c.end();
   });
 

@@ -158,7 +158,7 @@ WHERE NOT COALESCE(
       OR (r.kind = 'fine_silver' AND r.mode IS NULL AND r.amount = 0 AND r.fine_grams > 0 AND r.silver_rate IS NULL))
       AND r.status IN ('active', 'voided')
       AND (r.is_opening = 0 OR (r.kind = 'money' AND r.mode = 'Other') OR r.kind = 'fine_silver')
-      AND ((r.status = 'voided') = (r.void_reason IS NOT NULL)) AND ((r.status = 'voided') = (r.voided_at IS NOT NULL)), 0)
+      AND ((r.status = 'voided') = (r.void_reason IS NOT NULL)) AND ((r.status = 'voided') = (r.voided_at IS NOT NULL)) AND ((r.status = 'voided') = (r.voided_on IS NOT NULL)), 0)
 UNION ALL
 SELECT 'I7', CONCAT('bills:', b.id), CONCAT('bill doc_type ', b.doc_type, ', sale_type ', b.sale_type, ', status ', b.status, ' is not an allowed combination')
 FROM bills b
@@ -166,7 +166,7 @@ WHERE NOT COALESCE(
         b.doc_type IN ('estimate', 'tax_invoice', 'bill_of_supply', 'opening_balance')
         AND b.sale_type IN ('Retail', 'Semi-Wholesale', 'Wholesale')
         AND b.status IN ('active', 'cancelled')
-        AND ((b.status = 'cancelled') = (b.cancel_reason IS NOT NULL)) AND ((b.status = 'cancelled') = (b.cancelled_at IS NOT NULL)), 0)
+        AND ((b.status = 'cancelled') = (b.cancel_reason IS NOT NULL)) AND ((b.status = 'cancelled') = (b.cancelled_at IS NOT NULL)) AND ((b.status = 'cancelled') = (b.cancelled_on IS NOT NULL)), 0)
 UNION ALL
 SELECT 'I7', CONCAT('skus:', s.id), CONCAT('piece status ', s.status, ' with sold_bill_id ', COALESCE(CAST(s.sold_bill_id AS CHAR), '(none)'), ' is not an allowed combination')
 FROM skus s

@@ -2,8 +2,18 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import mysql, { type Connection } from 'mysql2/promise';
 import { APP_USER, HOST, PORT, appConn, freshDb } from '../helpers';
 import { migrate } from '../../scripts/migrate.mjs';
+import { loadQueries } from '../../scripts/queries.mjs';
 
 export const uuid = () => randomUUID();
+
+/** The derived reads V1 to V4 as SQL text (db/queries), and as tables to put after FROM: `SELECT * FROM ${T.customer_balances} WHERE id = ?`. They are queries, not views (section 11). */
+export const Q = loadQueries();
+export const T = {
+  bill_summary: `(${Q.V1}) bill_summary`,
+  customer_balances: `(${Q.V2}) customer_balances`,
+  customer_ledger: `(${Q.V3}) customer_ledger`,
+  daily_totals: `(${Q.V4}) daily_totals`,
+};
 export const u = () => Math.random().toString(36).slice(2, 10);
 
 /** A connection with multipleStatements, which the migration runner needs (one file = one query). The API never uses this. */
@@ -91,7 +101,7 @@ export async function ledgerWorld(c: Connection) {
   const c2 = (await insert(c, 'customers', V.customer({ name: 'Empty Customer', mobile: '9123456780' }))) as { id: string };
   const skus: string[] = [];
   for (let i = 0; i < 4; i++) skus.push(((await insert(c, 'skus', V.sku(design.id))) as { id: string }).id);
-  const cancelled = { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_by: uuid() };
+  const cancelled = { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_on: '2026-10-04', cancelled_by: uuid() };
   const ob = (await insert(c, 'bills', V.bill(c1.id, { bill_no: 'OB-0001', doc_type: 'opening_balance', bill_date: '2026-09-30', subtotal: '0.00', grand_total: '300.50', fine_weight_due: '2.000', request_id: null, created_at: '2026-09-30 05:00:00.000000' }))) as { id: string };
   const b1 = (await insert(c, 'bills', V.bill(c1.id, { bill_no: 'JV-2026-0001', bill_date: '2026-10-01', subtotal: '1000.00', grand_total: '1000.00', created_at: '2026-10-01 05:00:00.000000' }))) as { id: string };
   const b3 = (await insert(c, 'bills', V.bill(c1.id, { bill_no: 'JV-2026-0002', bill_date: '2026-10-03', subtotal: '500.00', grand_total: '500.00', created_at: '2026-10-03 05:00:00.000000', ...cancelled }))) as { id: string };
@@ -101,15 +111,16 @@ export async function ledgerWorld(c: Connection) {
   await insert(c, 'bill_items', V.billItem(b2.id, skus[2], { line_no: 1 }));
   await insert(c, 'bill_items', V.billItem(b3.id, skus[3], { line_no: 1 }));
   const rc = async (o: Record<string, unknown>) => (await insert(c, 'receipts', V.receipt(c1.id, o))) as { id: string };
-  const voided = (at: string) => ({ status: 'voided', void_reason: 'entered twice', voided_at: at, voided_by: uuid() });
+  /** `on` is the Indian business day of the void (D13): the API takes it from its Asia/Kolkata clock, so a void at 20:00 UTC is already the next day. */
+  const voided = (at: string, on: string) => ({ status: 'voided', void_reason: 'entered twice', voided_at: at, voided_on: on, voided_by: uuid() });
   const r1 = await rc({ amount: '400.00', mode: 'Cash', paid_on: '2026-10-02', created_at: '2026-10-02 06:00:00.000000' });
   const r9 = await rc({ amount: '100.00', mode: 'Cash', paid_on: '2026-10-03', created_at: '2026-10-03 06:00:00.000000' });
   const r2 = await rc({ amount: '600.00', mode: 'UPI', paid_on: '2026-10-06', created_at: '2026-10-06 06:00:00.000000' });
   const r3 = await rc({ kind: 'fine_silver', mode: null, amount: '0.00', fine_grams: '4.000', paid_on: '2026-10-07', created_at: '2026-10-07 06:00:00.000000' });
   const r4 = await rc({ kind: 'fine_cash', mode: 'Cash', amount: '270.00', fine_grams: '3.000', silver_rate: '90.00', paid_on: '2026-10-08', created_at: '2026-10-08 06:00:00.000000' });
-  const r5 = await rc({ amount: '150.00', mode: 'Cash', paid_on: '2026-10-09', created_at: '2026-10-09 06:00:00.000000', ...voided('2026-10-10 10:00:00.000000') });
+  const r5 = await rc({ amount: '150.00', mode: 'Cash', paid_on: '2026-10-09', created_at: '2026-10-09 06:00:00.000000', ...voided('2026-10-10 10:00:00.000000', '2026-10-10') });
   const r6 = await rc({ kind: 'refund', amount: '50.00', mode: 'Cash', paid_on: '2026-10-11', created_at: '2026-10-11 06:00:00.000000' });
-  const r7 = await rc({ kind: 'refund', amount: '25.00', mode: 'UPI', paid_on: '2026-10-12', created_at: '2026-10-12 06:00:00.000000', ...voided('2026-10-12 20:00:00.000000') });
+  const r7 = await rc({ kind: 'refund', amount: '25.00', mode: 'UPI', paid_on: '2026-10-12', created_at: '2026-10-12 06:00:00.000000', ...voided('2026-10-12 20:00:00.000000', '2026-10-13') });
   const r8 = await rc({ amount: '100.00', mode: 'Other', is_opening: 1, paid_on: '2026-09-30', created_at: '2026-09-30 06:00:00.000000' });
   const al = async (receipt: { id: string }, bill: { id: string }, o: Record<string, unknown>) => insert(c, 'receipt_allocations', V.allocation(receipt.id, bill.id, c1.id, o));
   await al(r1, ob, { amount: '300.50' });
@@ -138,7 +149,7 @@ export async function cleanWorld(c: Connection) {
     insert(c, 'bill_items', V.billItem(billId, skuId, { line_no: no, metal_amount: metal, labour_amount: labour, item_total: total }));
   const sku = async (o: Record<string, unknown> = {}) => (await insert(c, 'skus', V.sku(design.id, o))) as { id: string };
   const bill = async (customer: string, o: Record<string, unknown>) => (await insert(c, 'bills', V.bill(customer, o))) as { id: string };
-  const cancelled = { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_by: uuid() };
+  const cancelled = { status: 'cancelled', cancel_reason: 'wrong customer', cancelled_at: '2026-10-04 09:00:00.000000', cancelled_on: '2026-10-04', cancelled_by: uuid() };
 
   const aB1 = await bill(a.id, { bill_no: 'JV-2026-0001', bill_date: '2026-10-01', subtotal: '1000.00', grand_total: '1000.00', created_at: '2026-10-01 05:00:00.000000' });
   const aB2 = await bill(a.id, { bill_no: 'JV-2026-0002', bill_date: '2026-10-03', subtotal: '500.00', grand_total: '500.00', created_at: '2026-10-03 05:00:00.000000', ...cancelled });
@@ -157,16 +168,17 @@ export async function cleanWorld(c: Connection) {
   await line(wB1.id, s5.id, 1, '150.00', '100.00', '250.00');
 
   const rc = async (customer: string, o: Record<string, unknown>) => (await insert(c, 'receipts', V.receipt(customer, o))) as { id: string };
-  const voided = (at: string) => ({ status: 'voided', void_reason: 'entered twice', voided_at: at, voided_by: uuid() });
+  /** `on` is the Indian business day of the void (D13): the API takes it from its Asia/Kolkata clock, so a void at 20:00 UTC is already the next day. */
+  const voided = (at: string, on: string) => ({ status: 'voided', void_reason: 'entered twice', voided_at: at, voided_on: on, voided_by: uuid() });
   const ra1 = await rc(a.id, { amount: '400.00', mode: 'Cash', paid_on: '2026-10-02', created_at: '2026-10-02 06:00:00.000000' });
   const ra2 = await rc(a.id, { amount: '200.00', mode: 'UPI', paid_on: '2026-10-06', created_at: '2026-10-06 06:00:00.000000' });
   const ra3 = await rc(a.id, { kind: 'fine_silver', mode: null, amount: '0.00', fine_grams: '2.000', paid_on: '2026-10-07', created_at: '2026-10-07 06:00:00.000000' });
   const ra4 = await rc(a.id, { amount: '100.00', mode: 'Other', is_opening: 1, paid_on: '2026-09-30', created_at: '2026-09-30 06:00:00.000000' });
-  const ra5 = await rc(a.id, { amount: '75.00', mode: 'Cash', paid_on: '2026-10-09', created_at: '2026-10-09 06:00:00.000000', ...voided('2026-10-10 10:00:00.000000') });
+  const ra5 = await rc(a.id, { amount: '75.00', mode: 'Cash', paid_on: '2026-10-09', created_at: '2026-10-09 06:00:00.000000', ...voided('2026-10-10 10:00:00.000000', '2026-10-10') });
   const ra6 = await rc(a.id, { amount: '100.00', mode: 'Cash', paid_on: '2026-10-03', created_at: '2026-10-03 06:00:00.000000' });
   const rd1 = await rc(d.id, { amount: '600.00', mode: 'Cash', paid_on: '2026-10-05', created_at: '2026-10-05 06:00:00.000000' });
   const rd2 = await rc(d.id, { kind: 'refund', amount: '50.00', mode: 'Cash', paid_on: '2026-10-11', created_at: '2026-10-11 06:00:00.000000' });
-  const rd3 = await rc(d.id, { kind: 'refund', amount: '20.00', mode: 'UPI', paid_on: '2026-10-12', created_at: '2026-10-12 06:00:00.000000', ...voided('2026-10-12 20:00:00.000000') });
+  const rd3 = await rc(d.id, { kind: 'refund', amount: '20.00', mode: 'UPI', paid_on: '2026-10-12', created_at: '2026-10-12 06:00:00.000000', ...voided('2026-10-12 20:00:00.000000', '2026-10-13') });
   const rw1 = await rc(walkin, { amount: '250.00', mode: 'Cash', paid_on: '2026-10-06', created_at: '2026-10-06 06:00:00.000000' });
 
   const al = async (customer: string, receipt: { id: string }, b: { id: string }, o: Record<string, unknown>) =>

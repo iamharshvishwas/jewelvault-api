@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS bills (
   status VARCHAR(10) NOT NULL DEFAULT 'active',
   cancel_reason VARCHAR(500) NULL,
   cancelled_at DATETIME(6) NULL,
+  cancelled_on DATE NULL,
   cancelled_by UUID NULL,
   reissue_of UUID NULL,
   pricing_version SMALLINT NOT NULL DEFAULT 1,
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS bills (
   CONSTRAINT chk_bills_sale_type CHECK (sale_type IN ('Retail', 'Semi-Wholesale', 'Wholesale')),
   CONSTRAINT chk_bills_status CHECK (status IN ('active', 'cancelled')),
   CONSTRAINT chk_bills_cancel CHECK (
-    ((status = 'cancelled') = (cancel_reason IS NOT NULL)) AND ((status = 'cancelled') = (cancelled_at IS NOT NULL)) AND ((status = 'cancelled') = (cancelled_by IS NOT NULL))
+    ((status = 'cancelled') = (cancel_reason IS NOT NULL)) AND ((status = 'cancelled') = (cancelled_at IS NOT NULL)) AND ((status = 'cancelled') = (cancelled_on IS NOT NULL))
+    AND ((status = 'cancelled') = (cancelled_by IS NOT NULL))
   ),
   CONSTRAINT chk_bills_amounts CHECK (
     subtotal >= 0 AND subtotal <= 1000000000 AND discount >= 0 AND discount <= 1000000000 AND additional_charges >= 0 AND additional_charges <= 1000000000

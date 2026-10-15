@@ -3,10 +3,10 @@
 SELECT 'I13' AS invariant,
        CONCAT('mode:', m.mode) AS row_ref,
        CONCAT('cash book for ', m.mode, ' adds up to ', COALESCE(v4.net, 0), ' but the receipts give ', COALESCE(r.net, 0)) AS detail
-FROM (SELECT dt.mode AS mode FROM daily_totals dt
+FROM (SELECT dt.mode AS mode FROM {{V4}} dt
       UNION
       SELECT rr.mode FROM receipts rr WHERE rr.mode IS NOT NULL) m
-LEFT JOIN (SELECT dt.mode AS mode, SUM(dt.net) AS net FROM daily_totals dt GROUP BY dt.mode) v4 ON v4.mode = m.mode
+LEFT JOIN (SELECT dt.mode AS mode, SUM(dt.net) AS net FROM {{V4}} dt GROUP BY dt.mode) v4 ON v4.mode = m.mode
 LEFT JOIN (SELECT rc.mode AS mode,
                   SUM(IF(rc.kind IN ('money', 'fine_cash'), rc.amount, 0)) - SUM(IF(rc.kind = 'refund', rc.amount, 0)) AS net
            FROM receipts rc

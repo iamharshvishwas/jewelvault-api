@@ -62,15 +62,17 @@ CREATE TABLE IF NOT EXISTS design_photos (
   )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- One row per photo copy made to the off-site bucket (D-Q11). The nightly export leaves the bytes out; a photo never changes, so one copy is enough.
--- The job copies the live photos that have no row here, oldest first, then inserts the row. The restore tool reads this table to know what to fetch.
+-- D25 (draft 5): one row per photo object that is safely in the off-site bucket, written only after a HEAD request on the bucket confirmed the stored size (B2).
+-- The nightly export leaves the bytes out; a photo never changes, so one copy is enough. NO foreign key: a removed photo keeps its copy (P3, B2).
+-- The object's name is photos/<photo id>-<kind>, so no key column is needed.
 CREATE TABLE IF NOT EXISTS sys_photo_copies (
   photo_id UUID NOT NULL,
   kind VARCHAR(10) NOT NULL,
   sha256 VARBINARY(32) NOT NULL,
-  object_key VARCHAR(200) NOT NULL,
+  size INT NOT NULL,
   copied_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (photo_id, kind),
-  CONSTRAINT fk_photo_copies_photo FOREIGN KEY (photo_id, kind) REFERENCES design_photos (id, kind) ON DELETE RESTRICT ON UPDATE RESTRICT,
-  CONSTRAINT chk_photo_copies_hash CHECK (OCTET_LENGTH(sha256) = 32)
+  CONSTRAINT chk_photo_copies_kind CHECK (kind IN ('full', 'thumb')),
+  CONSTRAINT chk_photo_copies_hash CHECK (OCTET_LENGTH(sha256) = 32),
+  CONSTRAINT chk_photo_copies_size CHECK (size >= 1 AND size <= 2097152)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

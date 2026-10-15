@@ -3,12 +3,14 @@
 // The whole run uses ONE snapshot: REPEATABLE READ for the next transaction only (so the caller's session setting is left alone),
 // then START TRANSACTION WITH CONSISTENT SNAPSHOT, so a payment saved while the run is going cannot cause a false alarm.
 // At READ COMMITTED (the server's setting) every statement would read its own snapshot.
+// V1 to V4 are queries (db/queries), put into the invariant files where they say {{V1}} to {{V4}}.
 // Not here: I6's re-pricing of each line and I11 (Node, they need pricing.ts), I8 and I9 (the job and the tests), I12 (database size and backup ages, a separate small query).
 //
 // The connection must not be inside a transaction: START TRANSACTION commits one that is open.
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadQueries } from './queries.mjs';
 
 const DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'db', 'invariants');
 
@@ -24,8 +26,17 @@ function asSubquery(sql) {
   return sql.trim().replace(/;+\s*$/, '');
 }
 
+/** {{V1}} to {{V4}} become the text of the derived reads of section 11 (queries, not views), in parentheses. One pass: the text put in is not read again. */
+function expand(sql, queries) {
+  return sql.replace(/\{\{(V\d)\}\}/g, (_, name) => {
+    if (!queries[name]) throw new Error(`invariant file refers to {{${name}}}, which is not a query`);
+    return `(\n${queries[name]}\n)`;
+  });
+}
+
 export async function runInvariants(conn, opts = {}) {
   const dir = opts.dir ?? DIR; // the Hostinger proof app keeps its own copy of the files
+  const queries = { ...loadQueries(opts.queriesDir), ...(opts.queries ?? {}) }; // a test may inject an old or wrong query (T-B18, I13)
   const sample = Number.isInteger(opts.sample) && opts.sample > 0 ? opts.sample : 20;
   const counts = {};
   const rows = [];
@@ -40,7 +51,7 @@ export async function runInvariants(conn, opts = {}) {
   await conn.query('START TRANSACTION WITH CONSISTENT SNAPSHOT');
   try {
     for (const f of listInvariantFiles(dir)) {
-      const body = asSubquery(f.sql);
+      const body = expand(asSubquery(f.sql), queries);
       const [[counted]] = await conn.query(`SELECT COUNT(*) AS n FROM (\n${body}\n) q`);
       counts[f.id] = Number(counted.n);
       if (counts[f.id] > 0) {

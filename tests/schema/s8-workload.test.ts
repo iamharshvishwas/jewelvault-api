@@ -128,7 +128,7 @@ async function cancelInside(c: Connection, billId: string, reason: string) {
     await c.query(`UPDATE skus SET status = 'In Stock', sold_bill_id = NULL WHERE id IN (${ids.map(() => '?').join(',')}) AND sold_bill_id = ?`, [...ids, billId]);
   }
   await c.query('UPDATE receipt_allocations SET released_at = CURRENT_TIMESTAMP(6) WHERE bill_id = ? AND released_at IS NULL', [billId]);
-  await c.query("UPDATE bills SET status = 'cancelled', cancel_reason = ?, cancelled_at = CURRENT_TIMESTAMP(6), cancelled_by = ? WHERE id = ?", [reason, randomUUID(), billId]);
+  await c.query("UPDATE bills SET status = 'cancelled', cancel_reason = ?, cancelled_at = CURRENT_TIMESTAMP(6), cancelled_on = UTC_DATE(), cancelled_by = ? WHERE id = ?", [reason, randomUUID(), billId]);
   return ids;
 }
 const cancelBill = async (c: Connection, billId: string) => {

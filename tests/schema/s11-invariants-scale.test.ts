@@ -2,7 +2,7 @@ import type { Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dropDb } from '../helpers';
 import { runInvariants } from '../../scripts/invariants.mjs';
-import { migratedDb } from './support';
+import { Q, T, migratedDb } from './support';
 
 // The nightly check runs inside the tick's own 130-second limit on a shared host. This builds a shop several years deep with bulk SQL
 // (3,000 customers, 30,000 bills, 15,000 receipts with their allocations) that is fully consistent, and times each rule.
@@ -46,14 +46,14 @@ describe('runInvariants on a deep shop (30,000 bills)', () => {
   it('the views answer a one-customer question without reading the whole ledger (a filter on customer_id is pushed down)', async () => {
     const [[one]] = await c.query<any[][]>("SELECT id FROM customers WHERE name = 'Scale 77'");
     const t0 = Date.now();
-    const [rows] = await c.query<any[]>('SELECT * FROM customer_ledger WHERE customer_id = ? ORDER BY entry_date, entry_at, kind_rank, id', [(one as any).id]);
+    const [rows] = await c.query<any[]>(`SELECT * FROM ${T.customer_ledger} WHERE customer_id = ? ORDER BY entry_date, entry_at, kind_rank, id`, [(one as any).id]);
     const ms = Date.now() - t0;
     console.log(`[s11] customer_ledger for one customer of 3,000: ${rows.length} rows in ${ms} ms`);
     expect(rows.length).toBeGreaterThan(10);
     expect(ms).toBeLessThan(2000);
     const t1 = Date.now();
-    await c.query('SELECT * FROM bill_summary WHERE customer_id = ?', [(one as any).id]);
-    await c.query('SELECT * FROM customer_balances WHERE id = ?', [(one as any).id]);
+    await c.query(`SELECT * FROM ${T.bill_summary} WHERE customer_id = ?`, [(one as any).id]);
+    await c.query(Q.V2_one, [(one as any).id]); // the correlated form for ONE customer (RM4-14)
     console.log(`[s11] bill_summary + customer_balances for one customer: ${Date.now() - t1} ms`);
   });
 });

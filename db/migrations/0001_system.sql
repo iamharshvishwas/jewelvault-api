@@ -65,12 +65,16 @@ CREATE TABLE IF NOT EXISTS sys_error_log (
   CONSTRAINT chk_error_log_level CHECK (level IN ('debug', 'info', 'warn', 'error', 'fatal'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- D24 (draft 5): login counters UPDATED IN PLACE, never one row per attempt, so an attack on the login cannot grow the database (nothing is deleted, S7).
+-- scope: email, addr or any (the slot is the first two bytes of a salted SHA-256 of the lower-cased e-mail or of the address, modulo 1,024), and audit (slot 0: the failure count of the current hour).
+-- At most 2 x 1,024 + 2 rows whatever is sent; the CHECKs keep it so. Two e-mails that share a slot share a counter.
 CREATE TABLE IF NOT EXISTS sys_login_attempts (
-  id BIGINT NOT NULL AUTO_INCREMENT,
-  email_hash VARBINARY(32) NOT NULL,
-  ip_hash VARBINARY(32) NOT NULL,
-  at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-  PRIMARY KEY (id),
-  KEY ix_login_attempts_email (email_hash, at),
-  KEY ix_login_attempts_ip (ip_hash, at)
+  scope VARCHAR(5) NOT NULL,
+  slot SMALLINT NOT NULL,
+  window_start DATETIME(6) NOT NULL,
+  n INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (scope, slot),
+  CONSTRAINT chk_login_attempts_scope CHECK (scope IN ('email', 'addr', 'any', 'audit')),
+  CONSTRAINT chk_login_attempts_slot CHECK (slot >= 0 AND slot <= 1023),
+  CONSTRAINT chk_login_attempts_n CHECK (n >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

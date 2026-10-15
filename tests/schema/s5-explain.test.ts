@@ -26,6 +26,8 @@ beforeAll(async () => {
   requestId = uuid();
   await insert(c, 'sys_idempotency', { request_id: requestId, fn: 'create_bill', actor: user.id, args_hash: 'a'.repeat(64) });
   await insert(c, 'sys_counters', { series: 'bill:JV:2026', last_value: 1 });
+  await insert(c, 'sys_login_attempts', { scope: 'email', slot: 17, window_start: '2026-10-15 10:00:00.000000', n: 1 });
+  await insert(c, 'receipts', V.receipt(w.customer.id, { amount: '10.00' }));
   photoId = uuid();
   await insert(c, 'design_photos', { id: photoId, kind: 'full', design_id: w.design.id, mime: 'image/jpeg', byte_size: 3, sha256: Buffer.alloc(32), bytes: Buffer.from([1, 2, 3]) });
 });
@@ -57,7 +59,8 @@ const statements = (): [string, string, unknown[]][] => {
   ['look up a session by token hash', 'SELECT id FROM sessions WHERE token_hash = ?', [tokenHash]],
   ['purge old idempotency rows', 'DELETE FROM sys_idempotency WHERE created_at < ?', ['2026-07-01 00:00:00.000000']],
   ['purge expired sessions', 'DELETE FROM sessions WHERE expires_at < ?', ['2026-07-01 00:00:00.000000']],
-  ['throttle logins by e-mail and by address', 'SELECT COUNT(*) FROM sys_login_attempts WHERE email_hash = ? AND `at` > ?', [Buffer.alloc(32), '2026-10-15 00:00:00']],
+  ['read one login counter after counting the attempt (D24: scope and slot, its primary key)', 'SELECT n FROM sys_login_attempts WHERE scope = ? AND slot = ?', ['email', 17]],
+  ['one customer\'s balance reads receipt_allocations by customer_id (D19, RM4-14)', "SELECT SUM(al.amount) FROM receipt_allocations al WHERE al.customer_id = ? AND al.released_at IS NULL", [uuid()]],
   ['audit trail of one row', 'SELECT id FROM audit_log WHERE table_name = ? AND row_id = ?', ['bills', w.bill.id]],
   ['photos of a design', 'SELECT id, kind FROM design_photos WHERE design_id = ?', [w.design.id]],
   ['one photo by id and kind', 'SELECT bytes FROM design_photos WHERE id = ? AND kind = ?', [photoId, 'full']],

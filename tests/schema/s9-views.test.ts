@@ -1,9 +1,9 @@
 import type { Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { dropDb } from '../helpers';
-import { ledgerWorld, migratedDb } from './support';
+import { Q, T, cleanWorld, ledgerWorld, migratedDb } from './support';
 
-// Spec section 11: the four derived views, checked on a fixed data set whose figures were worked out by hand (T-B15, T-B05, T-B10, T-B14, T-B17, T-B20, T-B21, T-B25).
+// Spec section 11: the four derived reads (queries in db/queries, not database views), checked on a fixed data set whose figures were worked out by hand (T-B15, T-B05, T-B10, T-B14, T-B17, T-B20, T-B21, T-B25).
 // Live allocation = released_at is NULL and the receipt is active. A voided receipt's allocation never counts, even if it was never released.
 
 let db: string;
@@ -20,11 +20,11 @@ afterAll(async () => {
 
 describe('V1 bill_summary', () => {
   const byNo = async () => {
-    const [r] = await c.query<any[]>('SELECT * FROM bill_summary WHERE customer_id = ?', [w.c1.id]);
+    const [r] = await c.query<any[]>(`SELECT * FROM ${T.bill_summary} WHERE customer_id = ?`, [w.c1.id]);
     return Object.fromEntries(r.map((x) => [x.bill_no, x]));
   };
   it('one row per bill, with the columns of V1', async () => {
-    const [r] = await c.query<any[]>('SELECT * FROM bill_summary LIMIT 1');
+    const [r] = await c.query<any[]>(`SELECT * FROM ${T.bill_summary} LIMIT 1`);
     expect(Object.keys(r[0])).toEqual([
       'id', 'bill_no', 'customer_id', 'bill_date', 'doc_type', 'sale_type', 'status', 'reissue_of', 'grand_total', 'received', 'pending',
       'fine_due', 'fine_settled', 'fine_pending', 'payment_status', 'item_count', 'created_at', 'updated_at',
@@ -49,25 +49,25 @@ describe('V1 bill_summary', () => {
     expect([b.received, b.pending, b.fine_pending, b.payment_status, Number(b.item_count), b.doc_type]).toEqual(['300.50', '0.00', '0.000', 'Paid', 0, 'opening_balance']);
   });
   it('an unpaid bill is Pending', async () => {
-    const [r] = await c.query<any[]>("SELECT payment_status FROM bill_summary WHERE customer_id = ? AND grand_total = 1000", [w.c2.id]);
+    const [r] = await c.query<any[]>(`SELECT payment_status FROM ${T.bill_summary} WHERE customer_id = ? AND grand_total = 1000`, [w.c2.id]);
     expect(r).toHaveLength(0); // customer 2 has no bill at all
     await c.query('START TRANSACTION'); // rolled back below: customer 2 must stay empty for the V2 tests
     try {
       await c.query("INSERT INTO bills (id, bill_no, customer_id, bill_date, sale_type, subtotal, grand_total) VALUES (UUID(), 'JV-2026-0900', ?, '2026-10-14', 'Retail', 700, 700)", [w.c2.id]);
-      const [p] = await c.query<any[]>("SELECT payment_status, pending, received FROM bill_summary WHERE bill_no = 'JV-2026-0900'");
+      const [p] = await c.query<any[]>(`SELECT payment_status, pending, received FROM ${T.bill_summary} WHERE bill_no = 'JV-2026-0900'`);
       expect([p[0].payment_status, p[0].pending, p[0].received]).toEqual(['Pending', '700.00', '0.00']);
     } finally {
       await c.query('ROLLBACK');
     }
   });
-  it('is a SQL SECURITY INVOKER view', async () => {
-    const [r] = await c.query<any[]>("SELECT SECURITY_TYPE s FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'bill_summary'");
-    expect(r[0].s).toBe('INVOKER');
+  it('is a query, not a database view: nothing in the database carries its name (S7, section 11)', async () => {
+    const [r] = await c.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE()");
+    expect(Number(r[0].n)).toBe(0);
   });
 });
 
 describe('V2 customer_balances', () => {
-  const row = async (id: string) => ((await c.query<any[]>('SELECT * FROM customer_balances WHERE id = ?', [id]))[0] as any[])[0];
+  const row = async (id: string) => ((await c.query<any[]>(`SELECT * FROM ${T.customer_balances} WHERE id = ?`, [id]))[0] as any[])[0];
   it('rupees: billed 3300.50, purchases 3000.00, received 1200.00, refunded 50.00, allocated 1000.00', async () => {
     const r = await row(w.c1.id);
     expect([r.billed, r.total_purchases, r.received, r.refunded, r.allocated]).toEqual(['3300.50', '3000.00', '1200.00', '50.00', '1000.00']);
@@ -88,7 +88,7 @@ describe('V2 customer_balances', () => {
     const r = await row(w.c2.id);
     expect([r.billed, r.received, r.refunded, r.allocated, r.outstanding, r.advance, r.balance, r.fine_balance]).toEqual(['0.00', '0.00', '0.00', '0.00', '0.00', '0.00', '0.00', '0.000']);
     expect(r.last_purchase).toBeNull();
-    const [n] = await c.query<any[]>('SELECT (SELECT COUNT(*) FROM customer_balances) a, (SELECT COUNT(*) FROM customers) b');
+    const [n] = await c.query<any[]>(`SELECT (SELECT COUNT(*) FROM ${T.customer_balances}) a, (SELECT COUNT(*) FROM customers) b`);
     expect(Number(n[0].a)).toBe(Number(n[0].b));
     expect(await row('00000000-0000-4000-8000-000000000001')).toBeTruthy();
   });
@@ -101,7 +101,7 @@ describe('V2 customer_balances', () => {
 });
 
 describe('V3 customer_ledger', () => {
-  const rows = async (id: string) => ((await c.query<any[]>('SELECT * FROM customer_ledger WHERE customer_id = ? ORDER BY entry_date, entry_at, kind_rank, id', [id]))[0]) as any[];
+  const rows = async (id: string) => ((await c.query<any[]>(`SELECT * FROM ${T.customer_ledger} WHERE customer_id = ? ORDER BY entry_date, entry_at, kind_rank, id`, [id]))[0]) as any[];
   it('16 events: 3 invoices + 1 opening, 1 cancellation, 5 payments (one an opening advance), 2 fine, 2 refunds, 2 voids', async () => {
     const r = await rows(w.c1.id);
     const count = (k: string) => r.filter((x) => x.kind === k).length;
@@ -118,7 +118,7 @@ describe('V3 customer_ledger', () => {
       expect(Number(x.balance), `${x.kind} ${x.entry_date}`).toBeCloseTo(bal, 2);
       expect(Number(x.fine_balance), `${x.kind} ${x.entry_date}`).toBeCloseTo(fine, 3);
     }
-    const [v2] = await c.query<any[]>('SELECT balance, fine_balance FROM customer_balances WHERE id = ?', [w.c1.id]);
+    const [v2] = await c.query<any[]>(`SELECT balance, fine_balance FROM ${T.customer_balances} WHERE id = ?`, [w.c1.id]);
     expect(r[r.length - 1].balance).toBe(v2[0].balance);
     expect(r[r.length - 1].fine_balance).toBe(v2[0].fine_balance);
   });
@@ -147,8 +147,8 @@ describe('V3 customer_ledger', () => {
     expect(fine[1].description).toContain('270.00');
   });
   it('a filter on one customer gives the same running balances as the whole view (the sums are partitioned by customer)', async () => {
-    const [all] = await c.query<any[]>('SELECT id, balance FROM customer_ledger');
-    const [one] = await c.query<any[]>('SELECT id, balance FROM customer_ledger WHERE customer_id = ?', [w.c1.id]);
+    const [all] = await c.query<any[]>(`SELECT id, balance FROM ${T.customer_ledger}`);
+    const [one] = await c.query<any[]>(`SELECT id, balance FROM ${T.customer_ledger} WHERE customer_id = ?`, [w.c1.id]);
     const byId = new Map(all.map((x) => [x.id + x.balance, true]));
     for (const x of one) expect(byId.has(x.id + x.balance)).toBe(true);
   });
@@ -159,7 +159,7 @@ describe('V3 customer_ledger', () => {
 
 describe('V4 daily_totals', () => {
   const day = async () => {
-    const [r] = await c.query<any[]>('SELECT business_date d, mode, money_in i, money_out o, net n FROM daily_totals ORDER BY business_date, mode');
+    const [r] = await c.query<any[]>(`SELECT business_date d, mode, money_in i, money_out o, net n FROM ${T.daily_totals} ORDER BY business_date, mode`);
     return r.map((x) => [x.d, x.mode, x.i, x.o, x.n]);
   };
   it('cash book by business date and mode: receipts and silver settled in cash in, refunds out, a void reverses on the day it is done', async () => {
@@ -176,11 +176,69 @@ describe('V4 daily_totals', () => {
     ]);
   });
   it('an opening advance is not money received today and is left out', async () => {
-    const [r] = await c.query<any[]>("SELECT COUNT(*) n FROM daily_totals WHERE mode = 'Other'");
+    const [r] = await c.query<any[]>(`SELECT COUNT(*) n FROM ${T.daily_totals} WHERE mode = 'Other'`);
     expect(Number(r[0].n)).toBe(0);
   });
   it('the sums over all days tie out with the receipts (I13): Cash 720.00, UPI 600.00', async () => {
-    const [r] = await c.query<any[]>('SELECT mode, SUM(net) n FROM daily_totals GROUP BY mode ORDER BY mode');
+    const [r] = await c.query<any[]>(`SELECT mode, SUM(net) n FROM ${T.daily_totals} GROUP BY mode ORDER BY mode`);
     expect(r.map((x) => [x.mode, x.n])).toEqual([['Cash', '720.00'], ['UPI', '600.00']]);
+  });
+});
+
+describe('V2 for ONE customer (correlated sub-selects, RM4-14) gives exactly the figures of the form that totals everyone', () => {
+  it('every column, every customer: the ledger world and a second world with refunds, voids and a cancelled bill', async () => {
+    const [all] = await c.query<any[]>(`SELECT * FROM ${T.customer_balances} ORDER BY id`);
+    expect(all.length).toBeGreaterThan(2);
+    for (const row of all) {
+      const [one] = await c.query<any[]>(Q.V2_one, [row.id]);
+      expect(one, row.id).toHaveLength(1);
+      expect(one[0]).toEqual(row);
+    }
+    expect(Object.keys(all[0])).toEqual(['id', 'billed', 'total_purchases', 'received', 'refunded', 'allocated', 'outstanding', 'advance', 'balance', 'fine_billed', 'fine_received', 'fine_allocated', 'fine_outstanding', 'fine_advance', 'fine_balance', 'last_purchase', 'updated_at']);
+  });
+  it('the second world as well (its own database)', async () => {
+    const { db: db2, c: c2 } = await migratedDb('s9_views_b');
+    try {
+      await cleanWorld(c2);
+      const [all] = await c2.query<any[]>(`SELECT * FROM ${T.customer_balances} ORDER BY id`);
+      for (const row of all) expect((await c2.query<any[]>(Q.V2_one, [row.id]))[0][0], row.id).toEqual(row);
+    } finally {
+      await c2.end();
+      await dropDb(db2);
+    }
+  });
+  it('an unknown customer id gives no row', async () => {
+    expect((await c.query<any[]>(Q.V2_one, ['00000000-0000-4000-8000-0000000000ff']))[0]).toEqual([]);
+  });
+  it('a read of one customer is index-backed (EXPLAIN shows no full scan of receipt_allocations, bills or receipts)', async () => {
+    const [plan] = await c.query<any[]>(`EXPLAIN ${Q.V2_one}`, [w.c1.id]);
+    const scans = plan.filter((p) => p.type === 'ALL' && ['receipt_allocations', 'bills', 'receipts'].includes(p.table));
+    expect(scans.map((p) => `${p.table}:${p.type}`)).toEqual([]);
+  });
+});
+
+describe('V3 and V4 date a cancel and a void by the stored business day, not by converting a UTC time (D11, D13, RM4-9)', () => {
+  it('the day comes from voided_on / cancelled_on: a void stamped 18:40 UTC but with the Indian day after is dated the Indian day', async () => {
+    const { db: db2, c: c2 } = await migratedDb('s9_views_c');
+    try {
+      const w2 = await cleanWorld(c2);
+      // stamped on the 14th 18:40 UTC = 00:10 IST on the 15th; the API's clock says 2026-10-15
+      await c2.query("UPDATE receipts SET status = 'voided', void_reason = 'x', voided_at = '2026-10-14 18:40:00.000000', voided_on = '2026-10-15', voided_by = UUID() WHERE id = ?", [w2.receipts.ra6.id]);
+      const [v4] = await c2.query<any[]>(`SELECT business_date, money_out FROM ${T.daily_totals} WHERE mode = 'Cash' AND money_out > 0 ORDER BY business_date`);
+      expect(v4.map((r) => [r.business_date, r.money_out])).toContainEqual(['2026-10-15', '100.00']);
+      const [v3] = await c2.query<any[]>(`SELECT entry_date FROM ${T.customer_ledger} WHERE customer_id = ? AND kind = 'Void' AND id = ?`, [w2.a.id, w2.receipts.ra6.id]);
+      expect(v3.map((r) => r.entry_date)).toEqual(['2026-10-15']);
+      // a bill cancelled with a stored day that is NOT the UTC day of cancelled_at is dated by the stored day
+      await c2.query("UPDATE bills SET cancelled_on = '2026-10-20' WHERE id = ?", [w2.bills.aB2.id]);
+      const [cx] = await c2.query<any[]>(`SELECT entry_date FROM ${T.customer_ledger} WHERE customer_id = ? AND kind = 'Cancellation'`, [w2.a.id]);
+      expect(cx.map((r) => r.entry_date)).toEqual(['2026-10-20']);
+    } finally {
+      await c2.end();
+      await dropDb(db2);
+    }
+  });
+  it('no query converts a time zone: the V3 and V4 text contains no CONVERT_TZ', () => {
+    expect(Q.V3).not.toMatch(/CONVERT_TZ/i);
+    expect(Q.V4).not.toMatch(/CONVERT_TZ/i);
   });
 });
