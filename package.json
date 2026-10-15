@@ -7,7 +7,10 @@
   "scripts": {
     "db:up": "bash scripts/db-up.sh",
     "db:down": "bash scripts/db-down.sh",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:schema": "node scripts/build-schema.mjs",
+    "test:schema": "vitest run tests/schema"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",

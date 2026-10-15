@@ -1,0 +1,10 @@
+{
+  "_comment": "The caps of spec S4 and O21, plus Harsh's photo rule of 15 Oct 2026. The CHECK constraints in db/migrations carry the same numbers as literals; tests/schema/s2-catalogue.test.ts compares the two.",
+  "maxWeightGrams": 100000,
+  "maxRate": 100000000,
+  "maxAmount": 1000000000,
+  "maxQuantity": 1000,
+  "maxLines": 200,
+  "maxPhotoBytes": 2097152,
+  "maxPhotosPerDesign": 3
+}
