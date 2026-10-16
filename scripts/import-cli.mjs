@@ -2,7 +2,7 @@
 // The import command Harsh runs on his Mac (IM1). The connection comes ONLY from the environment; nothing about it is in the repository or on the command line:
 //   DB_HOST DB_PORT DB_NAME DB_USER DB_PASSWORD
 // Usage:
-//   node scripts/import-cli.mjs --pack pack.json [--dry-run] [--strict] [--audit none]
+//   node scripts/import-cli.mjs --pack pack.json [--dry-run] [--strict] [--audit auto|import|none]
 //   node scripts/import-cli.mjs --seed-counters
 // Run it against the STAGING database first and on production only when the report is clean and Siddhi has signed the opening balances (IM8).
 // Exit code: 0 clean, 1 the import was refused or the report is not OK, 2 the command line or the settings are wrong.
@@ -24,9 +24,9 @@ const fail = (code, message) => {
 
 const seedOnly = flag('--seed-counters');
 const packFile = value('--pack');
-if (!seedOnly && !packFile) fail(2, 'usage: node scripts/import-cli.mjs --pack pack.json [--dry-run] [--strict] [--audit none]   |   --seed-counters');
-const audit = value('--audit') ?? 'import';
-if (!['import', 'none'].includes(audit)) fail(2, '--audit must be import or none');
+if (!seedOnly && !packFile) fail(2, 'usage: node scripts/import-cli.mjs --pack pack.json [--dry-run] [--strict] [--audit auto|import|none]   |   --seed-counters');
+const audit = value('--audit') ?? 'auto';
+if (!['auto', 'import', 'none'].includes(audit)) fail(2, '--audit must be auto, import or none');
 
 const missing = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'].filter((k) => !process.env[k]);
 if (missing.length) fail(2, `missing settings in the environment: ${missing.join(', ')} (the connection is never taken from a file or the command line)`);

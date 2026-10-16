@@ -318,6 +318,19 @@ export async function readPruneState(conn) {
 }
 
 /**
+ * The retry rule's input: what the latest attempt of this business date recorded (detail.export = { name, sha256, size }) before it linked its file, or null. Pass it to
+ * writeDailyExport as `recorded`.
+ */
+export async function readRecordedExport(conn, date) {
+  checkDate(date);
+  const [rows] = await conn.query(
+    "SELECT JSON_VALUE(detail, '$.export.name') AS name, JSON_VALUE(detail, '$.export.sha256') AS sha256, JSON_VALUE(detail, '$.export.size') AS size FROM backup_runs WHERE kind = 'db_dump' AND JSON_VALUE(detail, '$.export.name') LIKE ? ORDER BY id DESC LIMIT 1",
+    [`daily/${date}%`]
+  );
+  return rows.length ? { name: rows[0].name, sha256: rows[0].sha256, size: Number(rows[0].size) } : null;
+}
+
+/**
  * Writes one backup_runs row. `ok` is for a complete phase only (D17). detail.folder = { files, bytes, free_bytes } (folderStats) is what the dashboard compares from night to night;
  * detail.pruned is how many files this run removed on purpose, so that the drop is not read as a loss. Other keys (counts, the recorded export, prune_dry_run) are kept as given.
  */

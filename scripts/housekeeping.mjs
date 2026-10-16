@@ -88,3 +88,56 @@ export async function recordPull(conn, pull) {
   await conn.query("INSERT INTO settings (setting_key, value) VALUES ('last_pulled', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)", [value]);
   return { recorded: true };
 }
+
+// ---------------------------------------------------------------- the job locks (I8, RF5-3, RM5-4)
+
+/** MariaDB refuses a lock name longer than 64 characters. */
+export const LOCK_NAME_MAX = 64;
+
+/**
+ * The name of a job lock: `jv_tick:<database>` or `jv_dump:<database>`. A lock name is SERVER-WIDE in MariaDB (across databases and users), so the database name is part of it:
+ * production and staging on one server must not block each other.
+ */
+export async function jobLockName(conn, kind) {
+  if (!['tick', 'dump'].includes(kind)) throw new Error(`unknown job lock: ${JSON.stringify(kind)}`);
+  const row = (await conn.query('SELECT DATABASE() AS db'))[0][0];
+  if (!row.db) throw new Error('the connection has no database selected');
+  const name = `jv_${kind}:${row.db}`;
+  if (name.length > LOCK_NAME_MAX) throw new Error(`the lock name ${name} is longer than ${LOCK_NAME_MAX} characters: the database name is too long`);
+  return name;
+}
+
+/**
+ * Runs `fn` only when nobody else holds the job lock (GET_LOCK with timeout 0, so a second tick answers "already running" at once). A lock belongs to the CONNECTION, not to the
+ * transaction, and a pooled connection lives on, so RELEASE_LOCK runs in a finally. If `fn` throws, the error is marked `destroyConnection = true`: the caller must destroy the
+ * connection instead of returning it to the pool (a lock that could not be released dies with its connection).
+ * Returns { ran: false, name } when the lock is taken, else { ran: true, name, value, released }.
+ */
+export async function withJobLock(conn, kind, fn) {
+  const name = await jobLockName(conn, kind);
+  const got = (await conn.query('SELECT GET_LOCK(?, 0) AS got', [name]))[0][0];
+  if (Number(got.got) !== 1) return { ran: false, name };
+  let failure = null;
+  let value;
+  try {
+    value = await fn();
+  } catch (e) {
+    failure = e;
+    if (e && typeof e === 'object') e.destroyConnection = true;
+  }
+  let released = false;
+  try {
+    const r = (await conn.query('SELECT RELEASE_LOCK(?) AS released', [name]))[0][0];
+    released = Number(r.released) === 1;
+  } catch {
+    // the connection is gone: the lock went with it
+    released = true;
+  }
+  if (failure) throw failure;
+  if (!released) {
+    const e = new Error(`the job lock ${name} could not be released`);
+    e.destroyConnection = true;
+    throw e;
+  }
+  return { ran: true, name, value, released };
+}

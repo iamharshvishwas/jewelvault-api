@@ -258,6 +258,33 @@ describe('runImport: batches, atomicity, audit, polling (IM1, IM2, C4, L1)', () 
     await other.c.end();
   });
 
+  it('with the audit triggers installed (L1 (a)) the triggers record the import with the role import and the import writes none of its own: never both; asking for import or none is refused', async () => {
+    const plain = await shop();
+    await runImport(plain.c, pack());
+    const own = (await plain.c.query<any[]>('SELECT table_name, COUNT(*) AS n FROM audit_log GROUP BY table_name ORDER BY table_name'))[0].map((x) => [x.table_name, Number(x.n)]);
+    const { db, c } = await migratedDb(`s15_trg_${++n}`, { optional: true });
+    dbs.push(db);
+    expect(await runImport(c, pack({ batch: 'refused' }), { audit: 'import' }).catch((e) => e.message)).toMatch(/audit triggers are installed.*twice/);
+    expect(await runImport(c, pack({ batch: 'refused2' }), { audit: 'none' }).catch((e) => e.message)).toMatch(/audit triggers are installed.*not switch them off/);
+    expect(await runImport(c, pack(), { audit: 'sometimes' as any }).catch((e) => e.message)).toMatch(/audit must be auto, import or none/);
+    expect(await count(c, 'customers')).toBe(1); // only the seeded walk-in: the refused calls wrote nothing
+    expect(await count(c, 'audit_log')).toBe(0);
+    const report = await runImport(c, pack());
+    expect(report.ok).toBe(true);
+    const [rows] = await c.query<any[]>("SELECT table_name, COUNT(*) AS n, MIN(action) a, MAX(action) z, MIN(actor_role) r, MAX(actor_role) r2, COUNT(actor) AS actors FROM audit_log WHERE table_name <> 'settings' GROUP BY table_name ORDER BY table_name");
+    expect(rows.map((x) => [x.table_name, Number(x.n)])).toEqual(own); // the same rows the import wrote itself, no more (the re-stamp of updated_at writes none, D23), no less
+    for (const x of rows) expect([x.a, x.z, x.r, x.r2, Number(x.actors)]).toEqual(['insert', 'insert', 'import', 'import', 0]);
+    const [settings] = await c.query<any[]>("SELECT action, actor_role FROM audit_log WHERE table_name = 'settings'");
+    expect(settings.every((x) => x.actor_role === 'import')).toBe(true); // data_epoch
+    for (const t of ['designs', 'skus', 'bills', 'receipts', 'receipt_allocations']) {
+      const audits = Number((await c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log WHERE table_name = ?', [t]))[0][0].n);
+      expect([t, audits]).toEqual([t, await count(c, t)]); // exactly one audit row for each inserted row
+    }
+    expect((await c.query<any[]>('SELECT @jv_role AS r, @jv_actor AS a'))[0][0]).toEqual({ r: null, a: null }); // cleared after the run
+    await plain.c.end();
+    await c.end();
+  });
+
   it('re-stamps updated_at of every imported row after the work and moves data_epoch, so screens that poll receive them (C4)', async () => {
     const { c } = await shop();
     const [[before]] = await c.query<any[][]>("SELECT JSON_VALUE(value, '$.epoch') AS e FROM settings WHERE setting_key = 'data_epoch'");

@@ -527,9 +527,14 @@ describe('restoreDatabase (B4, T-R02 database half)', () => {
     const t = await emptyDb('s13_s_r');
     const report = await restoreDatabase(t.c, store.source, photos);
     expect(report.ok).toBe(true);
-    expect(report.triggers).toBe(2);
+    expect(report.triggers).toBe(28); // the 2 append-only triggers of audit_log and the 26 generated audit triggers (L1 (a))
     expect((await errorOf(() => t.c.query("UPDATE audit_log SET row_id = 'changed'")))).not.toBeNull(); // the trigger refuses
     expect((await t.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0]).toEqual((await s.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0]);
+    const sourceAudits = Number((await s.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0][0].n);
+    expect(sourceAudits).toBeGreaterThan(0); // the source's own changes were audited by the triggers, and those rows were restored as data
+    const cat = V.category();
+    await insert(t.c, 'categories', cat); // and the restored database audits from now on
+    expect(Number((await t.c.query<any[]>("SELECT COUNT(*) AS n FROM audit_log WHERE table_name = 'categories' AND row_id = ?", [cat.id]))[0][0].n)).toBe(1);
     const t2 = await emptyDb('s13_s_r2');
     expect((await restoreDatabase(t2.c, store.source, photos, { triggers: false })).triggers).toBe(0);
     for (const x of [s.c, t.c, t2.c]) await x.end();

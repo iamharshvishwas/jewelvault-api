@@ -73,8 +73,11 @@ export interface ImportPack {
 export interface ImportOptions {
   /** Do everything, report, then roll back. Nothing is left in the database. */
   dryRun?: boolean;
-  /** 'import' (default): one audit_log row per inserted row with no actor and the role import (L1). 'none': when the database's own triggers write the audit. */
-  audit?: 'import' | 'none';
+  /**
+   * 'auto' (default): one audit_log row per inserted row with no actor and the role import (L1) written by the import, or, when the audit triggers are installed (db/optional/0910),
+   * by the triggers with @jv_role = 'import'. 'import' and 'none' are for a database without triggers; with triggers they are refused (never both mechanisms).
+   */
+  audit?: 'auto' | 'import' | 'none';
   /** Any rejected row stops the whole import and nothing is kept. Default false: rejected rows are listed and the rest is imported. */
   strict?: boolean;
   /** Id generator, default crypto.randomUUID. */

@@ -52,4 +52,6 @@ export interface PruneResult { action: 'refused' | 'nothing' | 'dry_run' | 'prun
 /** B2 guard rails: only after a good write tonight, never with fewer files than the last recorded count, the first real prune after a logged dry run, newest 30 daily and 13 monthly always kept. */
 export function prune(dir: string, opts: { goodWriteTonight: boolean; lastRecordedFiles?: number | null; dryRunDone?: boolean; keepDaily?: number; keepMonthly?: number }): Promise<PruneResult>;
 export function readPruneState(conn: Connection): Promise<{ lastRecordedFiles: number | null; dryRunDone: boolean }>;
+/** detail.export = { name, sha256, size } of the latest db_dump row for this business date (written before the link), or null: the `recorded` input of writeDailyExport. */
+export function readRecordedExport(conn: Connection, date: string): Promise<RecordedExport | null>;
 export function recordBackupRun(conn: Connection, run: { kind: 'db_dump' | 'photo_copy' | 'restore_drill'; ok: boolean; bytes?: number; detail?: Record<string, unknown>; ranAt?: string | null }): Promise<{ id: number }>;

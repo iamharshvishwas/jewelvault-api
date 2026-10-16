@@ -1,0 +1,4 @@
+{
+  "_about": "L1: columns that must never be copied into audit_log (it is read by the owner and goes into the backups), per audited table. scripts/build-audit-triggers.mjs reads this file; a column with a name like hash, token, secret or password on an audited table that is not listed here stops the build. After a change run: node scripts/build-audit-triggers.mjs",
+  "users": ["password_hash"]
+}

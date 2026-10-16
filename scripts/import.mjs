@@ -5,7 +5,8 @@
 //
 // One batch = ONE transaction (so a failed batch leaves nothing behind and no delete is needed, IM1). Inside it:
 //   batch row (name unique, IM2) -> customers -> designs -> pieces (+ owner-only weights) -> opening bills OB-nnnn and opening advances (D15)
-//   -> rebalance of every customer who has both dues and an advance (IM4, the same function X12 uses) -> audit rows (role import, no actor, L1)
+//   -> rebalance of every customer who has both dues and an advance (IM4, the same function X12 uses) -> audit rows (role import, no actor, L1: written here, or by the
+//   database's own audit triggers when they are installed; never both)
 //   -> seedCounters (IM3) -> re-stamp updated_at of every row written and bump settings.data_epoch (C4) -> reconciliation (IM6) -> commit.
 // After the commit the nightly check is run on the committed data. A dry run does all of it and rolls back. Rows that fail validation are listed with the reason and left out
 // (strict mode: nothing is kept). Numbers are never rounded: a value with more decimals than its column, a negative one, or one above the caps of S4 is refused.
@@ -13,6 +14,7 @@
 // Nobody else may be using the database: the counters are taken inside the transaction (the shop is closed during an import, O35).
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { auditTriggersInstalled } from './audit-triggers.mjs';
 import { one } from './backup.mjs';
 import { runInvariants } from './invariants.mjs';
 import { loadQueries } from './queries.mjs';
@@ -139,7 +141,29 @@ export async function seedCounters(conn) {
 
 const emptyCounts = () => ({ source: 0, imported: 0, rejected: 0 });
 
+/**
+ * L1: "never both". audit 'auto' (the default) records the import with its own audit_log rows (no actor, the role import) when the database has no audit triggers, and lets the
+ * triggers do it (the session variable @jv_role is 'import' for the run, then cleared) when it has. Asking for 'import' or 'none' where the triggers exist is refused: the first would
+ * write every row twice, the second cannot be honoured.
+ */
 export async function runImport(conn, pack, opts = {}) {
+  const asked = opts.audit ?? 'auto';
+  if (!['auto', 'import', 'none'].includes(asked)) throw new Error(`audit must be auto, import or none, got ${JSON.stringify(asked)}`);
+  const installed = (await auditTriggersInstalled(conn)).length > 0;
+  if (installed && asked !== 'auto') {
+    throw new Error(`the audit triggers are installed (L1 (a)) and record the import with the role import; audit: ${JSON.stringify(asked)} would ${asked === 'import' ? 'write every row twice' : 'not switch them off'}: use audit: "auto"`);
+  }
+  const mode = installed ? 'triggers' : asked === 'auto' ? 'import' : asked;
+  if (mode !== 'triggers') return importBody(conn, pack, opts, mode);
+  await conn.query("SET @jv_actor = NULL, @jv_role = 'import', @jv_request = NULL");
+  try {
+    return await importBody(conn, pack, opts, mode);
+  } finally {
+    await conn.query('SET @jv_actor = NULL, @jv_role = NULL, @jv_request = NULL').catch(() => undefined);
+  }
+}
+
+async function importBody(conn, pack, opts, auditMode) {
   const t0 = Date.now();
   const newId = opts.newId ?? randomUUID;
   const hook = async (step) => {
@@ -460,7 +484,7 @@ export async function runImport(conn, pack, opts = {}) {
     await hook('rebalance');
 
     // ---- step: audit rows (L1): no actor, the role import
-    if ((opts.audit ?? 'import') === 'import') {
+    if (auditMode === 'import') {
       for (const part of chunks(audited, CHUNK)) {
         await conn.query(
           `INSERT INTO audit_log (actor, actor_role, request_id, table_name, row_id, action, new_row) VALUES ${part.map(() => "(NULL, 'import', NULL, ?, ?, 'insert', ?)").join(', ')}`,

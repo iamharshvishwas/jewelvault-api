@@ -11,3 +11,11 @@ export function insertPhotoGuarded(conn: Connection, photo: PhotoInsert, caps: P
 export function clearLoginCounters(conn: Connection): Promise<{ cleared: number }>;
 /** U3 / O54: settings.last_pulled = { at, by, file, sha256 }. */
 export function recordPull(conn: Connection, pull: { at: string; by: string; file: string; sha256: string }): Promise<{ recorded: boolean }>;
+export const LOCK_NAME_MAX: number;
+/** `jv_tick:<database>` or `jv_dump:<database>`: lock names are server-wide in MariaDB, so the database name is part of them (RF5-3). Throws above 64 characters. */
+export function jobLockName(conn: Connection, kind: 'tick' | 'dump'): Promise<string>;
+/**
+ * Runs fn only when nobody holds the job lock (GET_LOCK, timeout 0) and releases it in a finally. An error thrown by fn is rethrown with `destroyConnection = true`: destroy the pooled
+ * connection instead of returning it. { ran: false } when the lock is taken.
+ */
+export function withJobLock<T>(conn: Connection, kind: 'tick' | 'dump', fn: () => Promise<T>): Promise<{ ran: false; name: string } | { ran: true; name: string; value: T; released: boolean }>;

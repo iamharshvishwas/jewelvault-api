@@ -143,6 +143,7 @@
 | S05 | **asli JewelVault schema aur seeds is database par lagte hain** (25 tables, native UUID) | UUID type chalta hai |
 | S06 | `CREATE TRIGGER` ban sakta hai aur chalta hai | triggers allowed |
 | S07 | audit_log append-only triggers lagte hain aur chalte hain | ok |
+| S07b | **naya (spec 5.2, L1 (a))**: generated audit triggers (`db/optional/0910`) do baar lagte hain, actor/role/request audit row mein aate hain, koi hash nahi, `updated_at`-only update par kuch nahi, haath se kiya change role `sql`; phir hata diye jaate hain | audit triggers work |
 | S08 | constraints asli server par: PAN capital, Credit mode nahi, Sold ke liye bill, 4 photos refuse, out-of-range refuse | sab refuse hue |
 | S09 | bill number bina gap ke (4 connections), pehle-insert wala jaal, aur 8 connections ek lock order mein | 0 deadlock, gap nahi |
 | S10 | lock timeout (1205) aur statement time limit (1969) | dono hue |

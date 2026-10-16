@@ -1,6 +1,6 @@
 # Import guide (spec 6.3, IM1 to IM8)
 
-Date: 15 October 2026 (checked against spec draft 5). Draft, not run on Hostinger. The code is `scripts/import.mjs` (library), `scripts/import-cli.mjs` (the command) and `scripts/rebalance.mjs` (Y6, shared with the API's X12). 39 tests in `tests/schema/s15-import.test.ts`, 13 in `s14-rebalance.test.ts`.
+Date: 16 October 2026 (checked against spec draft 5.2). Draft, not run on Hostinger. The code is `scripts/import.mjs` (library), `scripts/import-cli.mjs` (the command) and `scripts/rebalance.mjs` (Y6, shared with the API's X12). 39 tests in `tests/schema/s15-import.test.ts`, 13 in `s14-rebalance.test.ts`.
 
 ## What it does and does not do
 
@@ -46,13 +46,14 @@ Not done here, on purpose:
 
 ## Running it (on Harsh's Mac)
 
-The connection comes only from the environment; it is never in the repository or on the command line.
+The connection comes only from the environment; it is never in the repository or on the command line. The command opens its connection through `scripts/pacing.mjs` (no more than 10 new connections in any 1.2 seconds, S11, because Hostinger refuses the 21st new one inside about a second); it opens one, and a reconnect would stay inside the rule.
 
 ```bash
 export DB_HOST=... DB_PORT=3306 DB_NAME=... DB_USER=... DB_PASSWORD=...   # typed in the shell, not saved in a file
 node scripts/import-cli.mjs --pack pack.json --dry-run     # does everything, prints the report, keeps nothing
 node scripts/import-cli.mjs --pack pack.json               # the real run
 node scripts/import-cli.mjs --seed-counters                # IM3 on its own (the real run already does it)
+# --audit auto|import|none: auto (the default) lets the audit triggers record the import when they are installed, else the import writes its own rows (never both, L1)
 ```
 
 Order (IM8): staging database first, dry run then real; production only when the report is clean and Siddhi has signed the opening balances. Imports are done when the shop is closed (O35): the counters are taken inside the transaction and the screens reload their data afterwards (`data_epoch`).
@@ -65,6 +66,6 @@ The report lists, per table, rows in the source, imported and rejected; the open
 
 ## What happens inside the transaction
 
-1. the batch row (`sys_import_batches`, name unique) 2. customers 3. designs 4. pieces and `sku_private` 5. opening bills (numbers from the `opening` counter, `OB-0001` on; the number is the `insertId` of the counter UPDATE, RM4-6) and opening advances 6. rebalance of every customer with dues AND an advance of the same kind (`rebalance.mjs`) 7. one `audit_log` row per inserted row, no actor, role `import` (use `--audit none` if the database's own triggers write the audit, to avoid two rows) 8. `seedCounters` (IM3): `design:<prefix>`, `sku:<design_no>`, `bill:<prefix>:<year>` and `opening` continue after the largest number found, and the series' `seed_value` is raised so the nightly check (I5) leaves imported numbers alone 9. every written row gets the same fresh `updated_at` and `settings.data_epoch` moves (C4) 10. reconciliation. Then commit, `ANALYZE TABLE` for the tables that changed, and the nightly check.
+1. the batch row (`sys_import_batches`, name unique) 2. customers 3. designs 4. pieces and `sku_private` 5. opening bills (numbers from the `opening` counter, `OB-0001` on; the number is the `insertId` of the counter UPDATE, RM4-6) and opening advances 6. rebalance of every customer with dues AND an advance of the same kind (`rebalance.mjs`) 7. one `audit_log` row per inserted row, no actor, role `import`: written by the import, or by the database's own audit triggers (`db/optional/0910`, L1 (a)) when they are installed, in which case the import sets `@jv_role = 'import'` for the run; `--audit auto` (the default) picks the right one and never both; `--audit import` or `none` on a database with the triggers is refused 8. `seedCounters` (IM3): `design:<prefix>`, `sku:<design_no>`, `bill:<prefix>:<year>` and `opening` continue after the largest number found, and the series' `seed_value` is raised so the nightly check (I5) leaves imported numbers alone 9. every written row gets the same fresh `updated_at` and `settings.data_epoch` moves (C4) 10. reconciliation. Then commit, `ANALYZE TABLE` for the tables that changed, and the nightly check.
 
 Measured locally: 1,000 customers, 2,000 designs and 6,000 pieces go in in about 4 seconds (the limit of IM1 is 20 seconds per batch); a larger load is split into several packs with different batch names.

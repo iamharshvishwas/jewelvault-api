@@ -8,7 +8,7 @@ import { appConn, dropDb, freshDb } from '../helpers';
 import { directoryPhotos, directoryStore, exportDatabase, memoryPhotos } from '../../scripts/backup.mjs';
 import {
   KEEP_DAILY, KEEP_MONTHLY, businessDate, checkRecordedExport, dailyName, dailyRunName, fileDigest, folderStats, linkMonthly, monthlyName, planPrune, prepareFolder, prune,
-  readPruneState, recordBackupRun, resolveBackupDir, sweepPartials, writeDailyExport,
+  readPruneState, readRecordedExport, recordBackupRun, resolveBackupDir, sweepPartials, writeDailyExport,
 } from '../../scripts/backup-folder.mjs';
 import { createExportWriter, loadPublicKey, unpackExport } from '../../scripts/export-file.mjs';
 import { readHealth } from '../../scripts/health.mjs';
@@ -494,6 +494,29 @@ describe('the dashboard rows (database)', () => {
     await c.query('DELETE FROM backup_runs WHERE kind = ?', ['photo_copy']);
     await recordBackupRun(c, { kind: 'photo_copy', ok: true, detail: { folder: { files: 38, bytes: 3800 }, pruned: 3 }, ranAt: '2026-10-15 23:00:00.000000' });
     expect((await readHealth(c, { now, sizeBytes: 1 })).reasons).not.toContain('backup_files_fell');
+    await c.end();
+  });
+
+  it('the retry rule end to end: the record written before the link is read back for the business date and makes the next try a no-op', async () => {
+    const { db, c } = await migratedDb('s19_retry');
+    dbs.push(db);
+    const dir = tmp();
+    expect(await readRecordedExport(c, '2026-10-16')).toBeNull();
+    const first = await writeDailyExport({
+      dir, date: '2026-10-16', runId: 1, publicKey, exportFn: fakeExport(),
+      record: async (info: any) => void (await recordBackupRun(c, { kind: 'db_dump', ok: false, detail: { export: { name: info.name, sha256: info.sha256, size: info.size } } })), // written before the link, not ok yet
+    });
+    // the process "died" before the ok row: the next hourly try finds the record and does nothing
+    const recorded = await readRecordedExport(c, '2026-10-16');
+    expect(recorded).toEqual({ name: first.name, sha256: first.sha256, size: first.size });
+    expect(await readRecordedExport(c, '2026-10-17')).toBeNull();
+    let dumped = 0;
+    const retry = await writeDailyExport({ dir, date: '2026-10-16', runId: 2, publicKey, recorded, exportFn: async (s: any) => (dumped++, fakeExport()(s)) });
+    expect(retry).toMatchObject({ status: 'already_done', name: 'daily/2026-10-16.enc' });
+    expect(dumped).toBe(0);
+    // a later conflict file is the newest record for that date
+    await recordBackupRun(c, { kind: 'db_dump', ok: true, detail: { export: { name: 'daily/2026-10-16-9.enc', sha256: 'b'.repeat(64), size: 5 } } });
+    expect(await readRecordedExport(c, '2026-10-16')).toEqual({ name: 'daily/2026-10-16-9.enc', sha256: 'b'.repeat(64), size: 5 });
     await c.end();
   });
 
