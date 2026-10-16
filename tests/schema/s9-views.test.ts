@@ -242,3 +242,44 @@ describe('V3 and V4 date a cancel and a void by the stored business day, not by 
     expect(Q.V4).not.toMatch(/CONVERT_TZ/i);
   });
 });
+
+describe('the state reads of X0 item 8 (S1 to S4, draft 5.2): what is open, and what a void, a cancel or a re-issue re-opens (RM5-2)', () => {
+  it('S1: the open bills of a customer, oldest first (bill_date, created_at, id): the part-paid bill and the silver bill; not the paid opening bill, not the cancelled one', async () => {
+    const [rows] = await c.query<any[]>(Q.S1, [w.c1.id]);
+    expect(rows.map((r) => [r.bill_no, r.pending, r.fine_pending])).toEqual([['JV-2026-0001', '300.50', '0.000'], ['JV-2026-0003', '2000.00', '5.000']]);
+    expect(Object.keys(rows[0])).toEqual(['id', 'bill_no', 'customer_id', 'bill_date', 'created_at', 'grand_total', 'fine_weight_due', 'received', 'pending', 'fine_settled', 'fine_pending']);
+  });
+  it('S1 agrees with V1 on every bill of every customer: pending and fine pending of the open ones, and nothing else is open', async () => {
+    const [customers] = await c.query<any[]>('SELECT id FROM customers');
+    for (const cu of customers) {
+      const [open] = await c.query<any[]>(Q.S1, [cu.id]);
+      const [v1] = await c.query<any[]>(`SELECT id, pending, fine_pending FROM (${Q.V1}) v WHERE v.customer_id = ? AND v.status = 'active' AND (v.pending > 0 OR v.fine_pending > 0) ORDER BY v.bill_date, v.created_at, v.id`, [cu.id]);
+      expect(open.map((r) => [r.id, r.pending, r.fine_pending])).toEqual(v1.map((r) => [r.id, r.pending, r.fine_pending]));
+    }
+  });
+  it('S2: the receipts with something left, oldest first: the opening advance (100.00) and the receipt whose allocation was released (100.00); not the spent ones, not the voided one, not refunds', async () => {
+    const [rows] = await c.query<any[]>(Q.S2, [w.c1.id]);
+    expect(rows.map((r) => [r.id, r.kind, r.remaining, r.fine_remaining])).toEqual([[w.r.r8.id, 'money', '100.00', '0.000'], [w.r.r9.id, 'money', '100.00', '0.000']]);
+    // the advance of V2 is 150.00: the two receipts hold 200.00, the 50.00 refund has taken its share (Y6: a rebalance applies at most the advance)
+    const [v2] = await c.query<any[]>(Q.V2_one, [w.c1.id]);
+    expect(v2[0].advance).toBe('150.00');
+  });
+  it('S3: the bills a receipt has live allocations to, oldest first: a payment names both, and a VOIDED receipt still names the bill it had paid (X4 reads it before the void re-opens it)', async () => {
+    const [paid] = await c.query<any[]>(Q.S3, [w.r.r1.id]);
+    expect(paid.map((r) => [r.bill_no, r.pending])).toEqual([['OB-0001', '0.00'], ['JV-2026-0001', '300.50']]);
+    const [voided] = await c.query<any[]>(Q.S3, [w.r.r5.id]);
+    expect(voided.map((r) => [r.bill_no, r.pending, r.fine_pending])).toEqual([['JV-2026-0003', '2000.00', '5.000']]);
+    const [released] = await c.query<any[]>(Q.S3, [w.r.r9.id]);
+    expect(released).toEqual([]); // its only allocation was released with the cancelled bill
+  });
+  it('S4: the active receipts that have live allocations to a bill, oldest first (X5 and X10 read them before the cancel re-opens what paid the bill); a voided receipt is not among them', async () => {
+    const [part] = await c.query<any[]>(Q.S4, [w.b1.id]);
+    expect(part.map((r) => [r.id, r.remaining])).toEqual([[w.r.r1.id, '0.00'], [w.r.r2.id, '0.00']]);
+    const [silver] = await c.query<any[]>(Q.S4, [w.b2.id]);
+    expect(silver.map((r) => [r.id, r.kind, r.fine_remaining])).toEqual([[w.r.r3.id, 'fine_silver', '0.000'], [w.r.r4.id, 'fine_cash', '0.000']]);
+    expect(silver.map((r) => r.id)).not.toContain(w.r.r5.id);
+  });
+  it('none of the four joins a grouped derived table: no query of db/queries that totals a customer\'s history uses a LEFT JOIN to a subquery with GROUP BY (RM5-1), V2 for everyone excepted (the full hydrate)', () => {
+    for (const name of ['V1', 'V2_one', 'S1', 'S2', 'S3', 'S4'] as const) expect(Q[name], name).not.toMatch(/JOIN\s*\(\s*SELECT[^]*GROUP BY/i);
+  });
+});

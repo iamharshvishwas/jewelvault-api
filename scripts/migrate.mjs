@@ -106,9 +106,11 @@ function classify(statement, kind) {
   const allowed = 'the allowed list of S9';
   if (kind === 'trigger') {
     if (/^DROP TRIGGER IF EXISTS \S+$/.test(u)) return null;
-    if (/^CREATE OR REPLACE\b/.test(u)) return 'OR REPLACE is refused: use DROP TRIGGER IF EXISTS and then CREATE TRIGGER';
-    if (/^CREATE (DEFINER\s*=\s*\S+ )?TRIGGER (IF NOT EXISTS )?\S+ (BEFORE|AFTER) /.test(u)) return null;
-    return `not in ${allowed}: a trigger file holds DROP TRIGGER IF EXISTS and CREATE TRIGGER only`;
+    if (/^DROP TRIGGER\b/.test(u)) return 'DROP TRIGGER without IF EXISTS is refused: every file must be re-runnable (S9, RF5-13)';
+    if (/^CREATE OR REPLACE\b/.test(u)) return 'OR REPLACE is refused: use DROP TRIGGER IF EXISTS and then CREATE TRIGGER IF NOT EXISTS';
+    if (/^CREATE TRIGGER IF NOT EXISTS \S+ (BEFORE|AFTER) /.test(u)) return null;
+    if (/^CREATE TRIGGER\b/.test(u)) return 'CREATE TRIGGER without IF NOT EXISTS is refused: every file must be re-runnable (S9, RF5-13)';
+    return `not in ${allowed}: a trigger file holds DROP TRIGGER IF EXISTS and CREATE TRIGGER IF NOT EXISTS only`;
   }
   if (/^DROP TRIGGER\b/.test(u) || /^CREATE (OR REPLACE )?(DEFINER\s*=\s*\S+ )?TRIGGER\b/.test(u)) return 'triggers belong in trigger files (db/optional) only (O50)';
   if (/^DROP\b/.test(u)) return 'DROP is refused: the database user has no Drop right (S7), and a migration only creates';
@@ -119,8 +121,10 @@ function classify(statement, kind) {
   if (/^UPDATE\b/.test(u)) return `UPDATE is not in ${allowed}: a migration changes the schema; data is written by the API`;
   if (/^CREATE OR REPLACE\b/.test(u)) return 'OR REPLACE is refused: it drops the old object, and the user has no Drop right (S7)';
   if (/^(CREATE|ALTER)\b.*\bVIEW\b/.test(u.split(' AS ')[0])) return 'a VIEW is refused: it can be created once and never changed or dropped without the Drop right, and Create view is unticked (section 11, A3)';
-  if (/^CREATE TABLE\b/.test(u)) return null;
-  if (/^CREATE (UNIQUE |FULLTEXT |SPATIAL )?INDEX\b/.test(u)) return null;
+  if (/^CREATE TABLE IF NOT EXISTS\b/.test(u)) return null;
+  if (/^CREATE TABLE\b/.test(u)) return 'CREATE TABLE without IF NOT EXISTS is refused: every file must be re-runnable on a half-applied database (S9, RF5-13)';
+  if (/^CREATE (UNIQUE |FULLTEXT |SPATIAL )?INDEX IF NOT EXISTS\b/.test(u)) return null;
+  if (/^CREATE (UNIQUE |FULLTEXT |SPATIAL )?INDEX\b/.test(u)) return 'CREATE INDEX without IF NOT EXISTS is refused: every file must be re-runnable on a half-applied database (S9, RF5-13)';
   if (/^ANALYZE TABLE\b/.test(u)) return null;
   if (/^INSERT IGNORE\b/.test(u)) return null;
   if (/^INSERT\b/.test(u) && /\bON DUPLICATE KEY UPDATE\b/.test(u)) return null;
@@ -134,7 +138,20 @@ function classify(statement, kind) {
       if (/^DROP PRIMARY KEY\b/.test(c)) return 'DROP PRIMARY KEY is refused';
       if (/^CHANGE\b/.test(c)) return 'CHANGE COLUMN is refused: it renames; use MODIFY COLUMN to widen or relax';
       if (/^ADD PRIMARY KEY\b/.test(c)) return 'ADD PRIMARY KEY is refused';
-      if (/^(ADD|MODIFY|DROP CONSTRAINT|DROP FOREIGN KEY|DROP INDEX|DROP KEY)\b/.test(c) && !/^DROP\s+(?!CONSTRAINT|FOREIGN KEY|INDEX|KEY)/.test(c)) continue;
+      if (/^MODIFY\b/.test(c)) continue; // only to widen or relax, never to narrow (a rule of the review, not of this check)
+      // ADD ...: the re-runnable form of each allowed clause (S9, RF5-13)
+      if (/^ADD CONSTRAINT IF NOT EXISTS \S+ FOREIGN KEY\b/.test(c)) return 'ADD CONSTRAINT IF NOT EXISTS ... FOREIGN KEY is a syntax error in MariaDB (1064): write ADD FOREIGN KEY IF NOT EXISTS name (...) REFERENCES ...';
+      if (/^ADD CONSTRAINT \S+ FOREIGN KEY\b/.test(c)) return 'ADD CONSTRAINT ... FOREIGN KEY without IF NOT EXISTS is refused: write ADD FOREIGN KEY IF NOT EXISTS name (...) REFERENCES ... (S9, RF5-13)';
+      if (/^ADD FOREIGN KEY IF NOT EXISTS\b/.test(c)) continue;
+      if (/^ADD FOREIGN KEY\b/.test(c)) return 'ADD FOREIGN KEY without IF NOT EXISTS is refused: every file must be re-runnable (S9, RF5-13)';
+      if (/^ADD CONSTRAINT IF NOT EXISTS \S+ CHECK\b/.test(c)) continue;
+      if (/^ADD (CONSTRAINT \S+ )?CHECK\b/.test(c)) return 'a CHECK must be added as ADD CONSTRAINT IF NOT EXISTS name CHECK (...): every file must be re-runnable (S9, RF5-13)';
+      if (/^ADD (UNIQUE( KEY| INDEX)?|INDEX|KEY) IF NOT EXISTS\b/.test(c)) continue;
+      if (/^ADD (UNIQUE|INDEX|KEY)\b/.test(c)) return 'ADD INDEX / ADD UNIQUE without IF NOT EXISTS is refused: every file must be re-runnable (S9, RF5-13)';
+      if (/^ADD COLUMN IF NOT EXISTS\b/.test(c)) continue;
+      if (/^ADD\b/.test(c)) return 'ADD COLUMN without IF NOT EXISTS is refused: every file must be re-runnable (S9, RF5-13)';
+      if (/^DROP (CONSTRAINT|FOREIGN KEY|INDEX|KEY) IF EXISTS\b/.test(c)) continue;
+      if (/^DROP (CONSTRAINT|FOREIGN KEY|INDEX|KEY)\b/.test(c)) return 'DROP CONSTRAINT / FOREIGN KEY / INDEX without IF EXISTS is refused: every file must be re-runnable (S9, RF5-13)';
       if (/^DROP\b/.test(c)) return 'DROP COLUMN is refused: it destroys data (a bare DROP in ALTER TABLE drops a column)';
       return `ALTER TABLE clause ${JSON.stringify(clause.slice(0, 40))} is not in ${allowed}`;
     }

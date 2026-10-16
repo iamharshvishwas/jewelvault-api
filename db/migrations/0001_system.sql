@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS sys_job_runs (
   CONSTRAINT chk_job_runs_status CHECK (status IN ('running', 'ok', 'failed'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- D25 (draft 5.2, RF5-16): AT MOST 20 rows a minute for each error code, because nothing can purge this table (S7). minute_at is the UTC minute and seq 1 to 20 the row's place in it, UNIQUE per code:
+-- the API's log function (scripts/housekeeping.mjs logError) takes the next free seq in the same statement as the insert and, beyond 20, adds one to detail.suppressed of the row with seq 20.
 CREATE TABLE IF NOT EXISTS sys_error_log (
   id BIGINT NOT NULL AUTO_INCREMENT,
   at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -60,9 +62,13 @@ CREATE TABLE IF NOT EXISTS sys_error_log (
   request_id UUID NULL,
   user_id UUID NULL,
   detail JSON NULL,
+  minute_at DATETIME NULL,
+  seq TINYINT UNSIGNED NULL,
   PRIMARY KEY (id),
   KEY ix_error_log_at (at),
-  CONSTRAINT chk_error_log_level CHECK (level IN ('debug', 'info', 'warn', 'error', 'fatal'))
+  UNIQUE KEY uq_error_log_slot (code, minute_at, seq),
+  CONSTRAINT chk_error_log_level CHECK (level IN ('debug', 'info', 'warn', 'error', 'fatal')),
+  CONSTRAINT chk_error_log_seq CHECK (seq IS NULL OR (seq >= 1 AND seq <= 20))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- D24 (draft 5): login counters UPDATED IN PLACE, never one row per attempt, so an attack on the login cannot grow the database (nothing is deleted, S7).

@@ -31,8 +31,8 @@ FROM (
     (SELECT SUM(r.amount) FROM receipts r WHERE r.customer_id = cu.id AND r.status = 'active' AND r.kind = 'money') AS received,
     (SELECT SUM(r.amount) FROM receipts r WHERE r.customer_id = cu.id AND r.status = 'active' AND r.kind = 'refund') AS refunded,
     (SELECT SUM(r.fine_grams) FROM receipts r WHERE r.customer_id = cu.id AND r.status = 'active' AND r.kind IN ('fine_silver', 'fine_cash')) AS fine_received,
-    (SELECT SUM(al.amount) FROM receipt_allocations al JOIN receipts rr ON rr.id = al.receipt_id WHERE al.customer_id = cu.id AND al.released_at IS NULL AND rr.status = 'active') AS allocated,
-    (SELECT SUM(al.fine_grams) FROM receipt_allocations al JOIN receipts rr ON rr.id = al.receipt_id WHERE al.customer_id = cu.id AND al.released_at IS NULL AND rr.status = 'active') AS fine_allocated
+    (SELECT SUM(al.amount) FROM receipt_allocations al FORCE INDEX (ix_allocations_customer) JOIN receipts rr ON rr.id = al.receipt_id WHERE al.customer_id = cu.id AND al.released_at IS NULL AND rr.status = 'active') AS allocated,
+    (SELECT SUM(al.fine_grams) FROM receipt_allocations al FORCE INDEX (ix_allocations_customer) JOIN receipts rr ON rr.id = al.receipt_id WHERE al.customer_id = cu.id AND al.released_at IS NULL AND rr.status = 'active') AS fine_allocated
   FROM customers cu
   WHERE cu.id = ?
 ) t

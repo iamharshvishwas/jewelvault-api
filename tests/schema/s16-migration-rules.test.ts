@@ -32,21 +32,21 @@ describe('splitStatements', () => {
   });
 });
 
-describe('what a migration may hold (S9, allowed list)', () => {
+describe('what a migration may hold (S9, allowed list), each in its re-runnable IF [NOT] EXISTS form', () => {
   it.each([
-    'CREATE TABLE a (id INT PRIMARY KEY)',
     'CREATE TABLE IF NOT EXISTS a (id INT PRIMARY KEY)',
-    'CREATE INDEX ix_a ON a (id)',
+    'CREATE INDEX IF NOT EXISTS ix_a ON a (id)',
     'CREATE UNIQUE INDEX IF NOT EXISTS ix_a ON a (id)',
     'ALTER TABLE a ADD COLUMN IF NOT EXISTS b INT NULL',
-    'ALTER TABLE a ADD COLUMN b INT NULL, ADD INDEX ix_b (b)',
-    'ALTER TABLE a ADD UNIQUE KEY uq_b (b)',
-    'ALTER TABLE a ADD CONSTRAINT chk_b CHECK (b > 0)',
-    'ALTER TABLE a ADD CONSTRAINT fk_b FOREIGN KEY (b) REFERENCES c (id) ON DELETE RESTRICT ON UPDATE RESTRICT',
+    'ALTER TABLE a ADD COLUMN IF NOT EXISTS b INT NULL, ADD INDEX IF NOT EXISTS ix_b (b)',
+    'ALTER TABLE a ADD UNIQUE IF NOT EXISTS uq_b (b)',
+    'ALTER TABLE a ADD UNIQUE KEY IF NOT EXISTS uq_b (b)',
+    'ALTER TABLE a ADD CONSTRAINT IF NOT EXISTS chk_b CHECK (b > 0)',
+    'ALTER TABLE a ADD FOREIGN KEY IF NOT EXISTS fk_b (b) REFERENCES c (id) ON DELETE RESTRICT ON UPDATE RESTRICT',
     'ALTER TABLE a MODIFY COLUMN b BIGINT NULL',
-    'ALTER TABLE a DROP CONSTRAINT chk_b, ADD CONSTRAINT chk_b CHECK (b > 1)',
-    'ALTER TABLE a DROP FOREIGN KEY fk_b',
-    'ALTER TABLE a DROP INDEX ix_b',
+    'ALTER TABLE a DROP CONSTRAINT IF EXISTS chk_b, ADD CONSTRAINT IF NOT EXISTS chk_b CHECK (b > 1)',
+    'ALTER TABLE a DROP FOREIGN KEY IF EXISTS fk_b',
+    'ALTER TABLE a DROP INDEX IF EXISTS ix_b',
     "INSERT IGNORE INTO t (a) VALUES (1)",
     "INSERT INTO t (a) VALUES (1) ON DUPLICATE KEY UPDATE a = a",
     "INSERT INTO t (a) SELECT x FROM y ON DUPLICATE KEY UPDATE t.a = t.a",
@@ -55,8 +55,8 @@ describe('what a migration may hold (S9, allowed list)', () => {
     expect(refused(sql)).toEqual([]);
   });
 
-  it('a trigger file may hold DROP TRIGGER IF EXISTS and CREATE TRIGGER, and a migration file may not', () => {
-    const t = "DROP TRIGGER IF EXISTS trg_x;\nCREATE TRIGGER trg_x BEFORE UPDATE ON a FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no'";
+  it('a trigger file may hold DROP TRIGGER IF EXISTS and CREATE TRIGGER IF NOT EXISTS, and a migration file may not', () => {
+    const t = "DROP TRIGGER IF EXISTS trg_x;\nCREATE TRIGGER IF NOT EXISTS trg_x BEFORE UPDATE ON a FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no'";
     expect(refused(t, 'trigger')).toEqual([]);
     expect(refused(t, 'migration').map((v) => v.reason).join(' ')).toMatch(/trigger files/);
   });
@@ -64,6 +64,70 @@ describe('what a migration may hold (S9, allowed list)', () => {
   it('seed files hold INSERT IGNORE and INSERT ... ON DUPLICATE KEY UPDATE; a plain INSERT is refused (it would fail the second time)', () => {
     expect(refused("INSERT IGNORE INTO t VALUES (1)", 'seed')).toEqual([]);
     expect(refused("INSERT INTO t VALUES (1)", 'seed')).toHaveLength(1);
+  });
+});
+
+describe('an allowed statement WITHOUT its IF [NOT] EXISTS form is refused too: every file must be re-runnable on a half-applied database (RF5-13)', () => {
+  it.each([
+    'CREATE TABLE a (id INT PRIMARY KEY)',
+    'CREATE INDEX ix_a ON a (id)',
+    'CREATE UNIQUE INDEX ix_a ON a (id)',
+    'ALTER TABLE a ADD COLUMN b INT NULL',
+    'ALTER TABLE a ADD b INT NULL',
+    'ALTER TABLE a ADD INDEX ix_b (b)',
+    'ALTER TABLE a ADD KEY ix_b (b)',
+    'ALTER TABLE a ADD UNIQUE KEY uq_b (b)',
+    'ALTER TABLE a ADD UNIQUE uq_b (b)',
+    'ALTER TABLE a ADD CONSTRAINT chk_b CHECK (b > 0)',
+    'ALTER TABLE a ADD CHECK (b > 0)',
+    'ALTER TABLE a ADD FOREIGN KEY fk_b (b) REFERENCES c (id)',
+    'ALTER TABLE a ADD CONSTRAINT fk_b FOREIGN KEY (b) REFERENCES c (id)',
+    'ALTER TABLE a DROP CONSTRAINT chk_b',
+    'ALTER TABLE a DROP FOREIGN KEY fk_b',
+    'ALTER TABLE a DROP INDEX ix_b',
+    'ALTER TABLE a DROP KEY ix_b',
+    'ALTER TABLE a ADD COLUMN IF NOT EXISTS b INT NULL, ADD INDEX ix_b (b)', // one clause in the right form does not excuse the next
+  ])('refused: %s', (sql) => {
+    const v = refused(sql);
+    expect(v, sql).toHaveLength(1);
+    expect(v[0].reason).toMatch(/IF (NOT )?EXISTS/);
+  });
+  it('ADD CONSTRAINT IF NOT EXISTS ... FOREIGN KEY is a syntax error in MariaDB (1064): the runner says to write ADD FOREIGN KEY IF NOT EXISTS', () => {
+    const v = refused('ALTER TABLE a ADD CONSTRAINT IF NOT EXISTS fk_b FOREIGN KEY (b) REFERENCES c (id)');
+    expect(v).toHaveLength(1);
+    expect(v[0].reason).toMatch(/ADD FOREIGN KEY IF NOT EXISTS/);
+  });
+  it('trigger files: CREATE TRIGGER and DROP TRIGGER without their IF forms are refused', () => {
+    expect(refused("CREATE TRIGGER trg_x BEFORE UPDATE ON a FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'no'", 'trigger')[0].reason).toMatch(/IF NOT EXISTS/);
+    expect(refused('DROP TRIGGER trg_x', 'trigger')[0].reason).toMatch(/IF EXISTS/);
+  });
+  it('the allowed forms really are re-runnable: each runs twice on MariaDB as the ten-box user without an error', async () => {
+    const db = await freshDb('s16_twice');
+    dbs.push(db);
+    const root = await rootConn();
+    await root.query("CREATE USER IF NOT EXISTS 'jv_a3t'@'%' IDENTIFIED BY 'spike_a3t_only'");
+    await root.query(`GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, INDEX, REFERENCES, TRIGGER ON \`${db}\`.* TO 'jv_a3t'@'%'`);
+    const u = await mysql.createConnection({ host: HOST, port: PORT, user: 'jv_a3t', password: 'spike_a3t_only', database: db, multipleStatements: true });
+    const sql = [
+      'CREATE TABLE IF NOT EXISTS p (id INT PRIMARY KEY) ENGINE=InnoDB',
+      'CREATE TABLE IF NOT EXISTS t (id INT PRIMARY KEY, b INT NULL) ENGINE=InnoDB',
+      'CREATE INDEX IF NOT EXISTS ix_t_b ON t (b)',
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_t_b ON t (b)',
+      'ALTER TABLE t ADD COLUMN IF NOT EXISTS c INT NULL, ADD INDEX IF NOT EXISTS ix_t_c (c)',
+      'ALTER TABLE t ADD UNIQUE IF NOT EXISTS uq_t_c (c)',
+      'ALTER TABLE t ADD CONSTRAINT IF NOT EXISTS chk_t_c CHECK (c IS NULL OR c > 0)',
+      'ALTER TABLE t ADD FOREIGN KEY IF NOT EXISTS fk_t_b (b) REFERENCES p (id) ON DELETE RESTRICT ON UPDATE RESTRICT',
+      'ALTER TABLE t MODIFY COLUMN c BIGINT NULL',
+      'ALTER TABLE t DROP CONSTRAINT IF EXISTS chk_t_c',
+      'ALTER TABLE t DROP INDEX IF EXISTS ix_t_c',
+      'ALTER TABLE t DROP FOREIGN KEY IF EXISTS fk_t_b',
+      'ANALYZE TABLE t',
+    ];
+    for (const st of sql) expect(checkSql(st, 'migration'), st).toEqual([]);
+    for (let round = 0; round < 2; round++) for (const st of sql) await u.query(st);
+    await u.end();
+    await root.query("DROP USER IF EXISTS 'jv_a3t'@'%'");
+    await root.end();
   });
 });
 
@@ -99,7 +163,7 @@ describe('what a migration may not hold (S9, refused by MariaDB itself with 1142
 
   it('a refused statement hidden after an allowed one, or after a comment, is still found', () => {
     expect(refused('-- harmless\nCREATE TABLE IF NOT EXISTS a (id INT);\n/* x */ drop table a;')).toHaveLength(1);
-    expect(refused('create table a (id int); delete from a')).toHaveLength(1);
+    expect(refused('create table if not exists a (id int); delete from a')).toHaveLength(1);
   });
 
   it('a refused word inside a string, a comment or a column name is not a statement', () => {

@@ -3,9 +3,12 @@
 // (money received - live allocations - refunds), so money that was handed back is never spent a second time. Opening bills and opening advances are ordinary rows (Y9).
 // The walk-in customer is never rebalanced (K5).
 //
-// The caller holds the customer's lock (SELECT ... FOR UPDATE on the customer row, X0) inside a transaction. Amounts are exact: integers of paise and milligrams inside.
+// Reads are the correlated queries of db/queries (S1, S2, V2_one). The caller holds the customer's lock (SELECT ... FOR UPDATE on the customer row, X0) inside a transaction. Amounts are exact: integers of paise and milligrams inside.
 // The import (IM4) and the API's X12 call the same function; there is no second copy of this rule.
 import { randomUUID } from 'node:crypto';
+import { loadQueries } from './queries.mjs';
+
+const Q = loadQueries();
 
 const MONEY = 2;
 const FINE = 3;
@@ -35,51 +38,27 @@ export async function rebalanceCustomer(conn, customerId, opts = {}) {
   if (cust.length === 0) throw new Error(`customer ${customerId} does not exist`);
   if (Number(cust[0].is_walkin) === 1) return empty;
 
-  // live allocations: not released, and the receipt is still active
-  const liveByBill = `SELECT al.bill_id AS bill_id, SUM(al.amount) AS money, SUM(al.fine_grams) AS fine
-                        FROM receipt_allocations al JOIN receipts r ON r.id = al.receipt_id
-                       WHERE al.customer_id = ? AND al.released_at IS NULL AND r.status = 'active' GROUP BY al.bill_id`;
-  const liveByReceipt = `SELECT al.receipt_id AS receipt_id, SUM(al.amount) AS money, SUM(al.fine_grams) AS fine
-                           FROM receipt_allocations al JOIN receipts r ON r.id = al.receipt_id
-                          WHERE al.customer_id = ? AND al.released_at IS NULL AND r.status = 'active' GROUP BY al.receipt_id`;
+  // What is open, by the correlated reads of X0 item 8 (S1, S2) and the advance of V2 (one customer): never a join to a grouped derived table over the customer's history (RM5-1).
+  // Read at call time, inside the transaction and after the change, so what the change re-opened (a void, a cancel, a re-issue) is in it (RM5-2).
+  const [bills] = await conn.query(Q.S1, [customerId]);
+  const [receipts] = await conn.query(Q.S2, [customerId]);
+  const advance = (await conn.query(Q.V2_one, [customerId]))[0][0];
 
-  const [bills] = await conn.query(
-    `SELECT CAST(b.grand_total AS CHAR) AS total, CAST(b.fine_weight_due AS CHAR) AS fine_total, b.id AS id,
-            CAST(COALESCE(a.money, 0) AS CHAR) AS paid, CAST(COALESCE(a.fine, 0) AS CHAR) AS fine_paid
-       FROM bills b LEFT JOIN (${liveByBill}) a ON a.bill_id = b.id
-      WHERE b.customer_id = ? AND b.status = 'active' ORDER BY b.bill_date, b.created_at, b.id`,
-    [customerId, customerId]
-  );
-  const [receipts] = await conn.query(
-    `SELECT r.id AS id, r.kind AS kind, CAST(r.amount AS CHAR) AS amount, CAST(r.fine_grams AS CHAR) AS fine_grams,
-            CAST(COALESCE(a.money, 0) AS CHAR) AS used, CAST(COALESCE(a.fine, 0) AS CHAR) AS fine_used
-       FROM receipts r LEFT JOIN (${liveByReceipt}) a ON a.receipt_id = r.id
-      WHERE r.customer_id = ? AND r.status = 'active' AND r.kind IN ('money', 'fine_silver', 'fine_cash') ORDER BY r.paid_on, r.created_at, r.id`,
-    [customerId, customerId]
-  );
-  const [refunds] = await conn.query("SELECT CAST(COALESCE(SUM(amount), 0) AS CHAR) AS s FROM receipts WHERE customer_id = ? AND status = 'active' AND kind = 'refund'", [customerId]);
-
-  // the customer's advance: money received - live allocations - refunds; silver received - live silver allocations
-  let moneyLeft = -toUnits(refunds[0].s, MONEY);
-  let fineLeft = 0n;
+  // the customer's advance: money received - live allocations - refunds; silver received - live silver allocations (V2: advance, fine_advance)
+  let moneyLeft = toUnits(advance.advance, MONEY);
+  let fineLeft = toUnits(advance.fine_advance, FINE);
   const moneyReceipts = [];
   const fineReceipts = [];
   for (const r of receipts) {
     if (r.kind === 'money') {
-      const rem = toUnits(r.amount, MONEY) - toUnits(r.used, MONEY);
-      moneyLeft += rem;
+      const rem = toUnits(r.remaining, MONEY);
       if (rem > 0n) moneyReceipts.push({ id: r.id, rem });
     } else {
-      const rem = toUnits(r.fine_grams, FINE) - toUnits(r.fine_used, FINE);
-      fineLeft += rem;
+      const rem = toUnits(r.fine_remaining, FINE);
       if (rem > 0n) fineReceipts.push({ id: r.id, rem });
     }
   }
-  const pending = bills.map((b) => ({
-    id: b.id,
-    money: toUnits(b.total, MONEY) - toUnits(b.paid, MONEY),
-    fine: toUnits(b.fine_total, FINE) - toUnits(b.fine_paid, FINE),
-  }));
+  const pending = bills.map((b) => ({ id: b.id, money: toUnits(b.pending, MONEY), fine: toUnits(b.fine_pending, FINE) }));
 
   const allocations = [];
   const apply = (list, key, scale, capacity) => {

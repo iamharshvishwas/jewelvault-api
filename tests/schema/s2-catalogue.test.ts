@@ -40,8 +40,16 @@ describe('shape of the schema', () => {
   it('has NO database view (S7, S9, section 11: a view can be created once and never changed without the Drop right) and the four derived reads are query files', async () => {
     const [r] = await c.query<any[]>("SELECT TABLE_NAME n FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE()");
     expect(r).toEqual([]);
-    expect(Object.keys(Q).sort()).toEqual(['V1', 'V2', 'V2_one', 'V3', 'V4']);
-    for (const [name, sql] of Object.entries(Q)) expect(sql, name).toMatch(/^SELECT\b/);
+    expect(Object.keys(Q).sort()).toEqual(['P2_insert', 'P2_unattached', 'S1', 'S2', 'S3', 'S4', 'V1', 'V2', 'V2_one', 'V3', 'V4']);
+    for (const [name, sql] of Object.entries(Q)) expect(sql, name).toMatch(name === 'P2_insert' ? /^INSERT INTO design_photos\b/ : /^SELECT\b/);
+  });
+
+  it('every index a query names with FORCE INDEX exists (the correlated reads do not leave their plan to the table statistics, which are stale after a bulk load)', async () => {
+    const [idx] = await c.query<any[]>("SELECT DISTINCT TABLE_NAME AS t, INDEX_NAME AS i FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE()");
+    const have = new Set(idx.map((x) => `${x.t}.${x.i}`));
+    const named = [...Object.entries(Q)].flatMap(([name, sql]) => [...sql.matchAll(/receipt_allocations al FORCE INDEX \((\w+)\)/g)].map((m) => [name, `receipt_allocations.${m[1]}`] as const));
+    expect(named.length).toBeGreaterThan(8);
+    for (const [name, key] of named) expect(have.has(key), `${name} names ${key}`).toBe(true);
   });
 
   it('receipt_allocations has an index that starts with customer_id (D19): the balance of one customer reads by it (RM4-14)', async () => {
@@ -96,7 +104,7 @@ describe('shape of the schema', () => {
   it('every timestamp is DATETIME(6); every table that has updated_at lets the database stamp it (backstop of D-Q3)', async () => {
     const all = await cols();
     for (const x of all.filter((y) => y.c.endsWith('_at') && y.t !== 'schema_migrations')) {
-      expect(x.ctype, `${x.t}.${x.c}`).toBe('datetime(6)');
+      expect(x.ctype, `${x.t}.${x.c}`).toBe(x.c === 'minute_at' ? 'datetime' : 'datetime(6)'); // minute_at is the UTC minute bucket of the error log's cap (D25), not a time stamp
     }
     for (const x of all.filter((y) => y.c === 'updated_at')) {
       expect(x.extra.toLowerCase(), `${x.t}.updated_at`).toContain('on update current_timestamp(6)');
@@ -150,7 +158,7 @@ describe('shape of the schema', () => {
       'users(email)', 'sessions(token_hash)', 'daily_rates(rate_date,material,purity)', 'categories(name)', 'subcategories(category_id,name)',
       'designs(design_no)', 'skus(sku_no)', 'skus(barcode)', 'customers(walkin_key)', 'bills(bill_no)', 'bills(request_id)', 'bills(reissue_of)',
       'bills(id,customer_id)', 'bill_items(bill_id,line_no)', 'bill_items(bill_id,sku_id)', 'receipts(id,customer_id)',
-      'sys_job_runs(job,run_date)', 'sys_import_batches(name)',
+      'sys_job_runs(job,run_date)', 'sys_import_batches(name)', 'sys_error_log(code,minute_at,seq)',
     ].sort();
     expect(found).toEqual(allowed);
     const mutable = ['status', 'archived_at', 'released_at', 'voided_at', 'voided_on', 'active', 'role', 'is_live', 'cancelled_at', 'cancelled_on', 'updated_at', 'sold_bill_id'];
