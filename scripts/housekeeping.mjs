@@ -82,7 +82,7 @@ export async function clearLoginCounters(conn) {
 export async function recordPull(conn, pull) {
   if (typeof pull.at !== 'string' || Number.isNaN(Date.parse(pull.at))) throw new Error('recordPull: at must be a time like 2026-10-10T05:00:00.000Z');
   if (typeof pull.by !== 'string' || pull.by.trim() === '') throw new Error('recordPull: by is blank');
-  if (typeof pull.file !== 'string' || !/^(daily|monthly)\/\d{4}-\d{2}(-\d{2})?(-[0-9a-f-]{36})?\.enc$/.test(pull.file)) throw new Error('recordPull: file must be a backup name like daily/2026-10-10.enc');
+  if (typeof pull.file !== 'string' || !/^(daily|monthly)\/\d{4}-\d{2}(-\d{2})?(-[0-9A-Za-z][0-9A-Za-z-]{0,39})?\.enc$/.test(pull.file)) throw new Error('recordPull: file must be a backup name like daily/2026-10-10.enc');
   if (typeof pull.sha256 !== 'string' || !/^[0-9a-f]{64}$/i.test(pull.sha256)) throw new Error('recordPull: sha256 must be 64 hex characters');
   const value = JSON.stringify({ at: pull.at, by: pull.by, file: pull.file, sha256: pull.sha256.toLowerCase() });
   await conn.query("INSERT INTO settings (setting_key, value) VALUES ('last_pulled', ?) ON DUPLICATE KEY UPDATE value = VALUES(value)", [value]);

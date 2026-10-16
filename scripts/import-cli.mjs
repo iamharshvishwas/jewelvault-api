@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs';
 import mysql from 'mysql2/promise';
 import { formatReport, runImport, seedCounters } from './import.mjs';
+import { createPacer, pacedConnect } from './pacing.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -39,7 +40,9 @@ if (!seedOnly) {
   }
 }
 
-const conn = await mysql.createConnection({
+// S11, IM1: a tool opens at most 10 new connections in any 1.2 seconds (Hostinger refuses the 21st inside about a second); this one opens a single one, through the pacer, so a later reconnect stays inside the rule
+const pacer = createPacer();
+const conn = await pacedConnect(pacer, () => mysql.createConnection({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT || 3306),
   user: process.env.DB_USER,
@@ -52,7 +55,7 @@ const conn = await mysql.createConnection({
   bigNumberStrings: true,
   dateStrings: true,
   multipleStatements: false,
-});
+}));
 try {
   await conn.query("SET SESSION transaction_isolation = 'READ-COMMITTED'");
   await conn.query("SET SESSION time_zone = '+00:00'");

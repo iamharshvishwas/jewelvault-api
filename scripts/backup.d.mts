@@ -1,6 +1,6 @@
 import type { Connection } from 'mysql2/promise';
 
-/** Where an export is written. One call to file() per output file. The job spools each file to disk, closes the snapshot, and only then gzips, encrypts and uploads (B2). */
+/** Where an export is written. One call to file() per output file, one file open at a time. The nightly dump writes them straight into one encrypted file (export-file.mjs createExportWriter), inside the snapshot (B2). */
 export interface Sink { file(path: string): { write(chunk: string): Promise<void>; close(): Promise<void> } }
 /** Where an export is read from (restore). */
 export interface Source { text(path: string): Promise<string>; lines(path: string): AsyncIterable<string> }

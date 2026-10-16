@@ -1,7 +1,7 @@
-// B2 of the spec (draft 5): the full export of the data (WITHOUT the photo bytes) and the once-only photo copy. The database half only: reading, writing files through a sink,
-// recording copies. Gzip, encryption (a fresh AES-256-GCM key per file, wrapped with the RSA public key), the upload to the bucket, the slices of about 40 seconds and the hourly tick
-// are the API's job; they plug in through the Sink and PhotoStore below. The job spools every file to disk inside the snapshot, closes the snapshot, and only THEN compresses,
-// encrypts and uploads, so no network call happens while a snapshot is open.
+// B2 of the spec (draft 5.2): the full export of the data (WITHOUT the photo bytes) and the once-only photo copy. The database half: reading, writing files through a sink, recording
+// copies. The sink for the real job is export-file.mjs (container, gzip, AES-256-GCM, written straight into a .partial file in the backup folder, no separate spool) driven by
+// backup-folder.mjs (create-once link, retry rule, monthly link, pruning); the tick, the cron script and the heartbeat rows are the API's job. The dump is a Custom cron script, one
+// snapshot from start to end on one connection, never sliced; the photo copy works in the slices of the hourly tick.
 //
 // The export is ONE consistent read-only snapshot (REPEATABLE READ and START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT, the first set for the next transaction only), every table
 // read in keyset pages, newline-delimited JSON: one object per row, every value text (DECIMAL and dates exactly as the server prints them, binary columns as hex, NULL as null).
@@ -9,7 +9,7 @@
 // idempotency rows older than 90 days. The connection must not be inside a transaction (START TRANSACTION commits one that is open).
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, mkdirSync } from 'node:fs';
-import { link, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { link, open, readFile, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
 import { once } from 'node:events';
@@ -260,18 +260,26 @@ export function directoryPhotos(dir) {
     throw e;
   };
   return {
-    // create-once like the bucket's If-None-Match: * (B2): written to a temporary name and linked into place, which fails when the name exists; the same bytes again are accepted
+    // create-once like the bucket's If-None-Match: * (B2): written to <name>.<random>.partial, flushed to disk (fsync), then linked into place, which fails when the name exists, so a
+    // final name always holds a complete file; the same bytes again are accepted and other bytes under the same name are refused (an alert, never an overwrite). A crash leaves only
+    // a .partial file, which the next job removes after an hour (backup-folder.mjs sweepPartials).
     put: async (id, kind, bytes) => {
       mkdirSync(dir, { recursive: true });
       const target = file(id, kind);
-      const tmp = `${target}.tmp-${randomUUID()}`;
-      await writeFile(tmp, bytes, { flag: 'wx' });
+      const tmp = `${target}.${randomUUID()}.partial`;
+      const handle = await open(tmp, 'wx');
+      try {
+        await handle.writeFile(bytes);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
       try {
         await link(tmp, target);
       } catch (e) {
         if (e.code !== 'EEXIST') throw e;
         const existing = await readFile(target);
-        if (!existing.equals(bytes)) throw new Error(`photo ${id}-${kind} already exists with different content; photos never change, nothing was overwritten`);
+        if (existing.length !== bytes.length || !existing.equals(bytes)) throw new Error(`photo ${id}-${kind} already exists with different content (size or sha256); photos never change, nothing was overwritten`);
       } finally {
         await unlink(tmp).catch(() => undefined);
       }

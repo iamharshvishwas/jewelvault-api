@@ -3,15 +3,37 @@
 // Everything is measured from one "now": the database's own UTC clock unless a test passes one in.
 //
 // Red: the last check says Problem, the last check is older than 26 hours (or none exists), the last GOOD export or photo copy is older than 26 hours
-// (or none exists), or the database is above 2 GB. Amber: nothing is red but the user has a Delete or Drop right. Otherwise green.
+// (or none exists), the backup folder's file count fell without a prune (B2), the database is above 2 GB, or the owner's last Download everything is more than 35 days old (B3, O53).
+// Amber: nothing is red but the owner's download is 28 days old or more, Harsh's weekly pull (O54) is more than 10 days old, or the user has a Delete or Drop right (S11). Otherwise green.
 // "Never ran" is red on purpose: on a new shop nothing is backed up until the first tick has run, and the owner should see that.
+// Days are whole Asia/Kolkata calendar dates (the shop's day, B3), not 24-hour spans.
 
 import { one } from './backup.mjs';
 
 export const RED_AFTER_HOURS = 26;
 export const DB_RED_LINE_BYTES = 2 * 1024 * 1024 * 1024;
+export const DOWNLOAD_AMBER_DAYS = 28; // amber at this many days or more (O53)
+export const DOWNLOAD_RED_DAYS = 35; // red above this many days (O53)
+export const PULL_AMBER_DAYS = 10; // amber above this many days (O54)
+export const FOLDER_FALL_WINDOW_DAYS = 7; // a fall of the folder's file count stays red for this long, so it is not gone before anyone looked
 
 const FMT = "%Y-%m-%d %H:%i:%s.%f";
+const utcMs = (text) => Date.parse(String(text).includes('T') ? String(text) : String(text).replace(' ', 'T') + 'Z');
+/** The Asia/Kolkata calendar date (UTC+05:30, no daylight saving) of a UTC instant given as a DATETIME text or an ISO string; null when it is not a date. */
+const kolkataDate = (text) => {
+  const ms = utcMs(text);
+  return Number.isFinite(ms) ? new Date(ms + 19_800_000).toISOString().slice(0, 10) : null;
+};
+const wholeDays = (laterDate, earlierDate) => Math.round((Date.parse(laterDate) - Date.parse(earlierDate)) / 86_400_000);
+const parseJson = (v) => {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== 'string') return v;
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+};
 const hoursBetween = (nowStr, thenStr) => Math.round(((Date.parse(nowStr.replace(' ', 'T') + 'Z') - Date.parse(thenStr.replace(' ', 'T') + 'Z')) / 3600_000) * 100) / 100;
 
 /** `db`.* patterns of GRANT: an unescaped _ is any one character, % any run, a backslash makes either literal. */
@@ -83,6 +105,70 @@ export async function readHealth(conn, opts = {}) {
     const photoRow = await one(conn, 'SELECT COALESCE(SUM(byte_size), 0) AS b FROM design_photos WHERE removed_at IS NULL');
     photoBytes = Number(photoRow.b);
   }
+
+  // B3, O53: the days since the owner's last Download everything, counted from settings.last_download.at, or with none from the oldest check_runs row (the first night).
+  const today = kolkataDate(now);
+  const [dlRows] = await conn.query("SELECT value FROM settings WHERE setting_key = 'last_download'");
+  const lastDownloadAt = parseJson(dlRows[0]?.value)?.at;
+  let download = { state: 'unknown', from: null, reference_date: null, age_days: null };
+  const fromDownload = lastDownloadAt ? kolkataDate(lastDownloadAt) : null;
+  if (fromDownload) download = { from: 'last_download', reference_date: fromDownload };
+  else {
+    const firstNight = (await conn.query(`SELECT DATE_FORMAT(MIN(ran_at), '${FMT}') AS at FROM check_runs`))[0][0].at;
+    if (firstNight) download = { from: 'first_night', reference_date: kolkataDate(firstNight) };
+  }
+  if (download.reference_date) {
+    download.age_days = wholeDays(today, download.reference_date);
+    download.state = download.age_days > DOWNLOAD_RED_DAYS ? 'red' : download.age_days >= DOWNLOAD_AMBER_DAYS ? 'amber' : 'ok';
+  }
+
+  // O54: the days since Harsh's weekly pull, from settings.last_pulled.at, or with none from the first good export.
+  const [pullRows] = await conn.query("SELECT value FROM settings WHERE setting_key = 'last_pulled'");
+  const lastPulledAt = parseJson(pullRows[0]?.value)?.at;
+  let pull = { state: 'unknown', from: null, reference_date: null, age_days: null };
+  const fromPull = lastPulledAt ? kolkataDate(lastPulledAt) : null;
+  if (fromPull) pull = { from: 'last_pulled', reference_date: fromPull };
+  else {
+    const firstExport = (await conn.query(`SELECT DATE_FORMAT(MIN(ran_at), '${FMT}') AS at FROM backup_runs WHERE kind = 'db_dump' AND ok = 1`))[0][0].at;
+    if (firstExport) pull = { from: 'first_export', reference_date: kolkataDate(firstExport) };
+  }
+  if (pull.reference_date) {
+    pull.age_days = wholeDays(today, pull.reference_date);
+    pull.state = pull.age_days > PULL_AMBER_DAYS ? 'amber' : 'ok';
+  }
+
+  // B2: the backup folder as the good runs recorded it (backup_runs.detail.folder = {files, bytes, free_bytes}; detail.pruned = how many files that run removed on purpose).
+  // The file count FALLING by more than was pruned, between two consecutive recorded runs, is red; the flag stays for FOLDER_FALL_WINDOW_DAYS so a night's fall is still visible the day after.
+  const [folderRows] = await conn.query(
+    `SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, detail FROM backup_runs WHERE ok = 1 AND kind IN ('db_dump', 'photo_copy') AND JSON_VALUE(detail, '$.folder.files') IS NOT NULL ORDER BY ran_at DESC, id DESC LIMIT 60`
+  );
+  const seen = folderRows.reverse().map((r) => ({ at: r.at, detail: parseJson(r.detail) }));
+  let folder = null;
+  if (seen.length > 0) {
+    const last = seen[seen.length - 1];
+    const f = last.detail.folder;
+    let fell = false;
+    let fellAt = null;
+    const windowStart = utcMs(now) - FOLDER_FALL_WINDOW_DAYS * 86_400_000;
+    for (let i = 1; i < seen.length; i++) {
+      const before = Number(seen[i - 1].detail.folder.files);
+      const after = Number(seen[i].detail.folder.files);
+      const pruned = Number(seen[i].detail.pruned ?? 0);
+      if (after < before - pruned && utcMs(seen[i].at) >= windowStart) {
+        fell = true;
+        fellAt = seen[i].at;
+      }
+    }
+    folder = {
+      files: Number(f.files),
+      bytes: Number(f.bytes ?? 0),
+      free_bytes: f.free_bytes === undefined || f.free_bytes === null ? null : Number(f.free_bytes),
+      previous_files: seen.length > 1 ? Number(seen[seen.length - 2].detail.folder.files) : null,
+      recorded_at: last.at,
+      fell,
+      fell_at: fellAt,
+    };
+  }
   const [nameRows] = await conn.query('SELECT DATABASE() AS name');
   const dbRow = nameRows[0];
 
@@ -102,9 +188,13 @@ export async function readHealth(conn, opts = {}) {
   else if (db_dump.age_hours > RED_AFTER_HOURS) reasons.push('dump_stale');
   if (photo_copy.age_hours === null) reasons.push('photo_copy_never');
   else if (photo_copy.age_hours > RED_AFTER_HOURS) reasons.push('photo_copy_stale');
+  if (folder?.fell) reasons.push('backup_files_fell');
   if (db_size.bytes > DB_RED_LINE_BYTES) reasons.push('db_size');
+  if (download.state === 'red') reasons.push('download_red');
   const red = reasons.length > 0;
+  if (download.state === 'amber') reasons.push('download_amber');
+  if (pull.state === 'amber') reasons.push('pulled_amber');
   if (rights.delete || rights.drop) reasons.push('delete_or_drop_right');
 
-  return { level: red ? 'red' : rights.delete || rights.drop ? 'amber' : 'green', reasons, check, db_dump, photo_copy, db_size, rights, now };
+  return { level: red ? 'red' : reasons.length > 0 ? 'amber' : 'green', reasons, check, db_dump, photo_copy, folder, download, pull, db_size, rights, now };
 }

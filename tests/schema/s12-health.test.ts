@@ -25,6 +25,7 @@ afterAll(async () => {
 async function clean() {
   await c.query('DELETE FROM check_runs');
   await c.query('DELETE FROM backup_runs');
+  await c.query("DELETE FROM settings WHERE setting_key IN ('last_download', 'last_pulled')");
 }
 const check = (hours: number, ok = 1) => insert(c, 'check_runs', { ran_at: ago(hours), ok, details: { counts: {} } });
 const backup = (kind: string, hours: number, ok = 1) => insert(c, 'backup_runs', { ran_at: ago(hours), kind, ok, bytes: 1000 });
@@ -177,6 +178,193 @@ describe('readHealth: the dashboard line', () => {
     await insert(c, 'check_runs', { ran_at: (t as any).t, ok: 1 });
     const h = await readHealth(c);
     expect(h.check.age_hours).toBeLessThan(0.01);
+  });
+});
+
+// Draft 5.1 / 5.2 (I12, B3, B2, O53, O54; T-R03, T-R05, T-R06): the owner's monthly download, Harsh's weekly pull and the backup folder's file count. Days are whole Asia/Kolkata calendar dates:
+// NOW is 20:00 UTC on 15 Oct, which is 01:30 on 16 Oct in Kolkata, so "today" is 2026-10-16.
+describe('readHealth: the download flag, the weekly pull and the folder (draft 5.2)', () => {
+  const TODAY = '2026-10-16';
+  const dayN = (n: number) => new Date(Date.parse(`${TODAY}T12:00:00Z`) - n * 86400_000).toISOString().slice(0, 10); // the Kolkata date n days ago
+  const at = (n: number) => (n === 0 ? ago(1) : `${dayN(n)} 06:00:00.000000`); // 06:00 UTC is 11:30 in Kolkata, the same date; day 0 is an hour ago (00:30 on the 16th in Kolkata)
+  const setting = async (key: string, value: unknown | null) => {
+    await c.query('DELETE FROM settings WHERE setting_key = ?', [key]);
+    if (value !== null) await insert(c, 'settings', { setting_key: key, value });
+  };
+  const download = async (n: number) => setting('last_download', { at: `${dayN(n)}T06:00:00.000Z`, by: uuid(), counts: { customers: 3 } });
+  const pulled = async (n: number) => setting('last_pulled', { at: `${dayN(n)}T06:00:00.000Z`, by: 'admin-cli', file: 'daily/2026-10-01.enc', sha256: 'ab'.repeat(32) });
+  const fresh = async () => {
+    await healthy();
+    await setting('last_download', null);
+    await setting('last_pulled', null);
+  };
+  const level = async (extra: Record<string, unknown> = {}) => readHealth(c, { now: NOW, ...extra });
+
+  it('with no download the days run from the first night the system ran (the oldest check_runs row): day 27 is green, day 28 amber, day 35 amber, day 36 red', async () => {
+    const results: Record<number, [string, string[]]> = {};
+    for (const n of [0, 27, 28, 35, 36, 60]) {
+      await fresh();
+      await insert(c, 'check_runs', { ran_at: at(n), ok: 1 }); // the oldest night
+      const h = await level();
+      results[n] = [h.download.state, h.reasons.filter((r) => r.startsWith('download'))];
+      expect(h.download).toMatchObject({ from: 'first_night', age_days: n, reference_date: dayN(n) });
+    }
+    expect(results[27]).toEqual(['ok', []]);
+    expect(results[28]).toEqual(['amber', ['download_amber']]);
+    expect(results[35]).toEqual(['amber', ['download_amber']]);
+    expect(results[36]).toEqual(['red', ['download_red']]);
+    expect(results[60]).toEqual(['red', ['download_red']]);
+    expect(results[0]).toEqual(['ok', []]);
+  });
+
+  it('with a download the days run from its Kolkata date (settings.last_download.at); a new download clears the flag', async () => {
+    await fresh();
+    await download(40);
+    expect((await level()).download).toMatchObject({ from: 'last_download', age_days: 40, state: 'red', reference_date: dayN(40) });
+    await download(0);
+    const h = await level();
+    expect(h.download).toMatchObject({ from: 'last_download', age_days: 0, state: 'ok' });
+    expect(h.reasons.filter((r) => r.startsWith('download'))).toEqual([]);
+  });
+
+  it('the day is the Kolkata date of the download, not the UTC date: 18:29 UTC is still the 15th in Kolkata, 18:30 UTC is already the 16th', async () => {
+    await fresh();
+    await setting('last_download', { at: '2026-10-15T18:29:59.000Z', by: uuid(), counts: {} });
+    expect((await level()).download).toMatchObject({ reference_date: '2026-10-15', age_days: 1 });
+    await setting('last_download', { at: '2026-10-15T18:30:00.000Z', by: uuid(), counts: {} });
+    expect((await level()).download).toMatchObject({ reference_date: '2026-10-16', age_days: 0 });
+  });
+
+  it('the level follows: amber alone makes the line amber, red makes it red; before the first night there is no figure and no download reason', async () => {
+    await fresh();
+    await download(30);
+    const amber = await level();
+    expect(amber.reasons).toContain('download_amber');
+    expect(amber.level).toBe('amber'); // nothing red, so amber (also because the test user holds Delete and Drop)
+    await download(36);
+    expect((await level()).level).toBe('red');
+    await clean();
+    await setting('last_download', null);
+    const none = await level();
+    expect(none.download).toMatchObject({ state: 'unknown', age_days: null, from: null });
+    expect(none.reasons.filter((r) => r.startsWith('download'))).toEqual([]);
+  });
+
+  it('the weekly pull: amber ABOVE 10 days; with no pull at all the days run from the first export (the oldest good db_dump)', async () => {
+    await fresh();
+    await pulled(10);
+    expect((await level()).pull).toMatchObject({ from: 'last_pulled', age_days: 10, state: 'ok' });
+    await pulled(11);
+    const h = await level();
+    expect(h.pull).toMatchObject({ age_days: 11, state: 'amber' });
+    expect(h.reasons).toContain('pulled_amber');
+    await pulled(0);
+    expect((await level()).reasons).not.toContain('pulled_amber');
+    // no pull at all: counted from the first export
+    await setting('last_pulled', null);
+    await insert(c, 'backup_runs', { ran_at: at(11), kind: 'db_dump', ok: 1, bytes: 1 });
+    const none = await level();
+    expect(none.pull).toMatchObject({ from: 'first_export', age_days: 11, state: 'amber' });
+    expect(none.reasons).toContain('pulled_amber');
+    await clean();
+    expect((await level()).pull).toMatchObject({ state: 'unknown', from: null, age_days: null });
+  });
+
+  it('a failed export is not the first export: only ok = 1 rows count', async () => {
+    await fresh();
+    await clean();
+    await check(1);
+    await insert(c, 'backup_runs', { ran_at: at(20), kind: 'db_dump', ok: 0, bytes: 0 });
+    await insert(c, 'backup_runs', { ran_at: at(3), kind: 'db_dump', ok: 1, bytes: 1 });
+    expect((await level()).pull).toMatchObject({ from: 'first_export', age_days: 3, state: 'ok' });
+  });
+
+  it('the backup folder: the figures of the latest good run are shown; red when the file count FALLS without a prune (T-R03), not when it grows or falls by what was pruned', async () => {
+    const run = (hours: number, files: number, extra: Record<string, unknown> = {}, kind = 'db_dump') =>
+      insert(c, 'backup_runs', { ran_at: ago(hours), kind, ok: 1, bytes: 1, detail: { folder: { files, bytes: files * 1000, free_bytes: 5_000_000_000 }, ...extra } });
+    const start = async () => {
+      await clean();
+      await check(1);
+      await backup('photo_copy', 3);
+    };
+    await start();
+    await run(6, 40);
+    await run(5, 41);
+    await run(4, 42);
+    let h = await level();
+    expect(h.folder).toMatchObject({ files: 42, previous_files: 41, bytes: 42000, free_bytes: 5_000_000_000, fell: false });
+    expect(h.reasons).not.toContain('backup_files_fell');
+    await run(3, 38); // later: four files vanished and nothing was pruned
+    h = await level();
+    expect(h.folder).toMatchObject({ files: 38, previous_files: 42, fell: true });
+    expect(h.reasons).toContain('backup_files_fell');
+    expect(h.level).toBe('red');
+    await start();
+    await run(6, 42);
+    await run(5, 41, { pruned: 1 }); // one file pruned on purpose: the count fell by exactly what the prune removed
+    h = await level();
+    expect(h.folder).toMatchObject({ files: 41, previous_files: 42, fell: false });
+    expect(h.reasons).not.toContain('backup_files_fell');
+    await run(4, 38, { pruned: 1 }); // fell by more than was pruned
+    expect((await level()).reasons).toContain('backup_files_fell');
+    await start();
+    await run(6, 42);
+    await run(5, 45); // growth is never a fall
+    await run(4, 45, {}, 'photo_copy'); // a photo copy run that also recorded the folder counts too
+    h = await level();
+    expect(h.folder).toMatchObject({ files: 45, fell: false });
+  });
+
+  it('a fall stays red for 7 days (the dashboard may not be looked at the next morning) and then stops being reported; a failed run is not an observation', async () => {
+    const run = (hours: number, files: number, ok = 1) =>
+      insert(c, 'backup_runs', { ran_at: ago(hours), kind: 'db_dump', ok, bytes: 1, detail: { folder: { files, bytes: 1, free_bytes: 1 } } });
+    await clean();
+    await check(1);
+    await backup('photo_copy', 3);
+    await run(130, 42);
+    await run(120, 38); // five days ago
+    await run(100, 38);
+    await run(50, 38);
+    await run(5, 38);
+    let h = await level();
+    expect(h.folder).toMatchObject({ files: 38, previous_files: 38, fell: true, fell_at: ago(120) });
+    expect(h.reasons).toContain('backup_files_fell');
+    await clean();
+    await check(1);
+    await backup('photo_copy', 3);
+    await run(210, 42);
+    await run(192, 38); // eight days ago
+    await run(5, 38);
+    h = await level();
+    expect(h.folder).toMatchObject({ files: 38, fell: false, fell_at: null });
+    expect(h.reasons).not.toContain('backup_files_fell');
+    await clean();
+    await check(1);
+    await backup('photo_copy', 3);
+    await run(6, 42);
+    await run(5, 10, 0); // a failed run says nothing about the folder
+    await run(4, 42);
+    expect((await level()).folder).toMatchObject({ files: 42, previous_files: 42, fell: false });
+  });
+
+  it('with no run that recorded the folder there is no folder figure and no flag', async () => {
+    await fresh();
+    const h = await level();
+    expect(h.folder).toBeNull();
+    expect(h.reasons).not.toContain('backup_files_fell');
+  });
+
+  it('the dashboard order of the reasons: the check, the export, the photo copy, the folder, the size, the download, the pull, then the rights', async () => {
+    await fresh();
+    await clean();
+    await download(40);
+    await pulled(20);
+    const h = await level({ sizeBytes: DB_RED_LINE_BYTES + 1 });
+    const order = ['check_problem', 'check_stale', 'check_never', 'dump_stale', 'dump_never', 'photo_copy_stale', 'photo_copy_never', 'backup_files_fell', 'db_size', 'download_red', 'download_amber', 'pulled_amber', 'delete_or_drop_right'];
+    const idx = h.reasons.map((r) => order.indexOf(r));
+    expect(idx.every((i) => i >= 0)).toBe(true);
+    expect(idx).toEqual([...idx].sort((a, b) => a - b));
+    expect(h.reasons).toEqual(expect.arrayContaining(['download_red', 'pulled_amber', 'db_size']));
   });
 });
 
