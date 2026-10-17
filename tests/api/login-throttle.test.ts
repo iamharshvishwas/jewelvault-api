@@ -424,3 +424,90 @@ describe('T-D24 login rows: the slot of an e-mail is the same for the applicatio
     }
   });
 });
+
+// ------------------------------------------------------------------------------------------------ PT-RV1b (RV1-5): other spellings of an e-mail
+
+describe('PT-RV1b T-D24 (RV1-5) another spelling of an e-mail (an accent, an invisible character) is an unknown e-mail: it does not reach the user\'s row and does not use the user\'s counter (D24, A13 (1))', () => {
+  let next = 80_000;
+  const fresh = () => addr(++next);
+  const slotOf = (email: string) => loginSlot(loginSaltOf(world.app.config), 'email', email);
+  const raw = (email: string, password: string) => world.app.inject({ method: 'POST', url: '/v1/auth/login', headers: { ...csrfHeaders(), 'x-real-ip': fresh() }, payload: { email, password } });
+  const sessionsOf = async (userId: string) => Number((await world.sql.query<any[]>('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', [userId]))[0][0].n);
+  const counterOf = async (email: string) => {
+    const [rows] = await world.sql.query<any[]>("SELECT n FROM sys_login_attempts WHERE scope = 'email' AND slot = ?", [slotOf(email)]);
+    return rows.length === 0 ? 0 : Number(rows[0].n);
+  };
+  const lastStored = () => vi.mocked(passwords.verify).mock.calls.at(-1)?.[1];
+
+  /** An owner whose e-mail has the letters the spellings change, and whose spellings all have counter slots of their own (the slot is one of 1,024: a clash would make the test about luck). */
+  async function ownerWithSpellings() {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const local = `owner.${randomUUID().slice(0, 8)}`;
+      const email = `${local}@example.test`;
+      const spellings = {
+        accent: `${local.replace('o', 'ö')}@example.test`,
+        invisible: `${local.slice(0, 2)}\u200b${local.slice(2)}@example.test`,
+        invisibleInDomain: `${local}@exam\u200bple.test`,
+      };
+      const slots = [email, ...Object.values(spellings), invented(9_300_000)].map(slotOf);
+      if (new Set(slots).size !== slots.length) continue;
+      const owner = await world.addUser({ role: 'owner', passwordHash: HASH, email });
+      return { owner, email, spellings };
+    }
+    throw new Error('no e-mail without a slot clash in 50 tries');
+  }
+
+  it('the database itself takes these spellings for the owner (so the compare must be exact), yet the login answers each as an unknown e-mail: 401 JV_BAD_LOGIN for the RIGHT password, no cookie, no session, and the dummy hash is what was verified', async () => {
+    const { owner, email, spellings } = await ownerWithSpellings();
+    for (const [name, spelling] of Object.entries(spellings)) {
+      const [found] = await world.sql.query<any[]>('SELECT COUNT(*) AS n FROM users WHERE email = ?', [spelling]);
+      expect(Number(found[0].n), `${name}: the collation of users.email finds the owner (the reason for the exact compare)`).toBe(1);
+    }
+    const unknown = await raw(invented(9_300_001), PASSWORD);
+    expect(unknown.statusCode).toBe(401);
+    const dummy = await passwords.dummyHash();
+    for (const [name, spelling] of Object.entries(spellings)) {
+      const res = await raw(spelling, PASSWORD);
+      expect(res.statusCode, `${name}: the right password`).toBe(401);
+      expect(res.json().error, name).toEqual(unknown.json().error);
+      expect(res.headers['set-cookie'], name).toBeUndefined();
+      expect(lastStored(), `${name}: verified against the dummy hash, not the owner's`).toBe(dummy);
+    }
+    expect(await sessionsOf(owner.userId)).toBe(1); // the fixture session only
+    // control: the owner's own spelling, in other letters or with spaces around it, is the owner (D1: the login name ignores case and surrounding spaces)
+    for (const same of [email, email.toUpperCase(), ` ${email} `]) {
+      const res = await raw(same, PASSWORD);
+      expect(res.statusCode, JSON.stringify(same)).toBe(200);
+      expect(lastStored()).toBe(HASH);
+    }
+  });
+
+  it('the spellings count and wait like any unknown e-mail (5 free tries, then 1 s), each in a counter of its own; the owner\'s counter is counted for the owner\'s spelling only (letter case and spaces included)', async () => {
+    const { email, spellings } = await ownerWithSpellings();
+    const { sleeps } = recordSleeps();
+    const control = invented(9_300_002);
+    const slots = [email, control, ...Object.values(spellings)];
+    for (const e of slots) await world.sql.query("UPDATE sys_login_attempts SET n = 0 WHERE scope = 'email' AND slot = ?", [slotOf(e)]);
+
+    // 5 wrong tries in each of the three spellings and in an invented e-mail: nobody waits, and the owner's counter does not move
+    for (const e of [...Object.values(spellings), control]) for (let i = 0; i < 5; i++) expect((await login(e, 'not-the-password', { ip: fresh() })).status).toBe(401);
+    expect(sleeps).toEqual([]);
+    expect(await counterOf(email), 'the owner\'s counter after 15 tries in other spellings').toBe(0);
+    for (const e of Object.values(spellings)) expect(await counterOf(e), e).toBe(5);
+
+    // the sixth try of a spelling waits exactly as the sixth try for an invented e-mail does, and not longer
+    await login(control, 'not-the-password', { ip: fresh() });
+    const forControl = sleeps.splice(0);
+    await login(spellings.accent, 'not-the-password', { ip: fresh() });
+    expect(forControl).toEqual([1000]);
+    expect(sleeps.splice(0)).toEqual(forControl);
+
+    // the owner's spelling, in capitals and with spaces, shares ONE counter: 5 tries, then the wait
+    const forms = [email, email.toUpperCase(), ` ${email}`, `${email} `, email];
+    for (const form of forms) expect((await login(form, 'not-the-password', { ip: fresh() })).status).toBe(401);
+    expect(sleeps).toEqual([]);
+    expect(await counterOf(email)).toBe(5);
+    await login(email, 'not-the-password', { ip: fresh() });
+    expect(sleeps.splice(0)).toEqual([1000]);
+  });
+});

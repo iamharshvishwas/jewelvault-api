@@ -1,5 +1,5 @@
 // U3, A13, NODE-DESIGN 2.8: the check that stands in front of every call of the admin door (/admin/v1/*). It is the `verify` of route(app, { token: 'admin', ... }) and runs alone, before the body is read and
-// with no session (the door has none), in this order, so that a call that is refused costs the least and tells the least:
+// with no session (the door has none), in this order (steps 2 to 4 are for an address that can be trusted; the other kind is below), so that a call that is refused costs the least and tells the least:
 //
 //   1. an `Origin` header: refused (403 JV_FORBIDDEN) whatever else is in the request, the right token and an allowed origin included. A browser always sends one on a call made by a page, so a web page
 //      can never call the door. It comes first and counts nothing, so a page cannot use up Harsh's calls either. The door sends no CORS headers (src/security/index.ts gives its routes `cors: false`),
@@ -9,9 +9,10 @@
 //   4. the token: `Authorization: Bearer <token>`. The SHA-256 of what was sent is compared in constant time with JV_ADMIN_TOKEN_HASH (both 32 bytes; a missing or malformed header is hashed as
 //      the empty text, so every call does the same work). A wrong token is 401 JV_UNAUTHENTICATED and counts a wrong answer in a row; the second starts the pause. The right token ends the run.
 //
-// An address that cannot be trusted (no x-real-ip, or not one address, src/auth/limiter.ts visitorAddress) shares one key for the ten a minute, and gets no pause, because a stranger writing that
-// address could pause Harsh out for 15 minutes again and again. In its place: at most 5 wrong tokens an hour for the whole API; the sixth is 429 with the seconds left. The right token is never
-// refused for that reason, so a stranger cannot lock Harsh out at all.
+// An address that cannot be trusted (no x-real-ip, or not one address, src/auth/limiter.ts visitorAddress) is judged the other way round (RV1-7): the token comes FIRST, and only a WRONG token is
+// counted. There is no pause (a stranger writing that address could pause Harsh out for 15 minutes again and again) and no count of ten a minute either, because all such callers would share one key
+// and ten calls of anyone, with or without a token, would then refuse Harsh's own. In their place: at most 5 wrong tokens an hour for the whole API; the sixth is 429 with the seconds left. The
+// RIGHT token is never counted and never refused for that reason, so a stranger cannot lock Harsh out at all.
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { THROTTLES, limiterOf, rateLimited, visitorAddress } from '../auth/limiter.js';
@@ -37,29 +38,30 @@ export function adminDoor(app: FastifyInstance, tokenHash: string): (request: Fa
 
     const limiter = limiterOf(app);
     const visitor = visitorAddress(request.headers);
+
+    if (!visitor.trusted) {
+      // RV1-7: the token first; a right token passes and is not counted anywhere, a wrong one is counted against the hour's five for the whole API
+      if (tokenMatches(request.headers.authorization, expected)) return;
+      const budget = limiter.take('admin-wrong-untrusted', THROTTLES.adminWrongUntrusted);
+      if (!budget.ok) throw rateLimited(budget.retryAfterS);
+      throw new JvError('JV_UNAUTHENTICATED', 'The token was not accepted.');
+    }
+
     const pauseKey = `admin-pause:${visitor.key}`;
     const wrongKey = `admin-wrong:${visitor.key}`;
-
-    if (visitor.trusted) {
-      const left = limiter.pausedFor(pauseKey);
-      if (left > 0) throw rateLimited(left / 1000);
-    }
+    const left = limiter.pausedFor(pauseKey);
+    if (left > 0) throw rateLimited(left / 1000);
     const calls = limiter.take(`admin-calls:${visitor.key}`, THROTTLES.adminCalls);
     if (!calls.ok) throw rateLimited(calls.retryAfterS);
 
     if (tokenMatches(request.headers.authorization, expected)) {
-      if (visitor.trusted) limiter.clearStrikes(wrongKey);
+      limiter.clearStrikes(wrongKey);
       return;
     }
 
-    if (visitor.trusted) {
-      if (limiter.strike(wrongKey) >= THROTTLES.adminWrongInARow) {
-        limiter.pause(pauseKey, THROTTLES.adminPauseMs);
-        limiter.clearStrikes(wrongKey);
-      }
-    } else {
-      const budget = limiter.take('admin-wrong-untrusted', THROTTLES.adminWrongUntrusted);
-      if (!budget.ok) throw rateLimited(budget.retryAfterS);
+    if (limiter.strike(wrongKey) >= THROTTLES.adminWrongInARow) {
+      limiter.pause(pauseKey, THROTTLES.adminPauseMs);
+      limiter.clearStrikes(wrongKey);
     }
     throw new JvError('JV_UNAUTHENTICATED', 'The token was not accepted.');
   };
