@@ -29,6 +29,9 @@ const tokenHash = z
   .regex(/^[0-9a-fA-F]{64}$/)
   .transform((value) => value.toLowerCase());
 
+// D24, U10: the secret salt of the login counter slots. Optional: without it the salt is made from the database password (src/auth/throttle.ts loginSaltOf).
+const secretSalt = z.string().min(16).max(256);
+
 const schema = z.object({
   DB_HOST: text,
   DB_PORT: portNumber,
@@ -37,6 +40,7 @@ const schema = z.object({
   DB_PASSWORD: text,
   ALLOWED_ORIGINS: originList,
   JV_ADMIN_TOKEN_HASH: tokenHash.optional(),
+  JV_LOGIN_SALT: secretSalt.optional(),
   PORT: portNumber.optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).optional(),
 });
@@ -52,6 +56,8 @@ export interface Config {
   readonly allowedOrigins: readonly string[];
   /** U3, O41: the SHA-256 of the admin token, 64 lower-case hex characters. Without it the admin door (/admin/v1/*) does not exist: remove the variable and the door is shut. */
   readonly adminTokenHash?: string | undefined;
+  /** D24, U10: the secret salt of the login counter slots (JV_LOGIN_SALT, at least 16 characters). Unset: a salt made from the database password. */
+  readonly loginSalt?: string | undefined;
   readonly db: { readonly host: string; readonly port: number; readonly name: string; readonly user: string; readonly password: string };
 }
 
@@ -85,6 +91,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     logLevel: v.LOG_LEVEL ?? 'info',
     allowedOrigins: v.ALLOWED_ORIGINS,
     adminTokenHash: v.JV_ADMIN_TOKEN_HASH,
+    loginSalt: v.JV_LOGIN_SALT,
     db: Object.freeze({ host: v.DB_HOST, port: v.DB_PORT, name: v.DB_NAME, user: v.DB_USER, password: v.DB_PASSWORD }),
   });
 }

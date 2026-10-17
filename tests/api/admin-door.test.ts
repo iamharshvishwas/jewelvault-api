@@ -495,10 +495,13 @@ describe('T-D27 (HTTP half) the admin door exists only while JV_ADMIN_TOKEN_HASH
       "INSERT INTO sys_login_attempts (scope, slot, window_start, n) VALUES ('email', 5, ?, 9), ('email', 900, ?, 2), ('addr', 7, ?, 25), ('any', 0, ?, 70), ('audit', 0, ?, 13) ON DUPLICATE KEY UPDATE window_start = VALUES(window_start), n = VALUES(n)",
       [old, old, old, old, old],
     );
+    // the logins of the tests before this one have left their counters too (API08): every row of the three scopes is cleared, whoever made it
+    const counting = Number((await world.sql.query<any[]>("SELECT COUNT(*) AS n FROM sys_login_attempts WHERE scope IN ('email', 'addr', 'any')"))[0][0].n);
+    expect(counting).toBeGreaterThanOrEqual(4);
     const res = await call('POST', '/admin/v1/login-counters/clear');
     expect(res.statusCode).toBe(200);
     const rows = (await world.sql.query<any[]>("SELECT scope, slot, n, TIMESTAMPDIFF(SECOND, window_start, UTC_TIMESTAMP(6)) AS age, DATE_FORMAT(window_start, '%Y-%m-%d %H:%i:%s.%f') AS w FROM sys_login_attempts ORDER BY scope, slot"))[0] as Record<string, any>[];
-    expect(res.json()).toEqual({ cleared: 4 });
+    expect(res.json()).toEqual({ cleared: counting });
     for (const r of rows.filter((x) => x.scope !== 'audit')) {
       expect(Number(r.n), `${r.scope} ${r.slot}`).toBe(0);
       expect(Number(r.age), `${r.scope} ${r.slot} window is now`).toBeLessThan(30);

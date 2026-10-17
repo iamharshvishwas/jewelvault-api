@@ -4,6 +4,7 @@ import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ExactPricingError as OraclePricingError, type PriceBillInput, formatGrams, formatRupees, priceBill as oraclePrice } from '../../oracle/exact-decimal';
 import { buildApp } from '../../src/app';
+import { installUserRates } from '../../src/auth/throttle';
 import { createClock } from '../../src/clock';
 import { createDbPool } from '../../src/db/pool';
 import { type PriceBillInput as RealInput, type PricedBill, priceBill } from '../../src/domain/pricing';
@@ -61,6 +62,7 @@ async function addRate(material: string, purity: string, rate: string, date: str
 
 beforeAll(async () => {
   world = await makeWorld({ label: 'quote', routes: true });
+  installUserRates(world.app, { everything: { limit: 1_000_000, windowMs: 60_000 } }); // thousands of quotes with one user and a clock that stands still: A13 allows 300 a minute
   await world.sql.query("INSERT INTO categories (id, name, prefix) VALUES (?, 'Quote', 'QT')", [randomUUID()]);
   await world.sql.query('INSERT INTO settings (setting_key, value) VALUES (?, ?)', ['estimate', JSON.stringify({ prefix: 'JV', roundOff: true, footerNote: 'estimate' })]);
   await addDesign('gold22', 'Gold', '22K', 'By Weight');

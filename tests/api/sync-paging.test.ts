@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app';
+import { installUserRates } from '../../src/auth/throttle';
 import { createClock } from '../../src/clock';
 import { createDbPool } from '../../src/db/pool';
 import { txContext, withRead } from '../../src/db/tx';
@@ -31,6 +32,7 @@ describe('T-F03 2,500 pieces all arrive through paging, also when the API\'s pag
 
   beforeAll(async () => {
     world = await makeWorld({ label: 'syncpc', routes: true });
+    installUserRates(world.app, { everything: { limit: 1_000_000, windowMs: 60_000 } }); // thousands of pages with one user and a clock that stands still: A13 allows 300 a minute
     const category = (await insert(world.sql, 'categories', V.category({ name: 'Pieces', prefix: 'PCS' }))) as { id: string };
     const design = (await insert(world.sql, 'designs', V.design(category.id, { design_no: 'D-PIECES' }))) as { id: string };
     // 2,500 pieces; the stamps come in groups of 50 that share a microsecond count, so the key has to break the ties at (almost) every page edge
@@ -132,6 +134,7 @@ describe('T-F03 30,000 rows with random version-4 ids paged in 2-row pages come 
 
   beforeAll(async () => {
     world = await makeWorld({ label: 'syncpu', routes: true });
+    installUserRates(world.app, { everything: { limit: 1_000_000, windowMs: 60_000 } }); // thousands of pages with one user and a clock that stands still: A13 allows 300 a minute
     let n = 0;
     for (const { stamp, count } of STAMPS) {
       const rows = Array.from({ length: count }, () => `('${randomUUID()}', 'Key ${String(++n).padStart(6, '0')}', 'KEY', '${stamp}')`);

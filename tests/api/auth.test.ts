@@ -60,7 +60,13 @@ let HASH: string;
 const inject = (method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, o: { payload?: unknown; cookie?: string; headers?: Record<string, string>; app?: World['app'] } = {}) =>
   (o.app ?? world.app).inject({ method, url, payload: o.payload as object | undefined, headers: { ...(method === 'GET' ? {} : csrfHeaders()), ...(o.cookie ? { cookie: o.cookie } : {}), ...o.headers } });
 
-const loginWith = (email: string, password: string, o: { cookie?: string; headers?: Record<string, string>; app?: World['app'] } = {}) => inject('POST', '/v1/auth/login', { payload: { email, password }, ...o });
+// A13 (API08): a login from no usable address shares the 60 a minute of every such login, and this file logs in more than that, so every call of the helper comes from an address of its own
+// (a test of the address rows gives its own header, which wins).
+let loginNumber = 0;
+const loginWith = (email: string, password: string, o: { cookie?: string; headers?: Record<string, string>; app?: World['app'] } = {}) => {
+  loginNumber += 1;
+  return inject('POST', '/v1/auth/login', { payload: { email, password }, ...o, headers: { 'x-real-ip': `198.18.${(loginNumber >> 8) & 255}.${loginNumber & 255}`, ...o.headers } });
+};
 
 /** A user with a real hash of PASSWORD. The fixture session that addUser makes is "another browser". */
 const makeUser = (role: 'owner' | 'biller' | 'staff', extra: { active?: boolean; mustChange?: boolean; hash?: string } = {}, w: World = world) =>

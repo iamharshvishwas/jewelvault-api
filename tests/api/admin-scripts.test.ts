@@ -331,9 +331,11 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
 
   it('clear-counters prints how many rows it cleared; record-pull asks for the file and the sha256 and prints that it was recorded', async () => {
     await world.sql.query("INSERT INTO sys_login_attempts (scope, slot, window_start, n) VALUES ('email', 11, UTC_TIMESTAMP(6), 7) ON DUPLICATE KEY UPDATE n = 7");
+    // every row of the three scopes, the one just made and those the logins of the tests before have left (API08)
+    const counting = Number((await world.sql.query<any[]>("SELECT COUNT(*) AS n FROM sys_login_attempts WHERE scope IN ('email', 'addr', 'any')"))[0][0].n);
     const cleared = await run(['clear-counters']);
     expect(cleared.code, cleared.err).toBe(0);
-    expect(cleared.out).toMatch(/1\b/);
+    expect(cleared.out).toContain(`Cleared ${counting} login counters`);
     expect(Number((await world.sql.query<any[]>("SELECT n FROM sys_login_attempts WHERE scope = 'email' AND slot = 11"))[0][0].n)).toBe(0);
 
     const sha = randomBytes(32).toString('hex');

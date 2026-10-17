@@ -15,12 +15,15 @@
 //
 // A login, a logout and a change-password each write one `event` audit row through writeEvent, in the same transaction as the change. The facts hold identifiers and counts, never a password, a ticket or a hash.
 //
-// The counters and delays of failed logins (A13, D24) are API08's: they wrap this handler.
-import type { FastifyInstance } from 'fastify';
+// THE THROTTLE (API08, A13, D24, src/auth/throttle.ts) wraps the login: an attempt is counted when the request arrives and may be refused 429 at once (its address is over 20 a minute, or 30 attempts
+// are already waiting); after 5 attempts for one e-mail each further attempt waits 1, 2, 4 and 8 seconds; the user is read and the password checked only when one of the 2 places is free, and the wait
+// and the queue end when the client has gone or the handler timer (30 s) has fired, without a check; a wrong password or an unknown e-mail is counted for the hourly summary. Every part after the wait
+// (the read of the user, the writes) has its own deadline of S12, counted from where the wait ended: the 12 seconds are for the work, not for the delay.
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { writeEvent } from '../db/events.js';
 import type { DbPool } from '../db/pool.js';
-import { txContextFor, withRead, withTx } from '../db/tx.js';
+import { type Actor, txContext, txContextFor, withRead, withTx } from '../db/tx.js';
 import { JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
 import { type Auth, route } from '../permissions/route.js';
@@ -29,6 +32,7 @@ import { timestampToWire } from '../wire/format.js';
 import * as wire from '../wire/zod.js';
 import { PASSWORD_MAX_LENGTH, checkNewPassword, passwords } from './password.js';
 import { clearedSessionCookie, endOtherSessions, endSession, sessionCookie, startSession } from './session.js';
+import { callSignal, loginThrottleOf } from './throttle.js';
 
 // ------------------------------------------------------------------ shapes
 
@@ -64,6 +68,9 @@ function databaseOf(app: FastifyInstance): DbPool {
   return app.db;
 }
 
+/** The context of a piece of work that begins now: its deadline of S12 counts from here, not from the arrival of the request (a login may have waited 8 seconds and then for a place). */
+const afterWait = (db: DbPool, request: FastifyRequest, actor: Actor | null) => txContext(db, { requestId: request.id, actor, log: request.log });
+
 /** The actor of the audit trail and of the actor variables of the triggers: the user, with the role as the database has it. */
 const actorOf = (auth: Auth) => ({ id: auth.user.id, role: auth.user.role });
 
@@ -97,27 +104,43 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     body: loginBody,
     handler: async ({ app: a, request, reply, body }) => {
       const db = databaseOf(a);
-      const rows = await withRead(txContextFor(db, request, null), (r) => r.rows<LoginRow>(LOGIN_SQL, [body.email.trim()])); // the connection is given back here: the hash holds none
-      const user = rows[0];
-      // U1: one verification whether or not the e-mail exists. A password over 128 characters can never be right and is not hashed.
-      const right = lengthOf(body.password) <= PASSWORD_MAX_LENGTH && (await passwords.verify(body.password, user ? user.password_hash : await passwords.dummyHash()));
-      if (!user || !right) throw BAD_LOGIN();
-      if (Number(user.active) !== 1) throw NOT_ACTIVE();
+      const email = body.email.trim();
+      const attempt = await loginThrottleOf(a).begin({ email, headers: request.headers, signal: callSignal(reply), log: request.log }); // counted now; 429 at once over a cap
+      try {
+        await attempt.delay(); // A13 (1): the e-mail's wait; it ends when the client has gone, and then nothing below runs
+        // U1: one verification whether or not the e-mail exists. A password over 128 characters can never be right and is not hashed. The read of the user is made inside the place for the check, so that
+        // the logins that wait hold no connection and the pool is never asked for more than 2 of them at a time; it is given back before the hash runs.
+        const found: { user?: LoginRow } = {};
+        const right =
+          lengthOf(body.password) <= PASSWORD_MAX_LENGTH &&
+          (await attempt.check(async () => {
+            found.user = (await withRead(afterWait(db, request, null), (r) => r.rows<LoginRow>(LOGIN_SQL, [email])))[0];
+            return passwords.verify(body.password, found.user ? found.user.password_hash : await passwords.dummyHash());
+          }));
+        const user = found.user;
+        if (!user || !right) {
+          await attempt.failed(); // D24: one more for the hour; the first after the hour changed closes the hour before
+          throw BAD_LOGIN();
+        }
+        if (Number(user.active) !== 1) throw NOT_ACTIVE();
 
-      const now = a.clock.read();
-      const oldTicket = readTicket(request.headers.cookie);
-      const userAgent = request.headers['user-agent'];
-      const started = await withTx(txContextFor(db, request, { id: user.id, role: user.role }), async (tx) => {
-        const [current] = await tx.rows<{ password_hash: string; active: number | string }>(LOCK_USER_SQL, [user.id]);
-        if (!current || current.password_hash !== user.password_hash) throw BAD_LOGIN(); // the password was changed while this one was checked
-        if (Number(current.active) !== 1) throw NOT_ACTIVE();
-        const session = await startSession(tx, { userId: user.id, userAgent: typeof userAgent === 'string' ? userAgent : undefined, now, replacingTicket: oldTicket });
-        await writeEvent(tx, { table: 'users', rowId: user.id, facts: { event: 'login', session_id: session.id, previous_session_ended: session.previousEnded } });
-        return session;
-      });
+        const now = a.clock.read();
+        const oldTicket = readTicket(request.headers.cookie);
+        const userAgent = request.headers['user-agent'];
+        const started = await withTx(afterWait(db, request, { id: user.id, role: user.role }), async (tx) => {
+          const [current] = await tx.rows<{ password_hash: string; active: number | string }>(LOCK_USER_SQL, [user.id]);
+          if (!current || current.password_hash !== user.password_hash) throw BAD_LOGIN(); // the password was changed while this one was checked
+          if (Number(current.active) !== 1) throw NOT_ACTIVE();
+          const session = await startSession(tx, { userId: user.id, userAgent: typeof userAgent === 'string' ? userAgent : undefined, now, replacingTicket: oldTicket });
+          await writeEvent(tx, { table: 'users', rowId: user.id, facts: { event: 'login', session_id: session.id, previous_session_ended: session.previousEnded } });
+          return session;
+        });
 
-      reply.header('Set-Cookie', sessionCookie(started.ticket));
-      return { user: userBody({ id: user.id, email: user.email, fullName: user.full_name, role: user.role, mustChangePassword: Number(user.must_change_password) === 1 }), ...lifeBody(started.expiresAt) };
+        reply.header('Set-Cookie', sessionCookie(started.ticket));
+        return { user: userBody({ id: user.id, email: user.email, fullName: user.full_name, role: user.role, mustChangePassword: Number(user.must_change_password) === 1 }), ...lifeBody(started.expiresAt) };
+      } finally {
+        attempt.end();
+      }
     },
   });
 

@@ -6,6 +6,7 @@
 //
 // For a session route the order of work is fixed (A6, NODE-DESIGN 3.1), and each step ends the call when it refuses, so that a refused caller learns nothing about the next:
 //   1. the session: the cookie's ticket to a `sessions` row and then the `users` row; no ticket, an ended or expired session, a user who is not active: 401 (D2, session.ts)
+//      then the user's throttle (A13): over its limit, 429 (src/auth/throttle.ts)
 //   2. the must-change-password gate: a user who must still change the password may call only the rows marked `mustChange` (U11): 403 JV_PASSWORD_CHANGE_REQUIRED
 //   3. the matrix row: a role that is not on the row: 403 JV_FORBIDDEN
 //      then, for a call that got through and is not polling (U4): `last_seen_at` moves, in a statement of its own in autocommit (touchSession)
@@ -19,6 +20,7 @@
 // again at its start calls assertMayCall(role, action).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodType, output } from 'zod';
+import { throttleSessionCall } from '../auth/throttle.js';
 import { JvError, errorBody } from '../errors.js';
 import * as wire from '../wire/zod.js';
 import {
@@ -156,6 +158,7 @@ const parseBody = (spec: LooseSpec, request: FastifyRequest): unknown => (spec.b
 function sessionHook(app: FastifyInstance, info: RouteInfo) {
   return async (request: FastifyRequest): Promise<void> => {
     const auth = await lookupSession(app, request); // 1. D2
+    throttleSessionCall(app, info.action ?? '', auth.user.id); // A13: change-password 5 per 15 minutes, every other call 300 a minute, for each user; 429 JV_RATE_LIMITED with Retry-After
     if (auth.user.mustChangePassword && !info.mustChange) throw new JvError('JV_PASSWORD_CHANGE_REQUIRED', 'Change your password to continue.'); // 2. U11
     if (!info.roles.includes(auth.user.role)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.'); // 3. A4
     if (countsAsActivity(info)) await touchSession(app, request, auth.session.id); // U4: last_seen_at, its own autocommit statement, before the handler and so before any claim of a money call
