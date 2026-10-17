@@ -25,7 +25,7 @@ T("WEB00", "WEB", "Front-end test harness: unit, build check, Playwright against
   ptests=["PT-W0 harness smoke: a lane MariaDB and the built API start, the admin door makes an owner, a Playwright page logs in against it"],
   do="In a NEW worktree of `jewelvault-app` (branch `api-web`; the old Supabase worktrees `jewelvault-wt/a,b,c` are not used and "
      "not touched): `scripts/e2e-lane.mjs` starts a lane (it calls the API repo's `npm run db:lane -- up <lane>`, builds and "
-     "starts the API on a lane port from `JV_API_DIR`, creates one owner, one biller and one staff user through the admin door "
+     "starts the API on a lane port from `JV_API_DIR` (the orchestrator's checkout of `main` of `jewelvault-api`: the orchestrator merges each finished API task into it before the web task that needs it starts), creates one owner, one biller and one staff user through the admin door "
      "(`npm run admin`), and prints their test e-mails and passwords to the lane's never-committed `.lanes/<lane>/.env.local`), "
      "Playwright config with `workers: 1`, the dev server port from `PORT`, a global setup that uses it; `npm run verify` "
      "replaced: typecheck, changed-file lint, unit tests, build, build check (WEB14), and `test:e2e` when `E2E=1`; "
@@ -52,8 +52,8 @@ T("WEB01", "WEB", "API client: credentials, headers, Idempotency-Key, error map,
      "of NODE-DESIGN section 4. No business data is stored in the browser.",
   files=["package.json", "src/lib/authStore.ts"],
   done="`npm test -- tests/unit/api-client.test.ts` passes (PT-W1) with a stubbed `fetch`: each rule above is a case; and one "
-       "contract test against the lane API (WEB00) logs in, reads `me` and creates a customer through the client with the key "
-       "reused on a forced retry (one customer).",
+       "contract test against the lane API (WEB00) logs in, reads `me`, sends `activity` and maps a `JV_INVALID_INPUT` and a `401` through the client "
+       "(the forced retry with one key that makes one customer is the contract test of WEB07, where X6 exists).",
   rollback=RBW)
 
 T("WEB02", "WEB", "Session gate, login screen, roles and idle logout on the API (authStore replaced)",
@@ -72,10 +72,8 @@ T("WEB02", "WEB", "Session gate, login screen, roles and idle logout on the API 
   files=["src/lib/authStore.ts", "src/components/AppLayout.tsx", "src/components/LoginScreen.tsx", "tests/unit/auth-routes.test.ts",
          "tests/unit/preview-mode.test.ts", "tests/e2e/login.spec.ts"],
   done="`E2E=1 npx playwright test tests/e2e/login.spec.ts` passes against a lane: login per role; a wrong password fails; an "
-       "inactive login sees 'Your account is not active'; 20 login and logout cycles never hang; the owner sees the rate card "
-       "right after login; a user deactivated while signed in is logged out at the next poll; a user demoted from owner to "
-       "biller while signed in (admin door) loses `sku_private` and the audit data from memory within one poll and the screen "
-       "calls `me` once and does not loop; with the browser clock faked the screen logs out after 12 hours without a click or key "
+       "inactive login sees 'Your account is not active'; 20 login and logout cycles never hang; "
+       "with the browser clock faked the screen logs out after 12 hours without a click or key "
        "press (T-E08); T-D06's E2E half passes (a deactivated user gets 401 at the next call, an open session included); "
        "`tests/unit/auth-routes.test.ts` is updated and green; `grep -rn admin123 src out` finds nothing.",
   rollback=RBW)
@@ -90,18 +88,18 @@ T("WEB03", "WEB", "Hydrate behind the loading gate, merge by id (stock side firs
      "list; the stores keep their exported names and synchronous reads (`getDesigns()`, `getSettings()` ...) answering from memory "
      "after the gate; the 16 files that re-read the stores every second keep doing so only against memory; the cache merges "
      "by id keeping the greater `updated_at` compared as microsecond numbers parsed from the exact text; `mockData.ts` is no longer "
-     "a fallback (D20). The first poll after a hydrate starts from the `server_time` of the hydrate's first page minus "
+     "a fallback: it is read only inside `PREVIEW_MODE` builds (sample data with no API, so the screens can still be looked at) until WEB15 removes both (D20). The first poll after a hydrate starts from the `server_time` of the hydrate's first page minus "
      "30 s (WEB04).",
   files=["src/components/AppLayout.tsx", "src/lib/designStore.ts", "src/lib/catalogStore.ts", "src/lib/settingsStore.ts", "src/lib/mockData.ts"],
   done="`E2E=1 npx playwright test tests/e2e/hydrate.spec.ts` passes: after a session nothing is in browser storage; a failed "
        "load shows an error with a retry and never sample data; logout empties memory and stops the pollers; 2,500 pieces all load "
        "also with the API page cap lowered to 500; the render-time reads and `useState(getX())` pages show data right after "
-       "the gate. The 10-second hydrate budget on a 4G profile is measured on staging (OPS04).",
+       "the gate; the owner sees the rate card right after the gate (T-E01 clause). The 10-second hydrate budget on a 4G profile is measured on staging (OPS04).",
   rollback=RBW)
 
 T("WEB04", "WEB", "Polling, merge, offline banner and 'Waking up'",
   agent="B", repo=APP, grp="web", pd=1.2, deps=["WEB03"],
-  reqs=["C7"], tests=["T-E02", "T-E03", "T-E07"],
+  reqs=["C7"], tests=["T-E02", "T-E03", "T-E07"], extends=["T-E01"],
   do="`src/lib/cache/poll.ts`: one `POST /v1/sync/poll` every 8 seconds (a setting, 5 to 10) and at once after any write the screen "
      "made, a cursor per resource taken from the data and moved only after every page of that poll has arrived, the 30-second "
      "overlap, merge by id keeping the greater `updated_at`, the caller's `role` read from every answer, a hidden tab polling "
@@ -117,12 +115,13 @@ T("WEB04", "WEB", "Polling, merge, offline banner and 'Waking up'",
        "edge are both received; a row stamped at the start of a 40-second import transaction still arrives; a hydrate slowed to "
        "40 s with a transaction that commits 4 s after the first page still ends with that row on screen; with the network "
        "cut the banner appears and Save is disabled and clears after reconnect; a gateway error followed by a normal reply shows "
-       "'Waking up…' and then clears.",
+       "'Waking up…' and then clears; a user deactivated while signed in is logged out at the next poll; a user demoted from owner to biller while signed in "
+       "(admin door) loses `sku_private` and the audit data from memory within one poll, the screen calls `me` once and does not loop (T-E01 clause).",
   rollback=RBW)
 
 T("WEB05", "WEB", "Stock-side stores on the API: ordinary edits, settings, categories, rates",
-  agent="B", repo=APP, grp="web", pd=1.2, deps=["WEB04", "API13"],
-  reqs=["C5", "C8", "C11"], tests=[], extends=["T-E05"],
+  agent="B", repo=APP, grp="web", pd=1.2, deps=["WEB04", "API13", "API13b"],
+  reqs=["C5", "C8", "C11"], tests=[], extends=["T-E05", "T-C01"],
   ptests=["PT-W5 an ordinary edit updates memory at once, awaits one write with only the changed fields and the exact updated_at text, replaces the row on success and rolls back with the reason on failure, a stale edit reloads the row"],
   do="`designStore.ts`, `catalogStore.ts`, `settingsStore.ts` (and `EditStockClient.tsx`, `SettingsClient.tsx`, "
      "`DashboardRateCard.tsx`): remove every `localStorage` use (the old `jaishri.*` keys are never read or written); ordinary "
@@ -137,7 +136,7 @@ T("WEB05", "WEB", "Stock-side stores on the API: ordinary edits, settings, categ
   done="`npm test -- tests/unit/stores.test.ts` and `E2E=1 npx playwright test tests/e2e/stock-edit.spec.ts` pass (PT-W5): a "
        "piece edit shows at once and persists after reload; a stale edit in a second browser shows the reload message; staff cannot "
        "edit settings or see the original weight; a biller can enter today's rate and not yesterday's; `grep -rn localStorage src` "
-       "finds only the preview-mode file until WEB15; C8: after a session no business data is in browser storage (T-E05 clause).",
+       "finds only the preview-mode file until WEB15; C8: after a session no business data is in browser storage (T-E05 clause); the cache never makes up an id or a number except a new design's id (C11, T-C01 clause).",
   rollback=RBW)
 
 T("WEB06", "WEB", "Add Design with photos (resize 1000 px / q72), create_design and set_sku_status from the screens",
@@ -173,12 +172,12 @@ T("WEB07", "WEB", "Money-side cache: customers, bills, receipts, allocations and
          "src/app/customer-ledger/components/CustomerLedgerClient.tsx"],
   done="`npm test -- tests/unit/invoice-shape.test.ts` passes: for a fixture bill from the lane API `getInvoices()` returns the "
        "`Invoice` shape with `amountReceived`, `pendingAmount`, `status`, `fineWeightPending` equal to V1's figures; "
-       "creating a customer from the billing screen's search panel makes one customer on a double click.",
+       "creating a customer from the billing screen's search panel makes one customer on a double click and, with the response dropped and the same user action retried, still one customer (the key is reused).",
   rollback=RBW)
 
 T("WEB08", "WEB", "Billing screen on quote_bill and create_bill, customer creation, PAN prompt",
   agent="B", repo=APP, grp="web", pd=1.3, deps=["WEB07", "WEB05", "API20", "API18", "API23", "API19"],
-  reqs=["C6"], tests=["T-E06"], extends=["T-A03", "T-E03"],
+  reqs=["C6"], tests=["T-E06"], extends=["T-A03", "T-E03", "T-A14"],
   do="`BillingPOSClient.tsx`, `BillingSummaryPanel.tsx`, `BillingItemsTable.tsx`, `ScanItemPanel.tsx`: the live total comes from "
      "`pricing.ts` (as today); Save calls `POST /v1/bills` with a fresh Idempotency-Key, shows a saving state, applies the rows "
      "the function returns, and shows the message for the error code; a piece never shows Sold and a bill never shows saved "
@@ -195,7 +194,7 @@ T("WEB08", "WEB", "Billing screen on quote_bill and create_bill, customer creati
        "with the network cut the Save is disabled; a gateway error followed by a normal reply shows 'Waking up…' and a money "
        "call retried meanwhile with the same key saves once (T-E03 clause); the worked example (35.42 g, 6,920, labour 353, "
        "piroi 2.15) saves a bill of 257,612 and the screen's preview equals the saved figure; two billers saving the same piece "
-       "give one success and one message naming the piece.",
+       "give one success and one message naming the piece; the screen disables Save on bills when `pricing_sha256` from `me` differs from the build's own hash (T-A14 screen half).",
   rollback=RBW)
 
 T("WEB09", "WEB", "Payment and silver-fine panels (record_payment, settle_fine), advance display",
@@ -246,30 +245,39 @@ T("WEB11", "WEB", "Cancel, re-issue, void, refund and opening-balance screens; t
        "an unknown code. T-E04's error-map clause is closed here.",
   rollback=RBW)
 
-T("WEB12", "WEB", "Owner dashboard line, shared selectors on every figure, Download everything, hide what is not ready",
-  agent="B", repo=APP, grp="web", pd=1.3, deps=["WEB11", "API35", "API32", "FE01"],
-  reqs=["C14", "C15"], tests=["T-B15", "T-E04"], extends=["T-R05", "T-D03"],
-  uses=["B3", "V5", "O32"],
+T("WEB12", "WEB", "Owner dashboard line and the shared selectors on every figure",
+  agent="B", repo=APP, grp="web", pd=0.8, deps=["WEB11", "API35", "API32", "FE01"],
+  reqs=["C14"], tests=["T-B15"],
+  uses=["V5"],
   do="The dashboard, the reports and the customer card compute their figures from `src/lib/selectors.ts` over the derived reads "
      "(a cancelled bill on its own line, an opening-balance bill on no sales line); the owner's dashboard line (books OK at "
      "02:00 or Problem; age of the last dump and photo copy; database size and backup folder size; days since the last "
      "Download everything and since the last pull; yesterday's review counts) with its red and amber rules from "
-     "`GET /v1/dashboard/health`; 'Download everything' builds in the browser from the cache, after a fresh poll, one zip of "
-     "CSV files (customers, bills, bill items, receipts, allocations, stock, daily rates, categories, settings, users' "
-     "names and roles, never a hash; the owner-only weight only for the owner; a cell starting with `=`, `+`, `-`, `@`, a tab "
-     "or a carriage return gets a single quote in front) plus `MANIFEST.csv`, then posts the record; Order Book, the "
-     "public catalogue and its admin screens, the sample Audit and Sales tabs, the Estimate date editor and the Reports "
-     "date controls and export buttons are not connected and not reachable; 'Reset Defaults' and 'Delete All Inventory' are "
-     "gone. The Reports screen is rewired to the selectors, or hidden if the cut line is used (O32).",
+     "`GET /v1/dashboard/health`. Download everything and the hidden screens are WEB12b.",
   files=["src/app/components/DashboardKpiGrid.tsx", "src/app/components/DashboardActivityPanels.tsx",
          "src/app/reports/components/ReportsClient.tsx", "src/app/reports/components/ReportSales.tsx",
-         "src/app/reports/components/ReportPayments.tsx", "src/components/Sidebar.tsx", "src/lib/exportUtils.ts"],
+         "src/app/reports/components/ReportPayments.tsx"],
   done="`npm test -- tests/unit/selectors.test.ts` still green and `E2E=1 npx playwright test tests/e2e/dashboard.spec.ts` "
        "passes: the dashboard, reports, customer card and the three evening figures agree on the same data; a cancelled bill "
-       "is on its own line and a cancelled opening bill on none; the hidden screens cannot be reached by URL; the zip holds the "
+       "is on its own line and a cancelled opening bill on none; the dashboard line shows each reason and turns red/amber as API35/MB05 compute.",
+  rollback=RBW)
+
+T("WEB12b", "WEB", "Download everything, the hidden screens and the Reports cut line",
+  agent="B", repo=APP, grp="web", pd=0.7, deps=["WEB12", "API35"],
+  reqs=["C15"], tests=["T-E04"], extends=["T-R05", "T-D03"],
+  uses=["B3", "O32"],
+  do="'Download everything' builds in the browser from the cache, after a fresh poll, one zip of "
+     "CSV files (customers, bills, bill items, receipts, allocations, stock, daily rates, categories, settings, users' "
+     "names and roles, never a hash; the owner-only weight only for the owner; a cell starting with `=`, `+`, `-`, `@`, a tab "
+     "or a carriage return gets a single quote in front) plus `MANIFEST.csv`, then posts the record (API35); Order Book, the "
+     "public catalogue and its admin screens, the sample Audit and Sales tabs, the Estimate date editor and the Reports "
+     "date controls and export buttons are not connected and not reachable; 'Reset Defaults' and 'Delete All Inventory' are "
+     "gone. The Reports screen is rewired to the selectors (WEB12), or hidden if the cut line is used (O32).",
+  files=["src/components/Sidebar.tsx", "src/lib/exportUtils.ts"],
+  done="`E2E=1 npx playwright test tests/e2e/hidden-and-download.spec.ts` passes (T-E04): the hidden screens cannot be reached by URL; the zip holds the "
        "files and a MANIFEST whose counts equal the database's; a cell starting with `=` is quoted; the record route accepts it "
        "and the card resets; the owner-only weight is in it only for the owner (T-D03 clause: no CSV for a biller holds it); "
-       "the dashboard line shows each reason and turns red/amber as API35/MB05 compute.",
+       "`getInvoices()` returns the `Invoice` shape and every S8 code has a plain message (the clause is closed in WEB11, re-run here).",
   rollback=RBW)
 
 T("WEB13", "WEB", "Printed estimate and tag page (PLAN.md P3-T1)",
@@ -298,19 +306,19 @@ T("WEB14", "WEB", "Hosting headers (vercel.json), build checks, no source maps, 
      "build produces every route as a static page and no page touches `window` during prerender; no source maps.",
   files=["next.config.mjs", "package.json"],
   done="`npm run build && npm run check:build` passes (every route exists as a static page; no `.map` file) and fails on a planted `admin123` in `out/`, a planted `.map` file and a "
-       "planted `innerHTML` (each shown); the headers are checked with `curl -I` on the host in use (Vercel preview) and on the "
-       "API host; the CSP names the API origin in `connect-src` and `img-src` and no other outside origin. The repeat on the "
+       "planted `innerHTML` (each shown); the headers are asserted on the text of `vercel.json` and on the API's responses in API07's test (the `curl -I` on a real host is the T-D12 clause of OPS04); "
+       "the CSP names the API origin in `connect-src` and `img-src` and no other outside origin. The repeat on the "
        "real website host and Siddhi's domain is OPS07.",
   rollback=RBW)
 
 T("WEB15", "WEB", "Remove the Supabase pieces and preview mode; leave one clean app",
-  agent="B", repo=APP, grp="web", pd=0.6, deps=["WEB12", "WEB13", "WEB14", "WEB16"],
+  agent="B", repo=APP, grp="web", pd=0.6, deps=["WEB12b", "WEB13", "WEB14", "WEB16", "WEB17"],
   reqs=[], tests=[],
   ptests=["PT-W15 a production build with NEXT_PUBLIC_PREVIEW_MODE=1 opens the login screen exactly like a build without it; no file mentions supabase"],
   do="Delete `src/lib/supabase/client.ts`, the `@supabase/supabase-js` and `supabase` and `pg` dependencies, `supabase/` "
-     "(the old migrations and seeds that are frozen), `scripts/lane.mjs`, `scripts/check-migrations.sh` and their tests "
+     "(the old migrations and seeds that are frozen, including `0016_write_prologue_customer.sql` of DB09a, commit 6b68285), `scripts/lane.mjs`, `scripts/check-migrations.sh` and their tests "
      "(`tests/db/*`, `tests/unit/lane.test.ts`, `tests/unit/migrations-check.test.ts`); remove the `PREVIEW_MODE` constant, its "
-     "branches in `authStore.ts` and `AppLayout.tsx` and `tests/unit/preview-mode.test.ts` (a build can no longer open "
+     "branches in `authStore.ts` and `AppLayout.tsx` (added by commit 45a444e) and `tests/unit/preview-mode.test.ts` (a build can no longer open "
      "without a login whatever the environment holds); update `AGENTS.md`/`README.md`. This is the code half of the go-live "
      "step; Harsh removes `NEXT_PUBLIC_PREVIEW_MODE` from the Vercel project himself (PH08).",
   files=["src/lib/supabase/client.ts", "src/lib/authStore.ts", "src/components/AppLayout.tsx", "tests/unit/preview-mode.test.ts",
@@ -320,15 +328,23 @@ T("WEB15", "WEB", "Remove the Supabase pieces and preview mode; leave one clean 
        "contains no `supabase` string.",
   rollback=RBW)
 
-T("WEB16", "WEB", "Rate card by purity and the stale-rate guard (PLAN.md P3-T2)",
-  agent="B", repo=APP, grp="web", pd=0.8, deps=["WEB08", "API18", "WEB05"],
+T("WEB16", "WEB", "The stale-rate guard on the screen (PLAN.md P3-T2, the part that stays)",
+  agent="B", repo=APP, grp="web", pd=0.4, deps=["WEB08", "API18", "WEB05"],
   reqs=[], tests=[],
-  ptests=["PT-W16 a new bill takes the rate for its piece's purity and can still be edited on the line; a rate not confirmed today asks for confirmation before the first bill of the day"],
-  note="Not in the spec (it is PLAN.md P3-T2) but on the go-live path; the data side (rates by material and purity, RATE_MISSING, RATE_STALE) is D4/R2 in API13/API18.",
-  do="Gold rates by purity (24K, 22K, 20K, 18K) on the daily rate card with the real date, and the stale-rate guard: today the "
-     "prototype shows defaults (6,920 and 88) and a 'Last updated' that always says today; now the card shows the rate rows and "
-     "their dates, a new bill takes the rate of its piece's material and purity and the line can still be edited, and a rate "
-     "not confirmed today asks for confirmation before the first bill of the day.",
+  ptests=["PT-W16 a rate not confirmed today asks for confirmation before the first bill of the day; a stale or missing rate shows its warning and the line stays editable"],
+  note="Not in the spec (it is PLAN.md P3-T2) but on the go-live path. PLAN.md 7.1 step 1 cuts only the purity split and says the stale-rate guard stays; the data side (rates by material and purity, RATE_MISSING, RATE_STALE) is D4/R2 in API13/API18.",
+  do="The daily rate card shows the rate rows with their real dates (today the prototype shows defaults, 6,920 and 88, and a 'Last updated' that always says today); a rate "
+     "not confirmed today asks for confirmation before the first bill of the day; `RATE_MISSING` and `RATE_STALE` from the API show on the bill and the line can still be edited.",
   files=["src/app/components/DashboardRateCard.tsx", "src/app/billing-pos/components/BillingPOSClient.tsx"],
-  done="`E2E=1 npx playwright test tests/e2e/rates.spec.ts` passes (PT-W16) with rates for 22K and 18K.",
+  done="`E2E=1 npx playwright test tests/e2e/rates.spec.ts` passes (PT-W16): with no rate for today the first bill asks for confirmation; a rate dated before the bill shows `RATE_STALE` and still saves.",
+  rollback=RBW)
+
+T("WEB17", "WEB", "Rate card by purity (PLAN.md P3-T2, the part that is cut first)",
+  agent="B", repo=APP, grp="web", pd=0.4, deps=["WEB16"],
+  reqs=[], tests=[],
+  ptests=["PT-W17 a new bill takes the rate for its piece's purity (24K, 22K, 20K, 18K) and the line can still be edited"],
+  note="Cut 4 of the cut line: billing stays correct without it because the rate is typed or edited on every line.",
+  do="Gold rates by purity (24K, 22K, 20K, 18K) on the rate card, and a new bill takes the rate of its piece's material and purity.",
+  files=["src/app/components/DashboardRateCard.tsx", "src/app/billing-pos/components/BillingPOSClient.tsx"],
+  done="`E2E=1 npx playwright test tests/e2e/rates-purity.spec.ts` passes (PT-W17) with rates for 22K and 18K.",
   rollback=RBW)

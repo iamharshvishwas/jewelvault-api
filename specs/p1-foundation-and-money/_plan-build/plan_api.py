@@ -3,12 +3,12 @@
 from plan_core import T, ROLLBACK_LOCAL_API as RB
 
 # =============================================================================================== DATABASE HALF
-T("MB01", "MB", "DONE: schema (26 tables), create-only migration runner, seeds, limits file",
+T("MB01", "MB", "DONE: schema (25 tables), create-only migration runner, seeds, limits file",
   status="DONE", grp="pure", commit="ce5c75a, a316651, 4c00b4b, e45135d (jewelvault-api); 334 schema tests shared with MB02, plus 85 spike and Hostinger-fact tests",
   reqs=["D1", "D3", "D5", "D6", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "D14", "D15", "D16", "D17", "D18", "D19",
         "D20", "D21", "D26", "S9", "P4"],
   tests=["T-F02", "T-F04"],
-  do="Already in the repository: `db/migrations/0001` to `0010` (26 tables, 81 CHECKs, 19 foreign keys, 83 indexes, native UUID, "
+  do="Already in the repository: `db/migrations/0001` to `0010` (25 tables and `schema_migrations`, 87 CHECKs, 18 foreign keys, 83 indexes, native UUID, "
      "`DECIMAL` money, `utf8mb4_unicode_ci` named in every table), `db/seeds/*` (settings keys, categories, the walk-in customer, "
      "no sample data), `db/limits.json`, `db/schema.sql`/`db/seed.sql` (built by `npm run db:schema`), the optional append-only "
      "trigger file `db/optional/0900_audit_log_append_only.sql`, and `scripts/migrate.mjs`, the create-only runner that enforces "
@@ -88,9 +88,9 @@ T("MB05", "MB", "DONE: the database half aligned to spec 5.2 (correlated reads, 
      "`scripts/backup-folder.mjs` (`resolveBackupDir` for `JV_BACKUP_DIR`, `writeDailyExport` with `.partial`, `fsync`, `link()`, the "
      "recorded-sha256 retry rule and the run-specific name, `linkMonthly`, `sweepPartials`, `folderStats`, `planPrune`/`prune` with "
      "the guard rails, `recordBackupRun`), `scripts/pacing.mjs` (`createPacer`: at most 10 new connections in 1.2 s), and "
-     "`readHealth` with the days since the last Download everything, `last_pulled` and the folder's file count. **Still not there at 15:17 "
-     "on 16 Oct** (checked by MB07): a function that closes finished login-failure hours (built in API33), and the text of "
-     "`BACKUP-RESTORE.md`, which still says the encryption is not done and the tick runs the export (corrected in API34).",
+     "`readHealth` with the days since the last Download everything, `last_pulled` and the folder's file count. **Missing at 15:17 on 16 Oct, "
+     "committed since:** the docs (`BACKUP-RESTORE.md` rewritten for 5.2 in MB06, `a5790d8`) and a function that closes finished login-failure hours "
+     "(`closeFinishedHour` in `scripts/login-counters.mjs`, `694b435` on 17 Oct; the API only calls it, API33b).",
   files=["scripts/backup-folder.mjs", "scripts/export-file.mjs", "scripts/pacing.mjs", "scripts/housekeeping.mjs", "scripts/health.mjs",
          "db/queries/V1_bill_summary.sql", "db/queries/S1_open_bills_of_customer.sql", "tests/schema/s17-big-customer.test.ts",
          "tests/schema/s18-housekeeping.test.ts", "tests/schema/s19-backup-folder.test.ts"],
@@ -102,22 +102,25 @@ T("MB05", "MB", "DONE: the database half aligned to spec 5.2 (correlated reads, 
   rollback="Already committed.")
 
 T("MB07", "MB", "ALIGN check: close the 18.13 E checklist against the repository before the API relies on it",
-  agent="A", grp="pure", pd=0.2, deps=[],
+  agent="A", grp="pure", pd=0.2, deps=["API01"],
   reqs=[], tests=[],
   do="A fresh `git log` and `git status` of `jewelvault-api` read against 18.13 E item by item and against the names this plan relies on. At "
-     "12:30 on 17 Oct items (1) V1 and the state reads, (2) the health figures, (3) the export sink and folder rules, (4) the docs, (5) the admin statements and "
-     "(7) the audit triggers are committed (MB05 `379ef68`, `a2a720b`, MB06 `a5790d8`); (6) a function that closes finished login-failure hours does not "
-     "exist in the database half and is built in API33. If the database session has committed more by the time the API work starts, this task ticks it; if "
+     "12:30 on 17 Oct all seven items are committed: (1) V1 and the state reads, (2) the health figures, (3) the export sink and folder rules, (4) the docs, "
+     "(5) the admin statements, (6) the login counters and the function that closes finished login-failure hours (`scripts/login-counters.mjs`: `loginSlot`, "
+     "`addressKey`, `countAttempt`, `recordFailure`, `closeFinishedHour`; `tests/schema/s22-login-counters.test.ts`, commit `694b435`), and (7) the audit triggers "
+     "(MB05 `379ef68`, `a2a720b`, MB06 `a5790d8`). If the database session has committed more by the time the API work starts, this task ticks it; if "
      "it has changed a function signature that this plan names (`writeDailyExport`, `createExportWriter`, `unpackExport`, `prune`, `recordBackupRun`, "
      "`readRecordedExport`, `withJobLock`, `readHealth`, `clearLoginCounters`, `recordPull`, `logError`, `insertPhotoGuarded`, `rebalanceCustomer`, "
-     "`runInvariants`, `generateAuditTriggersSql`), it edits the names in the tasks that use them. It edits no file in `db/`.",
+     "`runInvariants`, `generateAuditTriggersSql`, `loginSlot`, `addressKey`, `countAttempt`, `recordFailure`, `closeFinishedHour`), it edits the names in the tasks that use them. "
+     "It edits no file in `db/`. It runs after API01 because it needs a lane database.",
   files=[],
-  done="`git log --oneline` of `jewelvault-api` is attached to the task report with each checklist item marked committed or assigned; "
-       "`npm run db:up && npx vitest run tests/schema` is green on the commit the API work starts from.",
+  done="`git log --oneline` of `jewelvault-api` is attached to the task report with each checklist item marked committed or assigned; the schema suite "
+       "(`tests/schema`) is green against a lane database (`npm run db:lane -- up a`) on the commit the API work starts from. **Never `npm run db:up`:** it removes and "
+       "recreates the container `jv-mariadb-spike` on port 33307, which the database session uses.",
   rollback="Nothing to roll back (a check).")
 
 T("MB06", "MB", "DONE: generated audit triggers (L1 a), exclude list, import audit mode, job locks per database",
-  status="DONE", grp="pure", commit="a5790d8 (16 Oct 15:35) (jewelvault-api); 549 schema tests in all (whole suite 630 passed, 2 skipped), s20 has 16",
+  status="DONE", grp="pure", commit="a5790d8 (16 Oct 15:35) (jewelvault-api); 549 schema tests at that commit (567 since 694b435 on 17 Oct), s20 has 16",
   reqs=["L1", "L2", "O50"], tests=["T-D14"], uses=["D16", "D22", "D23"],
   do="Committed by the database session on 16 Oct, after this plan's first draft. `db/optional/0910_audit_triggers.sql` is GENERATED from the catalogue by "
      "`scripts/build-audit-triggers.mjs` and `scripts/audit-triggers.mjs` (`generateAuditTriggersSql`, `loadExcludeList`, `auditTriggersInstalled`, "
@@ -130,7 +133,8 @@ T("MB06", "MB", "DONE: generated audit triggers (L1 a), exclude list, import aud
      "What is left for the API: setting and clearing the three variables in `withTx` (API03), the Node writer of mechanism (b) and `JV_AUDIT_MODE` (API15), "
      "and counting audit rows in every function's test (the clauses of T-D14).",
   files=["db/optional/0900_audit_log_append_only.sql", "scripts/migrate.mjs", "scripts/audit-triggers.mjs", "scripts/build-audit-triggers.mjs",
-         "db/optional/0910_audit_triggers.sql", "db/optional/audit-exclude.json", "tests/schema/s20-audit-triggers.test.ts"],
+         "db/optional/0910_audit_triggers.sql", "db/optional/audit-exclude.json", "tests/schema/s20-audit-triggers.test.ts",
+         "tests/schema/s21-job-locks.test.ts"],
   done="Evidence, not re-done: `tests/schema/s20-audit-triggers.test.ts` green on 16 Oct 2026 as the ten-box user (one insert and one update on each of the 13 "
        "tables give exactly one audit row; role `sql` with no actor; `updated_at` alone writes nothing; no hash in any audit row; `UPDATE`/`DELETE` on "
        "`audit_log` refused; the file applies twice with no change). T-D14's database half is proved here; the other halves are the clauses of the API tasks.",
@@ -189,14 +193,14 @@ T("API02", "API", "Connection layer: one pool of 8, per-checkout session setting
 
 T("API03", "API", "Transactions: withTx, deadline, deadlock re-run, error map, statement wrapper, SIGTERM",
   agent="A", grp="money", pd=1.1, deps=["API02"],
-  reqs=["S12", "S8", "S7", "H7"], tests=["T-C19", "T-C18", "T-D07"], uses=["S10"],
+  reqs=["S12", "S8", "S7", "H7"], tests=["T-C19", "T-C18", "T-D07"], uses=["S10"], extends=["T-F08"],
   do="`src/db/tx.ts` `withTx(ctx, fn)`: one request, one connection, one transaction; any database error means ROLLBACK of "
      "everything (domain code never catches a database error and goes on); the deadline of 12 s starts when the request arrives "
      "(it includes the pool wait) and is checked before every statement and again just before COMMIT, where a late call is rolled "
      "back; a deadlock (1213) re-runs the whole function up to 2 more times after 20 to 80 ms of jitter, then `JV_BUSY`; the "
      "actor variables of MB06 are set at the start of the transaction and cleared at the end; statements are prepared "
      "(`execute`, one `?` per value), an object parameter is refused, `REPLACE INTO` never; `src/db/stmt.ts` is the one statement "
-     "wrapper and refuses `DELETE`, `TRUNCATE` and `DROP` (a grep test lists every hit in the code). `src/errors.ts`: every "
+     "wrapper and refuses `DELETE`, `TRUNCATE`, `DROP` and `ALTER` (A7; a grep test lists every hit in the code, the migration runner excepted); `withRead(ctx, fn)` (NODE-DESIGN 5.4) runs reads outside a transaction on a checked-out connection with the same session settings. `src/errors.ts`: every "
      "`JV_*` code with its HTTP status (S8), the map from database errors (1205, 1969, 1213 after retries, full pool, refused "
      "connection, lost connection mean `JV_BUSY`; 1062 on a business key is `JV_INVALID_INPUT`, anywhere else `JV_INTERNAL`; "
      "4025 and 1264 are `JV_INVALID_INPUT` and logged as a bug; 1451/1452 `JV_INTERNAL`), the JSON body "
@@ -212,8 +216,9 @@ T("API03", "API", "Transactions: withTx, deadline, deadlock re-run, error map, s
        "under 3 s; a call past its deadline at COMMIT is rolled back; a connection killed during COMMIT answers `JV_BUSY` and the "
        "retry (same key, once API14 exists) returns the stored result if it had committed; SIGTERM mid-transaction finishes or "
        "rolls back; a process killed mid-transaction leaves nothing committed and its locks are released; the grep test finds "
-       "no `DELETE`, `TRUNCATE` or `DROP` outside the migration runner; on the local ten-box user DELETE, DROP TABLE and "
-       "TRUNCATE are refused with error 1142.",
+       "no `DELETE`, `TRUNCATE`, `DROP` or `ALTER` outside the migration runner; `withRead` answers a SELECT with the seven session settings and no transaction; "
+       "the `503 JV_UNAVAILABLE` and `JV_BUSY` answers of API02 now carry the S8 body `{error:{code,message,details},request_id}` (T-F08 clause); "
+       "on the local ten-box user DELETE, DROP TABLE and TRUNCATE are refused with error 1142.",
   tripwire=None, rollback=RB)
 
 T("API04", "API", "route() wrapper, permission matrix file, session lookup, generated cell tests",
@@ -240,7 +245,7 @@ T("API04", "API", "route() wrapper, permission matrix file, session lookup, gene
 
 T("API05", "API", "Login, sessions, cookie, me, logout, activity, change-password, password rules",
   agent="A", grp="pure", pd=1.2, deps=["API04", "API06"],
-  reqs=["U1", "U4", "U9", "U11", "U12", "A10"], tests=["T-D06", "T-D13", "T-D15", "T-D25", "T-D26"], extends=["T-D02"],
+  reqs=["U1", "U4", "U9", "U11", "U12", "A10"], tests=["T-D06", "T-D13", "T-D15", "T-D25", "T-D26"], extends=["T-D02", "T-D14"],
   uses=["D2", "A2"],
   do="`src/auth/password.ts` (Argon2id with `crypto.argon2`: 64 MiB, 3 passes, parallelism 1, at most 2 hashes at once; scrypt "
      "fallback N=2^17, r=8, p=1 with `maxmem` 256 MiB; self-describing hash string; a dummy hash for an unknown e-mail), "
@@ -251,7 +256,8 @@ T("API05", "API", "Login, sessions, cookie, me, logout, activity, change-passwor
      "role and `pricing_sha256`, `activity`, `change-password` which verifies the old one, ends the user's other sessions and "
      "clears `must_change_password`), the cookie `__Host-jv_session` (HttpOnly, Secure, SameSite=Strict, Path=/, Max-Age 14 "
      "days), U9 password rules (10 to 128 characters, a short common-password list, not containing the e-mail local part), "
-     "`403 JV_FORBIDDEN` with `details.reason='inactive'` for a correct password on an inactive user. The login-attempt "
+     "`403 JV_FORBIDDEN` with `details.reason='inactive'` for a correct password on an inactive user. A login, a logout and a change-password each write one `event` row "
+     "to `audit_log` through `src/db/events.ts` `writeEvent` (actor, role, request id; the facts hold no password, ticket or hash); API09 and API33 use the same helper. The login-attempt "
      "counters and delays are API08.",
   files=[],
   done="`npm test -- -t \"T-D06|T-D13|T-D15|T-D25|T-D26\"` passes (T-D06 HTTP half: a user cannot change their own role or `active`, no route could): sign-up-looking paths are 404 and a wrong e-mail and a wrong password "
@@ -259,9 +265,9 @@ T("API05", "API", "Login, sessions, cookie, me, logout, activity, change-passwor
        "ticket per login and the old session ended; passwords of 9 and 129 characters, a very common password and one "
        "containing the local part are refused; the stored hash is a self-describing Argon2id string; at most 2 hashes at once; "
        "the scrypt fallback with `maxmem` 256 MiB works and exactly 128 MiB fails; with an injected clock a session ends after 12 h "
-       "idle and after 14 days absolute with `401 JV_SESSION_EXPIRED`, polling does not extend it, `activity` does; a "
+       "idle and after 14 days absolute with `401 JV_SESSION_EXPIRED`, `me` does not extend it (the poll routes are the T-D26 clause of API11), `activity` does; a "
        "deactivation, a password change and a logout end the session at once; a changed role takes effect at the next call and "
-       "a role named in a cookie, header or body has no effect.",
+       "a role named in a cookie, header or body has no effect; a login, a logout and a change-password each write exactly one `event` audit row with no secret in it (T-D14 clause).",
   rollback=RB)
 
 T("API06", "API", "Wire formats: Zod parsers for money and weight strings, limits constants, response formats",
@@ -281,9 +287,9 @@ T("API06", "API", "Wire formats: Zod parsers for money and weight strings, limit
   done="`npm test -- -t \"T-F09|T-A09\"` passes for the generic part: JSON numbers and the texts `.5`, `5.`, ` 7.50 `, `+5` are "
        "refused by the Zod layer; `1.230` is refused as a rate or an amount and accepted as a weight while `1.2300` is refused; "
        "an over-cap value (1,000,000,000.01) is `JV_INVALID_INPUT`, never a database error; responses give 2 and 3 decimals; "
-       "the T-F02 clause passes (every CHECK cap literal equals the constants file). The T-A09 clauses for bills, payments, "
-       "refunds, opening balances, `fine_cash` and the same piece twice are finished by API20, API22, API24, API27, API28 "
-       "(each owns its clause).",
+       "the T-F02 clause passes (every CHECK cap literal equals the constants file). The T-A09 clauses for bill and line inputs "
+       "(API18 through `quote_bill`, API20 through `create_bill`), the same piece twice, payments, refunds, opening balances and `fine_cash` "
+       "are finished by API18, API20, API22, API24, API27, API28 (each owns its clause).",
   rollback=RB)
 
 T("API07", "API", "CORS, CSRF layers, security headers, nothing leaks, error log with a cap",
@@ -307,56 +313,57 @@ T("API07", "API", "CORS, CSRF layers, security headers, nothing leaks, error log
        "for a named reason; the handler timers answer after the work has stopped, never before.",
   rollback=RB)
 
-T("API08", "API", "Login throttles: per-e-mail waits, per-address cap, waiting cap of 30, bounded counters, failure summaries",
-  agent="C", grp="money", pd=1.0, deps=["API05", "API07"],
+T("API08", "API", "Login throttles on the counter library: per-e-mail waits, per-address cap, waiting cap of 30, the shared limiter",
+  agent="C", grp="money", pd=1.0, deps=["API05", "API07", "MB07"],
   reqs=["A13", "D24"], tests=["T-D24", "T-D30"],
-  do="`src/auth/throttle.ts` over `sys_login_attempts` (counters updated in place, never one row per attempt): the slot is the first "
-     "two bytes of SHA-256 of a secret salt, a bar and the lower-cased e-mail or the address (an IPv6 address shortened to its "
-     "first 64 bits), modulo 1,024, so the table can never hold more than 2,050 rows; an attempt is counted when the request "
-     "arrives by the one atomic `INSERT ... ON DUPLICATE KEY UPDATE` of D24 followed by a plain `SELECT n`; after 5 attempts for "
-     "one e-mail in 15 minutes each further attempt waits 1, 2, 4, then 8 seconds before the password is checked, with no "
-     "limit on how many wait for one e-mail; 20 attempts a minute per address from `x-real-ip` only (`trustProxy` off; a global "
-     "cap of 60 a minute if the address is missing); only the password check counts as busy, at most 2 at once; all waiting "
-     "attempts together at most 30, the 31st gets `429 JV_RATE_LIMITED`; a login takes a short checkout for its counter "
-     "statements and gives the connection back before it waits or hashes; the failure summary: one `audit_log` event "
-     "`login_failures` per hour that had failures (the first failed attempt after the hour changes claims it with a "
-     "conditional UPDATE; the housekeeping phase of API33 closes finished hours); the other throttles of A13 (change-password 5 "
-     "per 15 min per user, admin door and tick limits, photo upload 30 a minute per user, photo read 600 a minute per address "
-     "or a global 120 a second with the ETag map of 5,000 entries and `304` without a database read, everything else 300 a minute "
-     "per user) as in-memory counters that restart from zero after a process restart.",
+  do="`src/auth/throttle.ts` WRAPS the database half's `scripts/login-counters.mjs` (commit 694b435 of 17 Oct, tested by "
+     "`tests/schema/s22-login-counters.test.ts`: `loginSlot`, `addressKey`, `countAttempt`, `recordFailure`, `closeFinishedHour`; the slot hash "
+     "modulo 1,024 that bounds `sys_login_attempts` to 2,050 rows, the atomic `INSERT ... ON DUPLICATE KEY UPDATE`, the hourly summary claim). This task "
+     "writes no new SQL. It adds the behaviour of A13 (1) to (3) on top: an attempt is counted when the request arrives; after 5 attempts for "
+     "one e-mail in 15 minutes each further attempt waits 1, 2, 4, then 8 seconds before the password is checked, with no limit on how many wait for "
+     "one e-mail; 20 attempts a minute per address from `x-real-ip` only (`trustProxy` off; a global cap of 60 a minute if the address is missing); "
+     "only the password check counts as busy, at most 2 at once; all waiting attempts together at most 30, the 31st gets `429 JV_RATE_LIMITED`; a login "
+     "takes a short checkout for its counter statements and gives the connection back before it waits or hashes; the login route's handler timer is 30 s "
+     "and a call whose client has gone does not check the password; the first failed attempt after the hour changes calls `recordFailure`, which claims "
+     "the hour's `login_failures` event (finished hours are closed by the housekeeping phase of API33b through `closeFinishedHour`). `src/auth/limiter.ts` "
+     "is the one in-memory limiter for the other rows of A13 (counters restart from zero after a process restart; `429 JV_RATE_LIMITED` with `Retry-After`): "
+     "this task applies it to change-password (5 per 15 minutes per user) and to every route not named below (300 a minute per user); the rows that belong to a "
+     "route of their own are proved by the task that builds the route, as clauses of T-D24: the admin door in API09, the tick in API33, photo upload and "
+     "read (with the ETag map) in API17.",
   files=[],
-  done="`npm test -- -t \"T-D24|T-D30\"` passes: after 5 attempts the waits are 1, 2, 4, 8 s and survive a restart; 50 parallel "
+  done="`npm test -- -t \"T-D24|T-D30\"` passes for the login rows: after 5 attempts the waits are 1, 2, 4, 8 s and survive a restart; 50 parallel "
        "wrong passwords for one e-mail run at most 2 checks at once and none is refused for that e-mail alone; a flood of 500 "
        "unknown e-mails holds a valid login back by no more than its own wait and a few seconds, and attempts beyond 30 waiting "
-       "get 429 at once; 21 attempts a minute from one address give 429; two addresses of one /64 count as one; a steady "
-       "attack (20 a minute from each of 3 addresses on the owner's e-mail for 10 minutes) still lets a valid login from a "
-       "fourth address in within about 12 s; 8 logins in their delay and one payment at the same moment: the payment answers in "
-       "under 1 s; 20,000 failed logins for 20,000 invented e-mails plus 2,000 for one e-mail over 50 addresses leave at most "
-       "2,050 rows and a second run leaves the same number; 24 hours of attack with an injected clock write at most 24 "
-       "`login_failures` events and none for a single attempt; an attack of one hour followed by five quiet hours has its "
-       "summary after the next tick; the negative control (the draft-4 per-attempt writer) fails the test; photo reads "
-       "above the global cap with an untrusted address are 429, a repeated read with `If-None-Match` of a photo already read "
-       "is 304 without a database read, a removed photo is 404 and never 304.",
+       "get 429 at once; 21 attempts a minute from one address give 429; two addresses of one /64 count as one; with the address header removed the "
+       "global cap of 60 a minute applies; a steady attack (20 a minute from each of 3 addresses on the owner's e-mail for 10 minutes) still lets a valid "
+       "login from a fourth address in within about 12 s; 8 logins in their delay and one payment at the same moment: the payment answers in "
+       "under 1 s; the login route's timer is 30 s and a call whose client has gone runs no password check; 20,000 failed logins for 20,000 invented "
+       "e-mails plus 2,000 for one e-mail over 50 addresses leave at most 2,050 rows and a second run leaves the same number; 24 hours of attack with an "
+       "injected clock write at most 24 `login_failures` events and none for a single attempt, and the throttle still answers as A13 says during it; the "
+       "negative control (the draft-4 per-attempt writer) fails the test; the 6th change-password attempt of one user in 15 minutes and the 301st other call "
+       "of one user in a minute are 429 with `Retry-After`. The case 'one hour of attack, five quiet hours, a summary after the next tick' is the T-D30 clause of API33b.",
   rollback=RB)
 
 T("API09", "API", "Admin door and the admin command",
   agent="C", grp="pure", pd=0.9, deps=["API05"],
-  reqs=["U3", "U2", "A8"], tests=["T-D27", "T-D20", "T-E09"], uses=["O41"],
+  reqs=["U3", "U2", "A8"], tests=["T-D27", "T-D20", "T-E09"], extends=["T-D24", "T-D14"], uses=["O41"],
   do="`/admin/v1/*` routes that exist only while `JV_ADMIN_TOKEN_HASH` is set (constant-time comparison of the bearer token with "
      "the hash; no CORS headers; any request carrying an `Origin` header refused; throttled: 10 a minute per address, a "
      "15-minute pause after two wrong tokens in a row, a global limit of 5 wrong tokens an hour if the address cannot be "
      "trusted): create user (random temporary password shown once, `must_change_password`), reset password (sets a temporary "
      "password, sets the flag and ends all that user's sessions), change role, deactivate, activate, list, clear the login "
-     "counters, record a pull of the backup (`settings.last_pulled`, written by nothing else); every call audited with the "
-     "actor `admin-cli`. `npm run admin -- add-user|reset|role|deactivate|activate|clear-counters|record-pull` asks for the "
+     "counters, record a pull of the backup (`settings.last_pulled`, written by nothing else); every call an `event` audit row (`writeEvent` of API05) with the "
+     "actor `admin-cli`; its throttle rows of A13 use the limiter of API08. `npm run make-token` (`scripts/make-token.mjs`) prints one random token ONCE and its hash for hPanel (the admin token and the job token), and writes neither to a file. `npm run keygen` (`scripts/keygen.mjs`) makes the backup RSA key pair: the private key goes to a path Harsh names (outside the repository, mode 0600, never overwritten), the public key is printed as ONE line for `BACKUP_PUBLIC_KEY` with its SHA-256 fingerprint; the second copy for Siddhi is a person's step (PH06a). `npm run admin -- add-user|reset|role|deactivate|activate|clear-counters|record-pull` asks for the "
      "token, e-mail, name and role and prints the temporary password; no SQL and no database password on Harsh's Mac. "
      "The counter clear and the pull record use `clearLoginCounters` and `recordPull` of `scripts/housekeeping.mjs` (MB05). The first owner is made this way; the door is the only way to make an owner or change a role; no route updates `users` "
      "in M1 (PATCH, PUT, POST on `/v1/users` answer 404 for every role).",
-  files=["scripts/housekeeping.mjs"],
+  files=["scripts/housekeeping.mjs", "+scripts/make-token.mjs", "+scripts/keygen.mjs"],
   done="`npm test -- -t \"T-D27|T-D20|T-E09\"` (HTTP half) passes: the admin routes are 404 while the hash is unset, refuse a "
        "wrong token and any request with an `Origin` header and send no CORS headers; a created user gets a random temporary "
        "password once and can then call only change-password, logout and `me` (`403 JV_PASSWORD_CHANGE_REQUIRED`); an admin "
-       "reset ends all sessions at once; the clear call lets a refused login in at once; the pull record is audited; PATCH, "
+       "reset ends all sessions at once; the clear call lets a refused login in at once; the pull record is audited; the admin-door throttle rows of A13 (T-D24 clause): "
+       "the 11th call in a minute from one address, the call after two wrong tokens in a row (15-minute pause) and the sixth wrong token in an hour with an untrusted address are 429 with `Retry-After`; "
+       "each admin call writes one `event` row with role `admin-cli` and no token in it (T-D14 clause); `make-token` prints a token and its hash once and writes no file; `keygen` makes a pair whose public line loads with `loadPublicKey`, a file encrypted with it decrypts with the private file, and a second run refuses to overwrite; PATCH, "
        "PUT and POST on `/v1/users` and `/v1/users/{id}` answer 404 for all four roles. The DRILL half of T-E09 (Harsh follows "
        "the runbook once for each command) is OPS06.",
   rollback=RB)
@@ -381,8 +388,8 @@ T("API10", "API", "Static checks: catalogue, EXPLAIN, dependencies, secrets scan
 
 # =============================================================================================== API: reads and edits
 T("API11", "API", "Read side: sync endpoints, combined poll in one snapshot, keyset paging as UUID",
-  agent="C", grp="pure", pd=1.3, deps=["API04", "API06", "API07", "MB07"],
-  reqs=["C3", "C4"], tests=["T-F03", "T-D16", "T-D17", "T-D03"], extends=["T-D02"], uses=["A9"],
+  agent="C", grp="pure", pd=1.3, deps=["API04", "API06", "API07", "API10", "MB07"],
+  reqs=["C3", "C4"], tests=["T-F03", "T-D16", "T-D17", "T-D03"], extends=["T-D02", "T-D26"], uses=["A9"],
   do="`GET /v1/sync/{resource}?updated_after=&after_key=&limit=` (limit at most 1,000, a constant) and `POST /v1/sync/poll` "
      "(one cursor per readable resource, all resources read inside one `REPEATABLE READ` read-only snapshot, answers carry "
      "`server_time` and the caller's current `role`; a role that may not read a resource gets `403 JV_FORBIDDEN` for the whole "
@@ -402,11 +409,11 @@ T("API11", "API", "Read side: sync endpoints, combined poll in one snapshot, key
        "`/graphql` and `/v1/sync/<unknown>` are refused; staff cannot read `sku_private`, `audit_log`, bills, customers or receipts "
        "and read only the seven settings keys; no response to a biller or staff contains the original weight (read routes; the "
        "function results and the CSV are finished by API16 and WEB12). `EXPLAIN` (API10) shows the (`updated_at`, key) index "
-       "in use for every resource.",
+       "in use for every resource; a `sync/poll` call does not move `last_seen_at` and does not extend the session while `POST /v1/auth/activity` does (T-D26 clause).",
   rollback=RB)
 
-T("API12", "API", "Derived reads, customer ledger, daily totals, audit-log, dashboard health route",
-  agent="C", grp="pure", pd=1.0, deps=["API11", "MB07"],
+T("API12", "API", "Derived reads, customer ledger, daily totals, audit-log, dashboard health route, the volume seeder",
+  agent="C", grp="pure", pd=1.2, deps=["API11", "MB07"],
   reqs=["A9"], tests=["T-D18"], extends=["T-D04", "T-D02"], uses=["V1", "V2", "V3", "V4", "I12"],
   do="`GET /v1/customers/{id}/ledger` (keyset-paged by the V3 order key, loaded per customer), `GET /v1/daily-totals?from=&to=` "
      "(owner up to 400 days; a biller today and yesterday only, anything longer is `403 JV_FORBIDDEN`), `bill_summary` and "
@@ -414,17 +421,20 @@ T("API12", "API", "Derived reads, customer ledger, daily totals, audit-log, dash
      "most 200 a page), `GET /v1/health/checks` and `GET /v1/dashboard/health` (owner: `readHealth` of MB03/MB05 in one call). "
      "All through the query files of MB02, never a view. One-customer reads use the correlated form (V1, V2), which the "
      "state read of X0 item 8 also uses (API15). Reading is wide and writing narrow (A9): a biller reads every customer's mobile, "
-     "GST and PAN and the whole ledger, as the prototype did, and this is listed for Siddhi (O25).",
-  files=["db/queries/V3_customer_ledger.sql"],
+     "GST and PAN and the whole ledger, as the prototype did, and this is listed for Siddhi (O25). `scripts/seed-volume.mjs` (`npm run seed:volume -- <lane>`) fills an EMPTY "
+     "lane or staging database with the C2 volumes (2,500 pieces over about 600 designs, 2,000 customers, 3,000 bills with receipts) through MB04's import library and refuses a non-empty target; "
+     "the hydrate tests (WEB03) and OPS04 use it.",
+  files=["db/queries/V3_customer_ledger.sql", "+scripts/seed-volume.mjs"],
   done="`npm test -- -t T-D18` passes: the four derived reads are readable by the owner and a biller and refused to staff and "
        "to no session; a biller's `daily-totals` for more than today and yesterday is 403; the ledger of a fixture customer "
        "equals the hand-computed figures of MB02 (last running balance equals V2's balance); the owner's dashboard line is "
-       "returned and a biller's call is 403; `EXPLAIN` shows the indexes used.",
+       "returned and a biller's call is 403; `EXPLAIN` shows the indexes used; `seed-volume` fills the C2 volumes into an empty lane database in under 2 minutes, "
+       "a second run is refused, and I1 to I7 and I10 are true on the result.",
   rollback=RB)
 
-T("API13", "API", "Ordinary edits with the stale check, stamps, person columns, rates and settings rules",
-  agent="C", grp="pure", pd=1.3, deps=["API11", "API06", "MB06"],
-  reqs=["A5", "D4", "D22", "S6"], tests=["T-C07", "T-D04", "T-D05", "T-D19", "T-D22", "T-F05"], uses=["K4"],
+T("API13", "API", "Ordinary edits: the stale check, stamps, person columns, WRITE_COLUMNS, designs, pieces and categories",
+  agent="C", grp="pure", pd=1.0, deps=["API11", "API06", "MB06"],
+  reqs=["A5", "D22", "S6"], tests=["T-C07", "T-D19", "T-D22", "T-F05"],
   extends=["T-D14", "T-D02", "T-F09"],
   do="Edits through `PATCH`/`PUT`/`POST` of content columns with only the changed fields and `expected_updated_at` (the exact "
      "text): `UPDATE ... WHERE id = ? AND updated_at = ?`, no row changed means `409 JV_STALE` with the current row in "
@@ -432,29 +442,41 @@ T("API13", "API", "Ordinary edits with the stale check, stamps, person columns, 
      "nothing silently ignored); `skus.status` and `archived_at` change only through X9 (API16); staff cannot change a design's "
      "material, purity or selling method, cannot remove, reorder or replace `photo_ids` (they may add at the end) and "
      "`primary_photo_id` must stay one of them; `selling_method` is locked while the design has a non-archived piece; a "
-     "design with non-archived pieces cannot be archived; the weight rules of D7 (O37) on insert and weight change; the "
-     "rate rules of D4 (owner any date up to today and a correction of today's row; biller today only, once per material and "
-     "purity); settings (owner writes; the generic edit never writes `last_download` or `last_pulled`); categories and "
-     "subcategories; customer content columns (biller may edit, only the owner archives; archive needs a zero balance and takes "
-     "the customer lock, API15, so T-C20 lives there). Every write stamps `created_at`/`updated_at` from the API clock and "
+     "design with non-archived pieces cannot be archived; the weight rules of D7 (O37) on insert and weight change; categories and "
+     "subcategories. Every write stamps `created_at`/`updated_at` from the API clock and "
      "`created_by`/`updated_by`/`set_by`/`confirmed_by` from the session user; a client-sent value is an unknown field. "
-     "Every edit counts changed rows and audit rows (T-D14, both modes).",
+     "Every edit counts changed rows and audit rows (T-D14, both modes). Rates, settings and customer content columns are API13b.",
   files=[],
-  done="`npm test -- -t \"T-C07|T-D04|T-D05|T-D19|T-D22|T-F05\"` passes: a stale `updated_at` changes nothing and returns the "
-       "current row; `status` and `archived_at` of a piece cannot be edited; staff cannot change material/purity/selling "
-       "method; a biller cannot read `sku_private` or `audit_log` and cannot change stock, settings or users; only the owner "
-       "writes settings; a biller adds a rate dated today only (yesterday's and tomorrow's are refused); the owner corrects "
-       "today's; a `confirmed_by` sent by a client is refused; every read role reads archived rows; staff may set `archived_at` "
-       "on a design with no pieces; `created_by` etc. come from the session and are null for the import; `created_at` and "
+  done="`npm test -- -t \"T-C07|T-D19|T-D22|T-F05\"` passes: a stale `updated_at` changes nothing and returns the "
+       "current row; `status` and `archived_at` of a piece cannot be edited; a field outside the content columns is refused and an unknown field is "
+       "`JV_INVALID_INPUT` (the 422 of T-D19); staff cannot change material/purity/selling method; every read role reads archived rows; staff may set "
+       "`archived_at` on a design with no pieces; a design's `selling_method` cannot change while it has a non-archived piece and a design with non-archived "
+       "pieces cannot be archived; `created_by` etc. come from the session and are null for the import; `created_at` and "
        "`updated_at` come from the injected clock and move on every update, and a hand edit through phpMyAdmin's own row "
        "editor shows what happens (the runbook rule of B5 applies); for each table written here one insert and one update give "
        "exactly one audit row in both audit modes.",
   rollback=RB)
 
+T("API13b", "API", "Ordinary edits: daily rates, settings and customer content columns",
+  agent="C", grp="pure", pd=0.7, deps=["API13"],
+  reqs=["D4"], tests=["T-D04", "T-D05"], uses=["K4"],
+  extends=["T-D14", "T-D02"],
+  do="On the edit mechanism of API13: the rate rules of D4 (owner any date up to today and a correction of today's row; biller today only, once per material and "
+     "purity; staff cannot; `set_by` and `confirmed_by` from the session, a client-sent value is refused); settings (owner writes; the generic edit never writes "
+     "`last_download` or `last_pulled`); customer content columns (a biller may edit, only the owner archives; the archive rule itself, with the customer lock, "
+     "is X-level work in API19 and T-C20 lives there). The owner writes users only through the admin door (API09), so no edit route exists for `users`.",
+  files=[],
+  done="`npm test -- -t \"T-D04|T-D05\"` passes: a biller cannot read `sku_private` or `audit_log` and cannot change stock, settings or users; staff cannot change a design's "
+       "material, purity or selling method; only the owner writes settings and users; the owner and a biller can add a rate, a biller for today only (yesterday's and tomorrow's are refused), "
+       "the owner corrects today's, staff cannot; a `confirmed_by` sent by a client is refused; the generic edit cannot write `last_download` or `last_pulled`; "
+       "a biller edits a customer's content columns and only the owner archives; for each table written here one insert and one update give exactly one audit row in both audit modes. "
+       "(A biller's `daily_totals` range is the T-D04 clause of API12.)",
+  rollback=RB)
+
 T("API14", "API", "Numbers and repeat-safety: counters, formats, Idempotency-Key claim, ids",
   agent="A", grp="money", pd=1.0, deps=["API03"],
   reqs=["L3", "L4", "L5", "S2"],
-  tests=["T-C01", "T-F07"], ptests=["PT-N1 the claim machinery with a toy function: first request executes, an identical twin in flight returns the stored result with Idempotent-Replay, another actor or another body under the same key is refused, a request that fails the route wrapper never uses up its key"],
+  tests=["T-C01", "T-F07"], ptests=["PT-N1 the claim machinery with a toy function: first request executes, an identical twin in flight returns the stored result with Idempotent-Replay, another actor or another body under the same key is refused"],
   extends=["T-C16", "T-C18", "T-C19"],
   do="`src/db/numbers.ts`: the series is worked out once from the API clock (S5) and used in both steps; the series row is read "
      "first (`SELECT 1 FROM sys_counters WHERE series = ?`, no lock) and `INSERT IGNORE` only when missing, on a checked-out "
@@ -481,7 +503,7 @@ T("API14", "API", "Numbers and repeat-safety: counters, formats, Idempotency-Key
   rollback=RB)
 
 T("API15", "API", "X0 helpers: customer lock, piece locks in MariaDB's id order, counter last, touches, test hook, audit writer",
-  agent="A", grp="money", pd=1.1, deps=["API14", "MB06", "API13"],
+  agent="A", grp="money", pd=1.1, deps=["API14", "MB06", "API13", "API10"],
   reqs=["X0", "D23"], tests=[],
   ptests=["PT-X0 the lock helpers on a toy function: customer lock first; X4/X5/X10 re-read the same customer; pieces taken by ONE `ORDER BY id FOR UPDATE` statement (never sorted in code); counter last; the hook `ctx.pause` exists only in the test build"],
   extends=["T-D14", "T-F11", "T-D29"],
@@ -495,14 +517,15 @@ T("API15", "API", "X0 helpers: customer lock, piece locks in MariaDB's id order,
      "of X0 item 8 by correlated sub-selects, plus what the change itself re-opens: X4 the bills the voided receipt paid, X5 "
      "and X10 the bill and the receipts allocated to it); the test hook `ctx.pause('<function>.after_read')`, `lock_pieces."
      "between` and `archive_customer.after_check` (one gate per session, test build only, a gate held less than 3 s; the "
-     "production bundle contains none); `src/db/audit.ts`, the Node writer of mechanism (b) of L1 used when "
-     "`JV_AUDIT_MODE=node`. The reviewer's `rm5-experiments/hook.mjs` and `lib.mjs` show the intended shape.",
+     "production bundle contains none); every helper writes its step into `tx.trail` (NODE-DESIGN 5.3): a customer lock after the counter, or a piece lock before "
+     "the customer lock, throws `LockOrderViolation` (it fails the test run and is `JV_INTERNAL` in production), the lock-trail check of X0 item 5 and T-C21; "
+     "`src/db/audit.ts`, the Node writer of mechanism (b) of L1 used when `JV_AUDIT_MODE=node`. The reviewer's `rm5-experiments/hook.mjs` and `lib.mjs` show the intended shape.",
   files=[],
   done="`npm test -- -t PT-X0` passes on a toy writing function: with the customer lock in place a second session waits and either "
        "release order gives the right books; with the lock helper replaced by a no-op in the test build the same test fails; "
        "two pieces whose ids sort one way in code and the other in the database are locked by the real helper without a "
        "deadlock in 40 rounds and a helper that sorts in code and locks one at a time deadlocks at least once (the T-C21 control, "
-       "run in full by API29); a gate held less than 3 s never causes a lock timeout; the production build contains no `ctx.pause` "
+       "run in full by API29); taking the counter before the customer lock, or a piece lock before the customer lock, throws `LockOrderViolation` in the test run; a gate held less than 3 s never causes a lock timeout; the production build contains no `ctx.pause` "
        "(API10's check); the audit writer in node mode produces the same audit rows as the triggers for a toy table (T-D14 "
        "extended: both modes).",
   rollback=RB)
@@ -531,7 +554,7 @@ T("API16", "API", "Stock functions X8 create_design and X9 set_sku_status",
 
 T("API17", "API", "Photos in MariaDB behind PhotoStore: upload, read, owner removal, caps",
   agent="C", grp="pure", pd=1.2, deps=["API16", "API08"],
-  reqs=["P1", "P2", "P3", "P7"], tests=["T-D21", "T-F10"], extends=["T-D02"], uses=["P5", "D26", "A5"],
+  reqs=["P1", "P2", "P3", "P7"], tests=["T-D21", "T-F10"], extends=["T-D02", "T-D24", "T-C03"], uses=["P5", "D26", "A5"],
   do="`src/photos/photoStore.ts` (put, get, remove, sizes; one implementation on `design_photos`; the interface a fake second "
      "store also passes), `src/photos/routes.ts`: `PUT /v1/designs/{design_id}/photos/{photo_id}?kind=full|thumb` (owner and staff; "
      "raw body; type from the first bytes: JPEG `FF D8 FF`, PNG `89 50 4E 47`, WebP `RIFF`...`WEBP`; 2 MiB else `413 "
@@ -541,7 +564,8 @@ T("API17", "API", "Photos in MariaDB behind PhotoStore: upload, read, owner remo
      "while the size line is red, else `JV_NOT_ALLOWED`; no foreign key to designs), `GET /v1/photos/{photo_id}/full|thumb` "
      "(no session; `Cache-Control: public, max-age=31536000, immutable`, `ETag` = sha256, `nosniff`, "
      "`Cross-Origin-Resource-Policy: cross-origin`; removed means 404) and `POST /v1/photos/{photo_id}/remove` (owner only: "
-     "`removed_at` set and `bytes` emptied by UPDATE, audited). No list query selects `bytes`. The caps use `unattachedPhotos` and `insertPhotoGuarded` of `scripts/housekeeping.mjs` (MB05). The attach checks live in X8 "
+     "`removed_at` set and `bytes` emptied by UPDATE, audited). The photo rows of A13 use the limiter of API08: upload 30 a minute per user; read 600 a minute per address, or a global "
+     "120 a second when the address is untrusted, with the ETag map of 5,000 entries and `304` without a database read. No list query selects `bytes`. The caps use `unattachedPhotos` and `insertPhotoGuarded` of `scripts/housekeeping.mjs` (MB05). The attach checks live in X8 "
      "and the design PATCH (API16, API13).",
   files=["scripts/health.mjs"],
   done="`npm test -- -t \"T-D21|T-F10\"` passes: a non-image sent as an image and a 5 MB file are refused; JPEG, PNG, WebP are "
@@ -551,14 +575,16 @@ T("API17", "API", "Photos in MariaDB behind PhotoStore: upload, read, owner remo
        "upload while the size line is red are `JV_NOT_ALLOWED`; staff removing, reordering or replacing an id in `photo_ids` is "
        "refused while adding one is accepted; a design with an unknown id, another design's id, an id with one kind, or a removed "
        "id is `JV_INVALID_INPUT` (the X8 clause, API16); `DELETE` has no route; the PhotoStore contract test passes for the "
-       "in-database store and a fake; the size line is within 15 percent of the real size after 400 bulk-inserted photo rows.",
+       "in-database store and a fake; the size line is within 15 percent of the real size after 400 bulk-inserted photo rows; the photo rows of A13 (T-D24 clause): "
+       "the 31st upload in a minute by one user is 429, photo reads above the global cap with an untrusted address are 429, a repeated read with `If-None-Match` of a photo "
+       "already read is 304 without a database read, a removed photo is 404 and never 304.",
   rollback=RB)
 
 T("API18", "API", "pricing.ts copy, quote_bill X7, list prices, rate defaults, versions",
   agent="C", grp="pure", pd=1.3, deps=["API05", "API06", "API10"],
   reqs=["X7", "R2", "R12", "R13", "R14", "C12", "SF3"],
   tests=["T-A01", "T-A04", "T-A05", "T-A07", "T-A08", "T-A11", "T-A13", "T-A14", "T-A16", "T-A18", "T-A19"],
-  extends=["T-D09"], uses=["R3", "R4", "R5", "R6", "R7", "R8", "R9"],
+  extends=["T-D09", "T-A09"], uses=["R3", "R4", "R5", "R6", "R7", "R8", "R9"],
   do="Copy `jewelvault-app/src/lib/pricing.ts` BYTE for byte to `src/domain/pricing.ts` with `PRICING-SOURCE.txt` (source commit "
      "9724728 and the SHA-256), `npm run check:pricing -- <path to the app's pricing.ts>`, and the app's `pricing.test.ts` "
      "copied to `tests/pricing.test.ts` so the same unit tests run on the API's copy; `GET /v1/auth/me` returns "
@@ -579,7 +605,8 @@ T("API18", "API", "pricing.ts copy, quote_bill X7, list prices, rate defaults, v
        "200 lines accepted, 201 rejected; 100,000 g at 100,000,000 is `JV_INVALID_INPUT`, 1,000,000,000.00 accepted and one paisa "
        "more rejected, grand total 1,000,000,000.00 with 0.49 additional accepted and 0.50 refused; twenty hand-calculated "
        "per-line roundings; `check:pricing` fails when one byte of either copy changes; the app's pricing tests pass on the "
-       "API's copy; `me` returns the hash; 200 random inputs equal the oracle.",
+       "API's copy; `me` returns the hash; 200 random inputs equal the oracle; bill and line inputs through `quote_bill` (T-A09 clause): a negative or over-cap weight, rate, piroi, "
+       "other charge, discount, additional charge or quantity, more than 2 or 3 decimals, and a By Weight line without `labour_rate` are `JV_INVALID_INPUT`, and an absent `piroi`, `other_charges` or `quantity` takes its default.",
   rollback=RB)
 
 # =============================================================================================== API: money core
@@ -597,13 +624,14 @@ T("API19", "API", "X6 create_customer and the customer archive rule",
        "figures is not zero; category and subcategory names are unique ignoring case; exactly one walk-in exists; a mobile "
        "that is not ten digits or `+` and 7 to 15 digits is refused and a blank one is accepted only with an `import_batch_id`; a "
        "PAN that is not five capital letters, four digits and a capital letter is refused; `create_customer` returns the "
-       "customer; the seeds hold no sample data.",
+       "customer; the seeds hold no sample data; a request refused by the route wrapper (no session, wrong role, invalid body) never uses up its Idempotency-Key "
+       "(the first creating route, so the last case of PT-N1 lives here).",
   rollback=RB)
 
 T("API20", "API", "X1 create_bill core without payments",
-  agent="A", grp="money", pd=1.4, deps=["API15", "API16", "API18", "API19"],
+  agent="A", grp="money", pd=1.4, deps=["API15", "API16", "API18", "API19", "API13b"],
   reqs=["X1", "K2", "R10", "Y2", "Y8"], tests=["T-A03", "T-A06", "T-A10", "T-A15", "T-A17", "T-C04", "T-C05", "T-C06", "T-C08"],
-  extends=["T-A09", "T-D14", "T-D09"], uses=["R6"],
+  extends=["T-A09", "T-D14", "T-D09", "T-D03"], uses=["R6"],
   do="`src/money/x01CreateBill.ts` in the order of X1: claim, role check, customer lock, validation (S4, Y8: a biller uses today "
      "only, the owner any date up to today, a future date refused; R6; modes without `Credit`; each piece once, else "
      "`JV_INVALID_INPUT`), customer exists and not archived, `lockPieces` and R10 (In Stock; Reserved and On Approval only with "
@@ -624,7 +652,8 @@ T("API20", "API", "X1 create_bill core without payments",
        "success, one `JV_PIECE_UNAVAILABLE` and no number used; the same Idempotency-Key twice makes one bill and returns the "
        "same result with `Idempotent-Replay: true`, another caller or another cart under the key is refused; a failed call "
        "leaves no piece Sold and no number used; Repair, Missing, Damaged, Archived, Transferred, Returned and Sold pieces cannot be "
-       "billed, Reserved and On Approval only with the confirm list.",
+       "billed, Reserved and On Approval only with the confirm list; no result of `create_bill` or `quote_bill` for a biller holds `original_net_weight` (T-D03 clause); "
+       "the same piece twice in one bill is `JV_INVALID_INPUT` and a negative or over-cap bill field reaches no row (T-A09 clauses).",
   rollback=RB)
 
 T("API21", "API", "Rebalance (Y3, Y6, Y9) wired into the transaction",
@@ -638,7 +667,7 @@ T("API21", "API", "Rebalance (Y3, Y6, Y9) wired into the transaction",
      "`tests/schema/s14-rebalance.test.ts` still pass unchanged against the shared library (an API test imports both and compares "
      "on random data). Y3's error cases are API22.",
   files=["scripts/rebalance.mjs", "tests/schema/s14-rebalance.test.ts"],
-  done="`npm test -- -t T-B26` passes: after every money function built so far a rebalance never changes an existing allocation "
+  done="`npm test -- -t T-B26` passes: after `create_bill` (X1, the only money function built so far; the rest is the T-B26 clause of API31) a rebalance never changes an existing allocation "
        "(ids and amounts identical before and after) and leaves I10 true; the API's rebalance and `scripts/rebalance.mjs` give "
        "the same allocations on 300 random customers; a customer with dues and an advance nets off; a handed-back advance is "
        "never spent twice (a refund-then-bill case is finished by API28).",
@@ -705,7 +734,7 @@ T("API24", "API", "X3 settle_fine (silver and cash)",
   rollback=RB)
 
 T("API25", "API", "X4 void_receipt and X5 cancel_bill",
-  agent="A", grp="money", pd=1.0, deps=["API23"],
+  agent="A", grp="money", pd=1.0, deps=["API23", "API24"],
   reqs=["X4", "X5", "K3", "Y7"], tests=["T-B08", "T-B09", "T-B10", "T-B16"],
   extends=["T-D14", "T-D09", "T-B17"], uses=["Y8"],
   do="`x04VoidReceipt.ts` (owner; reason at least 3 characters; the receipt must be active else `JV_ALREADY_VOID`; voided with "
@@ -783,7 +812,7 @@ T("API28", "API", "X11 issue_refund (first to leave if the calendar slips)",
   rollback=RB)
 
 T("API29", "API", "Two-session interleavings with the test hook (T-C10 to T-C14, T-C20, T-C21)",
-  agent="A", grp="money", pd=1.0, deps=["API26", "API27", "API28", "API24", "API19"],
+  agent="A", grp="money", pd=1.2, deps=["API26", "API27", "API28", "API24", "API19"],
   reqs=[], tests=["T-C10", "T-C11", "T-C12", "T-C13", "T-C14", "T-C20", "T-C21"],
   do="One DB2 test per spec test with the hook machinery of API15: one gate per session, held less than 3 s, both release "
      "orders, each test naming its START STATE and each with a variant where the customer-lock helper is a no-op in the "
@@ -805,18 +834,20 @@ T("API29", "API", "Two-session interleavings with the test hook (T-C10 to T-C14,
 
 T("API30", "API", "Lock timeout, statement timeout and the stress run (T-C15)",
   agent="A", grp="money", pd=0.7, deps=["API29"],
-  reqs=[], tests=["T-C15"],
+  reqs=[], tests=["T-C15"], extends=["T-C19"],
   do="A lock held more than 5 s by another connection raises `JV_BUSY` (503 with `Retry-After`) and changes nothing; a statement "
      "past `max_statement_time` (1969) does the same; the retry with the same Idempotency-Key then succeeds; a stress run of 8 "
      "connections and 200 mixed calls (bills, payments, fine, voids, cancels, re-issues, refunds) over 3 customers (the walk-in "
-     "among them) and 12 pieces. Uses the pool of 8 and the paced connect.",
+     "among them) and 12 pieces. Uses the pool of 8 and the paced connect. It also runs the transaction tests of T-C19 on the real X2 (the first run on a toy function is API03).",
   files=[],
-  done="`npm test -- -t T-C15` passes three times in a row with 0 deadlocks (1213) and I1 to I10 true after each run.",
+  done="`npm test -- -t T-C15` passes three times in a row with 0 deadlocks (1213) and I1 to I5, I7 and I10 true after each run (I6 and I11 are the T-C15 clause of API32, run on the stress database); "
+       "T-C19 on the real X2: with the customer row held for 28 s, 40 `record_payment` calls on a pool of 8 are all `JV_BUSY` within 15 s and none is answered by the handler timer, "
+       "a call past its deadline at COMMIT is rolled back, and a connection killed in COMMIT answers `JV_BUSY` and the retry with the same key returns the stored result.",
   rollback=RB)
 
 T("API31", "API", "Random sequences (three seeds), function-by-role matrix, mutation check of the net",
-  agent="C", grp="money", pd=1.2, deps=["API26", "API27", "API28", "API24", "API33"],
-  reqs=["I9"], tests=["T-B14", "T-D09"],
+  agent="C", grp="money", pd=1.2, deps=["API26", "API27", "API28", "API24", "API30", "API33"],
+  reqs=["I9"], tests=["T-B14", "T-D09"], extends=["T-B26", "T-D03", "T-C15"],
   do="`tests/sequences.test.ts`: random sequences of 200 operations for three seeds (bills paid, part paid and unpaid; "
      "named-bill and oldest-first payments; fine in silver and in cash; voids of every receipt kind; cancels; re-issues; "
      "refunds; opening balances; owner back-dated entries; the walk-in; clock jumps over midnight and New Year), after every "
@@ -829,7 +860,9 @@ T("API31", "API", "Random sequences (three seeds), function-by-role matrix, muta
   done="`npm test -- -t \"T-B14|T-D09\"` passes for seeds 1, 2 and 3 (and a fourth seed run once and logged); with one money rule "
        "broken on purpose (the mutations of the review task RV2: a rebalance that changes an old allocation, a cancel that "
        "forgets a voided receipt's allocation, a void that uses `paid_on` for the day) at least one invariant or test fails each "
-       "time.",
+       "time; after each operation of the random sequences no allocation that existed before has a changed id or amount, except by a cancel or a void, and I10 holds (T-B26 clause); "
+       "the generated function matrix scans every result of every role for the key `original_net_weight` and finds it only in the owner's own reads (T-D03 clause); "
+       "the stress run of T-C15 is repeated once with the nightly check at its end and reports I6 and I11 true (T-C15 clause).",
   rollback=RB)
 
 # =============================================================================================== API: jobs, health, backups
@@ -854,32 +887,40 @@ T("API32", "API", "Invariants in Node (I6, I11), the nightly check, review line,
        "Per Piece line is compared on its price only.",
   rollback=RB)
 
-T("API33", "API", "The hourly tick: phases, one run at a time, housekeeping, photo-copy slices, job health",
-  agent="A", grp="money", pd=1.2, deps=["API32", "API09"],
-  reqs=["I8", "L6"], tests=["T-R04"], extends=["T-C05", "T-D30"],
-  do="`POST /internal/jobs/tick` (bearer token, only its hash in the environment; throttled; no CORS headers; refuses an `Origin` "
+T("API33", "API", "The hourly tick: endpoint, token, one run at a time, phases and retry rules",
+  agent="A", grp="money", pd=0.8, deps=["API32", "API09"],
+  reqs=["I8"], tests=[], extends=["T-D24", "T-D14"],
+  ptests=["PT-T1 the tick skeleton: a missing or wrong token and any request with an Origin header are refused; a second tick while one runs answers 'already running'; a tick that throws destroys its connection and releases its lock; a phase runs once for a business date and a running row older than 10 minutes is run again"],
+  do="`POST /internal/jobs/tick` (bearer token, only its hash in the environment; throttled by the tick row of A13 through the limiter of API08; no CORS headers; refuses an `Origin` "
      "header; handler timer 50 s; statement limit 20 s). It takes one pool connection and the lock with `withJobLock` of `scripts/housekeeping.mjs` (MB06: `GET_LOCK('jv_tick:<database>', 0)`, a lock name is "
      "server-wide in MariaDB so it carries the database name), answers 'already running' at once if taken, "
      "releases it in a `finally` and destroys the connection instead of returning it if anything throws (the helper marks `destroyConnection`). Phases "
      "(`sys_job_runs`, unique on `job` and `run_date` = the Asia/Kolkata business date, retry by UPDATE: `failed` goes back to "
-     "`running`, a `running` row older than 10 minutes counts as abandoned): `nightly_check` (API32), the heartbeat, "
-     "`housekeeping` (L6: empty `result` of `sys_idempotency` rows older than 90 days, after which a repeat of such a key is "
-     "refused; close finished login-failure hours, a function that does not yet exist in the database half: D24's conditional UPDATE "
-     "claims the summary and one `login_failures` audit event is written) and `photo_copy` in slices that stop starting new work after 25 s. A phase "
-     "is due when it is not `ok` for today's date and, for the nightly work, it is after 02:00 Asia/Kolkata. "
-     "`GET /internal/jobs/health` answers 503 when the last good export is older than 26 hours or the owner's last Download "
-     "everything is more than 35 days old. `.github/workflows/jobs.yml` calls both endpoints on a schedule (the secret is "
+     "`running`, a `running` row older than 10 minutes counts as abandoned): `nightly_check` (API32) and the heartbeat are built here; `housekeeping` and `photo_copy` "
+     "are registered as phases and built in API33b. A phase is due when it is not `ok` for today's date and, for the nightly work, it is after 02:00 Asia/Kolkata. "
+     "Each phase run writes one `event` row (role `job`) through `writeEvent` of API05.",
+  files=[],
+  done="`npm test -- -t PT-T1` passes: the nightly check runs once for a business date and not before 02:00 Asia/Kolkata, a second call the same day answers "
+       "'already done', a `running` row older than 10 minutes is run again; a second tick while one runs answers 'already running', a second tick after the first "
+       "has ended runs, two apps on two databases of one server both run, and a tick that throws destroys its connection and releases its lock; the endpoint "
+       "refuses a missing or wrong token and any request with an `Origin` header; `GET_LOCK` runs on a pooled connection of the ten-box user; the tick row of A13 "
+       "gives 429 with `Retry-After` when exceeded (T-D24 clause); each phase run writes one `event` audit row with role `job` (T-D14 clause).",
+  rollback=RB)
+
+T("API33b", "API", "The tick's housekeeping and photo-copy phases, job health and the Actions workflow",
+  agent="A", grp="money", pd=0.7, deps=["API33", "MB07"],
+  reqs=["L6"], tests=["T-R04"], extends=["T-C05", "T-D30"],
+  do="Built on the tick of API33. `housekeeping` (L6: empty `result` of `sys_idempotency` rows older than 90 days, after which a repeat of such a key is "
+     "refused; close the finished login-failure hours with `closeFinishedHour` of `scripts/login-counters.mjs` (MB07: it claims the summary with D24's conditional "
+     "UPDATE and the `login_failures` event is written)) and `photo_copy` in slices that stop starting new work after 25 s (it calls `copyPhotosOnce` of MB03 over the "
+     "directory store of MB05; a phase's `ok` is written only when it is complete). `GET /internal/jobs/health` answers 503 when the last good export is older than 26 "
+     "hours or the owner's last Download everything is more than 35 days old. `.github/workflows/jobs.yml` calls both endpoints on a schedule (the secret is "
      "Harsh's, OPS02).",
   files=[],
-  done="`npm test -- -t T-R04` passes: the nightly check and photo copy run once for a business date and not before 02:00 "
-       "Asia/Kolkata, a second call the same day answers 'already done', a `running` row older than 10 minutes is run again; a "
-       "second tick while one runs answers 'already running', a second tick after the first has ended runs, two apps on two "
-       "databases of one server both run, and a tick that throws destroys its connection and releases its lock; the endpoint "
-       "refuses a missing or wrong token and any request with an `Origin` header; the photo-copy slices stop starting work "
-       "after 25 s and a phase's `ok` is written only when it is complete; `jobs/health` answers 503 on a stale export and on a "
-       "download older than 35 days; `GET_LOCK` runs on a pooled connection of the ten-box user; T-C05's clause (a result "
-       "older than 90 days is emptied and its key refused) passes; the housekeeping closes the summary of a finished hour "
-       "(T-D30 clause). The curl-from-cron half is OPS03.",
+  done="`npm test -- -t T-R04` passes (the tick half of PT-T1 included): the photo copy runs once for a business date and not before 02:00 Asia/Kolkata; the photo-copy slices stop starting work "
+       "after 25 s and a phase's `ok` is written only when it is complete; `jobs/health` answers 503 on a stale export and on a download older than 35 days; "
+       "T-C05's clause (a result older than 90 days is emptied and its key refused) passes; the housekeeping closes the summary of a finished hour (T-D30 clause: an attack of one hour "
+       "followed by five quiet hours has its summary in `audit_log` after the next tick without a further failed login). The curl-from-cron half is OPS03.",
   rollback=RB)
 
 T("API34", "API", "The nightly dump script: due logic, locks, run records, pruning call, photo copy writer, BACKUP-RESTORE.md",
@@ -899,9 +940,9 @@ T("API34", "API", "The nightly dump script: due logic, locks, run records, pruni
      "or with fewer files than the last recorded count, and does a dry run first), and raises the alerts it returns into "
      "`sys_error_log` with `logError`. The once-only photo copy writer (`directoryPhotos` over `JV_BACKUP_DIR/photos`, compared "
      "by size and sha256 when the name exists, never overwritten, recorded in `sys_photo_copies` only after a `stat`) is called "
-     "by the tick's slices (API33). The docs are already rewritten (MB06).",
+     "by the tick's slices (API33b). The docs are already rewritten (MB06). The key pair is made with `npm run keygen` of API09.",
   files=["scripts/backup-folder.mjs", "scripts/export-file.mjs", "scripts/pacing.mjs", "BACKUP-RESTORE.md"],
-  done="`npm test -- -t T-R03` passes on a temporary folder with a test key pair: the dump decrypts with the private key (via `unpackExport`) "
+  done="`npm test -- -t T-R03` passes on a temporary folder with a test key pair (made by `npm run keygen`, API09): the dump decrypts with the private key (via `unpackExport`) "
        "and its row counts equal the manifest; a photo is copied once and a second run copies nothing and records an `ok` 'nothing new' run; "
        "a size mismatch on the `stat` check is not recorded; after 40 failed nights nothing is deleted and the newest 30 and 13 files "
        "stay whatever their age; after a good night the 31st daily file goes after a logged dry run; pruning refuses a folder with fewer "
@@ -932,11 +973,12 @@ T("API35", "API", "Download-everything record route, last_download and last_pull
   rollback=RB)
 
 T("API36", "API", "Restore and pull tool for Harsh's Mac (SFTP source, decrypt, drill harness)",
-  agent="C", grp="pure", pd=1.0, deps=["API34", "MB03"],
+  agent="C", grp="pure", pd=1.2, deps=["API34", "MB03"],
   reqs=["B4"], tests=[],
   do="`scripts/restore-cli.mjs`: a `Source` over SFTP (port 65002, Harsh's own login, no secret of the app) or a local folder, a "
      "`PhotoStore` over `photos/`, decryption with the private key file by `unpackExport` of the database half (never on the server or in the repository), then "
-     "`restoreDatabase` of MB03 against an EMPTY database (a database with tables is refused); pacing of at most 10 new "
+     "`restoreDatabase` of MB03 against an EMPTY database (a database with tables is refused); the pull command takes the SFTP source OR a file downloaded by hand from hPanel's File Manager "
+     "(that path was proved byte for byte on 17 Oct; SFTP is untried), so Harsh's weekly pull works either way; pacing of at most 10 new "
      "connections in 1.2 s; it prints the report (row counts against the manifest, photo sha256 values, missing photos listed "
      "and tombstoned, the nightly check on the copy) and starts the throw-away Docker MariaDB 11.8 for drill 1 itself. A second "
      "command pulls the newest `daily/` file (monthly: `monthly/` and the new photos), checks the sha256 of each against "
@@ -946,7 +988,7 @@ T("API36", "API", "Restore and pull tool for Harsh's Mac (SFTP source, decrypt, 
   done="`npm test -- -t PT-R1` (a plan test) passes locally: a full cycle on a lane database (export with API34's script, "
        "encrypt, restore through the CLI from a local folder into a second empty lane database) gives equal row counts and "
        "photo hashes, refuses a non-empty target, lists a deliberately removed photo as missing and inserts its row as a "
-       "tombstone, and fails with a clear message with a wrong private key; the pull command verifies hashes. The SFTP path "
+       "tombstone, and fails with a clear message with a wrong private key; the pull command verifies hashes, also for a file downloaded by hand. The SFTP path "
        "and the drills are run against the real plan by OPS05.",
   ptests=["PT-R1 restore CLI round trip on lane databases"],
   rollback=RB)

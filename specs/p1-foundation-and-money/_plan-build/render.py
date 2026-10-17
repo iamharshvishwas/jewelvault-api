@@ -26,27 +26,32 @@ def span(a, b, d=1):
 def mid_durs():
     return {t["id"]: (duration(t, "low") + duration(t, "high")) / 2.0 for t in TASKS}
 
-_s, _f, _w, _d = schedule("mid", mid_durs())
+_s, _f, _w, _d = schedule("mid", mid_durs(), cal=core.CAL_OFF)
 RUNS["mid"] = dict(start=_s, fin=_f, why=_w, durs=_d)
+_s, _f, _w, _d = schedule("mid", mid_durs(), cal=core.CAL_ON)
+RUNS_ON["mid"] = dict(start=_s, fin=_f, why=_w, durs=_d)
 CASE_NAME = {"low": "Best", "mid": "Likely", "high": "Worst"}
-LAST_SAFE_BEFORE = core.dt.date(2026, 11, 2)    # last day to switch before Dhanteras week (Mon 2 Nov)
-AFTER_FESTIVAL = core.BHAI_DOOJ + core.dt.timedelta(days=1)   # Thu 12 Nov
+LAST_SAFE_BEFORE = core.NO_SWITCH_FROM - core.dt.timedelta(days=1)   # Wed 28 Oct: Harsh's own rule, PLAN.md 3.1 rule 4
+AFTER_FESTIVAL = core.BHAI_DOOJ + core.dt.timedelta(days=1)          # Thu 12 Nov
 
 def golive(d0, cal):
     """The first live day the rule allows, given the day the cut-over could happen."""
     if d0 <= LAST_SAFE_BEFORE:
-        return d0, "before Dhanteras week"
+        return d0, "before the freeze of 29 Oct"
     if d0 <= core.BHAI_DOOJ:
         for d in cal:
             if d >= AFTER_FESTIVAL:
-                return d, "moved out of Dhanteras week"
+                return d, "moved out of the freeze, 29 Oct to 11 Nov"
     return d0, "after Bhai Dooj"
 
-def end_of(case, tid):
-    return RUNS[case]["fin"][tid]
+def runs_of(calname):
+    return RUNS if calname == "off" else RUNS_ON
+
+def end_of(case, tid, calname="off"):
+    return runs_of(calname)[case]["fin"][tid]
 
 def date_str(case, tid, calname):
-    return fmt(date_of(end_of(case, tid), CAL[calname]))
+    return fmt(date_of(end_of(case, tid, calname), CAL[calname]))
 
 LAST_ID = "QA05"
 
@@ -100,7 +105,7 @@ rows_dates = []
 GO = {}
 for case in ("low", "mid", "high"):
     for cal in ("off", "on"):
-        d0 = date_of(end_of(case, LAST_ID), CAL[cal])
+        d0 = date_of(end_of(case, LAST_ID, cal), CAL[cal])
         eff, why = golive(d0, CAL[cal])
         GO[(case, cal)] = (d0, eff, why)
         rows_dates.append([CASE_NAME[case], "Sundays off" if cal == "off" else "Sundays worked",
@@ -117,14 +122,14 @@ def cut_run(case, adj):
     durs = dict(RUNS[case]["durs"])
     for k, v in adj.items():
         durs[k] = max(durs[k] * v, 0.0) if isinstance(v, float) and v <= 1 else durs[k]
-    s, f, w, d = schedule(case, durs)
+    s, f, w, d = schedule(case, durs, cal=core.CAL_OFF)
     return f
 
 CUTS = [
     ("1", "X11 refund: API28 and the refund form of WEB11. A mistaken receipt is voided instead.", {"API28": 0.0, "WEB11": 0.8}),
     ("2", "The review line I11 and the list-price report (R14 reporting): the columns stay, the report goes (a third of API32).", {"API32": 0.65}),
     ("3", "Rewiring the Reports screen to the shared selectors: hide Reports instead (O32) (a third of WEB12).", {"WEB12": 0.65}),
-    ("4", "The rate card by purity and the stale-rate guard (WEB16): billing stays correct because the rate is editable on every line (P3-T2 of PLAN.md).", {"WEB16": 0.0}),
+    ("4", "The rate card by purity (WEB17): billing stays correct because the rate is editable on every line; the stale-rate guard (WEB16) STAYS, as PLAN.md 7.1 says (P3-T2).", {"WEB17": 0.0}),
 ]
 cut_rows = []
 for num, label, adj in CUTS:
@@ -143,8 +148,14 @@ for case in ("low", "high"):
     all_save.append(f"{RUNS[case]['fin']['RV4'] - f2['RV4']:.2f}")
 
 # ---------------------------------------------------------------------------------------------- tripwires
-tw1_pd = BY_ID["API21"]["pd"] + BY_ID["API22"]["pd"]
-tw1_lo, tw1_hi = tw1_pd * FACT["money"][0], tw1_pd * FACT["money"][1]
+def tw_rows(ids, grp):
+    pd_ = sum(BY_ID[i]["pd"] for i in ids)
+    lo, hi = FACT[grp]
+    return pd_, lo * 480, hi * 480, lo * pd_, hi * pd_
+
+tw1_pd, tw1_min_lo, tw1_min_hi, tw1_lo, tw1_hi = tw_rows(["API21", "API22"], "money")
+tw1a_pd, tw1a_min_lo, tw1a_min_hi, tw1a_lo, tw1a_hi = tw_rows(["API03", "API14"], "money")
+twweb_pd, twweb_min_lo, twweb_min_hi, twweb_lo, twweb_hi = tw_rows(["WEB03", "WEB04"], "web")
 
 # ---------------------------------------------------------------------------------------------- plan.md
 today = core.TODAY.strftime("%A %d %B %Y")
@@ -153,11 +164,11 @@ w = O.append
 
 w("# Plan: P1 foundation and money (JewelVault on Node.js + MariaDB 11.8 at Hostinger, front end on Vercel)")
 w("")
-w(f"Status: **DRAFT 1, revision A (17 Oct 2026)**, written on {today} and revised on Sat 17 Oct for two things that arrived after it: the database session's commits `379ef68`, `a2a720b`, `a5790d8` (audit triggers, backup folder, locks) and the API-00c results of 16 Oct (`API-00C-RESULTS.md`); against `spec.md` draft 5.2 (commit `7920e6c`, {len(lines)} lines, "
+w(f"Status: **DRAFT 1, revision B (17 Oct 2026)**, written on {today}, revised on Sat 17 Oct for what arrived after it (the database session's commits `379ef68`, `a2a720b`, `a5790d8`, `694b435`, the API-00c results of 16 and 17 Oct, the purchase of the domain) and again for the two plan reviews of 17 Oct (section 15); against `spec.md` draft 5.2 (commit `7920e6c`, {len(lines) - (1 if lines and lines[-1] == '' else 0)} lines, "
   f"{len(spec_ids)} requirement and open-item IDs, {len(spec_tests)} tests; reviewed three times, no Critical). It replaces "
   "the plan for the Supabase stack (`jewelvault-app/specs/p1-foundation-and-money/plan.md`, 52 tasks, 10 done and now frozen; "
-  "only `FE01`, the integer pricing code, survives). Not yet reviewed: task `RV0` is that review, by two fresh agents; the "
-  "writer does not review this plan. `plan.md` and `tasks.md` are generated by `_plan-build/build_plan.py` from the "
+  "only `FE01`, the integer pricing code, survives). Reviewed once by two fresh agents (`RV0`, section 15); the "
+  "writer does not review this plan, so a third read of only the changed lines is the next step. `plan.md` and `tasks.md` are generated by `_plan-build/build_plan.py` from the "
   "`plan_*.py` files beside it, which also check them against the spec and the two repositories (appendix); change the data, "
   "never the generated files.")
 w("")
@@ -171,17 +182,19 @@ w("## 0. In one page")
 w("")
 w(f"- **{len(TASKS)} tasks** ({n_done} done, {n_todo} to do): {n_agent} for the three agents ({total_pd:.1f} plan-days), {n_orch} run by the orchestrator with Harsh or Siddhi (Hostinger, import, acceptance, go-live), "
   f"{n_people} are people's tasks (Harsh, Siddhi, her CA). Every one of the {len(spec_ids)} spec requirement and open-item IDs is on exactly one task (4 exempt, with reasons) and every one of the {len(spec_tests)} tests is introduced by exactly one task (appendix).")
-w(f"- **No date is promised.** First live day under the festival rule: **{fmt(GO[('low','on')][1])}** at the very best (Sundays worked) or **{fmt(GO[('low','off')][1])}** (Sundays off, the cut-over day would fall in Dhanteras week and moves); "
-  f"most likely **{fmt(min(GO[('mid','off')][1], GO[('mid','on')][1]))}** to **{fmt(max(GO[('mid','off')][1], GO[('mid','on')][1]))}**; worst **{fmt(GO[('high','on')][1])}** to **{fmt(GO[('high','off')][1])}** (section 7).")
-w("- **What the dates depend on:** the speed of the money, browser and Hostinger tasks (never measured: tripwire TW1 at `API21` + `API22`), Hostinger passing the proof with the real domain and the narrowed rights (`OPS01`, `OPS02`), and four inputs from people that sit close to the critical path: "
-  "Harsh's go, Siddhi's own domain, her full stock list and balances, and her business answers (section 8, with the latest day for each).")
+w(f"- **No date is promised.** First live day (never between Thu 29 Oct and Wed 11 Nov: Harsh's own freeze, PLAN.md 3.1 rule 4): best **{fmt(min(GO[('low','on')][1], GO[('low','off')][1]))}** to **{fmt(max(GO[('low','on')][1], GO[('low','off')][1]))}**; "
+  f"most likely **{fmt(min(GO[('mid','off')][1], GO[('mid','on')][1]))}** to **{fmt(max(GO[('mid','off')][1], GO[('mid','on')][1]))}**; worst **{fmt(min(GO[('high','on')][1], GO[('high','off')][1]))}** to **{fmt(max(GO[('high','on')][1], GO[('high','off')][1]))}** (section 7). "
+  "The old 'before Dhanteras' dates (31 Oct, 2 Nov) are not offered: they need every best factor and break the freeze.")
+w("- **What the dates depend on:** the speed of the money, browser and Hostinger tasks (never measured: tripwires TW1 to TW-ops, section 9), Hostinger passing the rest of the proof (`OPS01` Safari and Firefox on the real names, `OPS02a`, `OPS02w`, `OPS02`), "
+  "the first GitHub deploy (`OPS03a`), Harsh's hands at hPanel and GitHub Desktop (one queue, section 6), and the inputs of people that sit close to the path: Harsh's go, "
+  "Siddhi's full stock list and balances, her business answers, and her presence for the rehearsal, the acceptance and the training, which cannot happen between 3 and 11 Nov (section 8). The domain is no longer waited for: Harsh bought it on 17 Oct.")
 w("- **The longest chain** runs through the money core (agent A) and the rest of the API (agent C), then staging, the backup drills, the three reviews, the regression, the acceptance by her two testers, the training, the go or no-go and the cut-over (section 6).")
-w("- **Never switched in Dhanteras week** (Tue 3 to Wed 11 Nov); the paper bill book stays for ten days after go-live; the cut line and the never-cut list are in section 10.")
+w("- **No change between Thu 29 Oct and Wed 11 Nov**; Siddhi is away from her tests and training 3 to 11 Nov; the paper bill book stays for ten days after go-live; the cut line and the never-cut list are in section 10.")
 w("")
 w("## 1. Design: the simplest approach that meets the spec")
 w("")
 w("- **Backend first, and most of its database half exists.** The order Harsh asked for (\"pehle Backend\") stays. What is built "
-  "and green in `jewelvault-api` (521 tests on 15 Oct 2026, 630 on 16 Oct): the schema, the create-only migration runner, the four derived "
+  "and green in `jewelvault-api` (521 tests on 15 Oct 2026, 630 on 16 Oct, and 567 in `tests/schema` alone since commit `694b435` on 17 Oct): the schema, the create-only migration runner, the four derived "
   "reads as query files, the invariant SQL, the health query, export, photo copy, restore, the import and the rebalance "
   "library (section 2). The Node API (`src/`) does not exist yet: it is tasks `API01` to `API36`.")
 w("- **Money rules run in Node, on the same `pricing.ts` file the screen uses** (a byte-identical copy with a hash check, spec C12), "
@@ -207,7 +220,7 @@ w("- **One lane, one database.** Each agent has its own MariaDB container (`jv-m
 w("- **Three agents at most at once** (Playbook 1): **A** the money core, **B** the front end, **C** the rest of the API, side tasks and "
   "the reviews. The **orchestrator** (the main session) is not an agent: it merges locally, runs the tasks that need Harsh at "
   "hPanel (lane O), keeps the ledger and tells Harsh in short Hinglish. Each agent works in its own `git worktree` on its own "
-  "branch (`api-a`, `api-c` of `jewelvault-api`; `api-web` of `jewelvault-app`); the old Supabase worktrees "
+  "branch (`api-a`, `api-b` and `api-c` of `jewelvault-api` in `jewelvault-api-wt/a`, `b`, `c`; `api-web` of `jewelvault-app` in `jewelvault-app-wt/b` for agent B and `api-web-c` in `jewelvault-app-wt/c` for the one front-end task of agent C, `WEB14`); the front-end tests start the API from the orchestrator's checkout of `main` of `jewelvault-api` (`JV_API_DIR`), into which the orchestrator merges each finished API task before the web task that needs it starts; the old Supabase worktrees "
   "(`jewelvault-wt/a`, `b`, `c`) are not used. One local commit per task: what changed, the spec IDs it covers. **Nothing is "
   "pushed or pulled by any agent; Harsh pushes** (his GitHub account `iamharshvishwas`), and after each commit the orchestrator "
   "says which branch and commit are ready.")
@@ -233,13 +246,13 @@ for t in TASKS:
 w(md_table(done_rows, ["Task", "What", "Commit", "Spec lines it owns", "Spec tests it proves"]))
 w("")
 w("The ids `MB01` to `MB07` are new on purpose: the old plan's `DB01` to `DB05`, `DB07`, `DB08`, `DB01b` and `FE02` (nine finished tasks on Supabase and Postgres, merged "
-  "into `jewelvault-app` main) are frozen, are not reused and are removed from the repository by `WEB15`; only the old `FE01` carries over under its own id.")
+  "into `jewelvault-app` main) are frozen, are not reused and are removed from the repository by `WEB15`; only the old `FE01` carries over under its own id. `WEB15` also removes the two later commits on `jewelvault-app` main that belong to the Supabase build: `DB09a` (`6b68285`, migration `0016_write_prologue_customer.sql`) and the preview-mode commit `45a444e`.")
 w("")
-w("The whole repository ran **521 tests green on 15 Oct 2026** and **630 passed, 2 skipped on 16 Oct** (549 of them in `tests/schema`; `npm run db:up`, "
+w("The whole repository ran **521 tests green on 15 Oct 2026** and **630 passed, 2 skipped on 16 Oct** (549 of them in `tests/schema`, 567 since `694b435` on 17 Oct; run by the database session with `npm run db:up`, "
   "`npx vitest run`, about 1 to 2 minutes). The database session aligned `db/` to spec 5.2 in three commits on 16 Oct (`MB05`: `379ef68` at 14:53 and `a2a720b` at "
   "15:15: correlated reads, health figures, the encrypted export writer, the backup-folder rules, pacing, admin SQL, caps; `MB06`: `a5790d8` at 15:35: the generated audit "
-  "triggers, the job locks, the docs rewritten). `MB07` closes the checklist; one item is still open: a function that closes finished login-failure hours, built in "
-  "`API33`. Nothing has been applied to Hostinger yet; the API-00c miniature kit of 16 Oct answered several Hostinger questions (section 9, `OPS02`). The converter from Siddhi's "
+  "triggers, the job locks, the docs rewritten). `MB07` closes the checklist: at 12:30 on 17 Oct all seven items are committed, the last (the login counters and the function that closes finished login-failure hours) "
+  "in `694b435`, which the API wraps and calls (`API08`, `API33b`). Nothing has been applied to Hostinger yet; the API-00c miniature kit of 16 Oct answered several Hostinger questions (section 9, `OPS02`). The converter from Siddhi's "
   "sheet does not exist because the sheet has not been seen (`IMP01`). `FE01` (`pricing.ts` 533 lines, `selectors.ts` 465 lines, 323 unit tests) is unchanged and "
   "is the file the API copies.")
 w("")
@@ -296,7 +309,8 @@ w("**What was measured.** On the Supabase build (`Completion-Plan/_build/p1-plan
   "pure TypeScript tasks with a written oracle, plus 20 to 25 minutes of the orchestrator's own check on some; the first five "
   "database tasks (5.3 plan-days) took 4.1 hours. The new database half ran faster still (steps 1 to 3 and the three "
   "remaining jobs in about one working day each). **What was never measured:** a money write function, a two-session "
-  "concurrency test, a Playwright test, a Hostinger deploy, an import, anything that waits for a person.")
+  "concurrency test, a Hostinger deploy through GitHub, an import, anything that waits for a person. A browser task was measured once (`FE02` of the old build: login, session "
+  "gate, roles and browser tests, 1.4 plan-days in 30 agent minutes), but with the back end mocked.")
 w("")
 w("**So each task has a speed group with a low and a high factor** (elapsed working days of the chain per plan-day, "
   "`_plan-build/plan_core.py`), and the plan reports every date as *best*, *likely* (the average) and *worst*:")
@@ -342,27 +356,25 @@ w("In the *Sundays worked* column the plan also assumes that Harsh and Siddhi an
 w("")
 w("**No go-live date is promised.** The plan gives a range from the critical path, and says what each date depends on. Day 1 is Sat 17 Oct 2026 "
   "(the plan review `RV0`); Dussehra (Tue 20 Oct) and Diwali (Sun 8 Nov) are off in every scenario; *Sundays off* means no other Sunday is "
-  "worked, *Sundays worked* means they all are. **Dhanteras is Fri 6 Nov, Diwali Sun 8 Nov, Bhai Dooj Wed 11 Nov 2026, and the shop should "
-  "not switch billing in that week:** the plan allows a cut-over on or before **Mon 2 Nov** (only if the go or no-go was signed with a "
-  "clear working day to spare) or from **Thu 12 Nov**; a cut-over day that falls on 3 to 11 Nov moves to Thu 12 Nov.")
+  "worked, *Sundays worked* means they all are. **Two rules shape the dates.** (1) Harsh's own rule in `PLAN.md` 3.1 (rule 4): the billing system is never changed between "
+  "**Thu 29 Oct and Wed 11 Nov** (Dhanteras is Fri 6 Nov, Diwali Sun 8 Nov, Bhai Dooj Wed 11 Nov 2026); a cut-over day that falls inside moves to Thu 12 Nov. The first live "
+  "day before it would have to be Wed 28 Oct or earlier, which no case reaches. (2) Siddhi and her staff cannot test, train or read a reconciliation from **Tue 3 to Wed 11 Nov** "
+  "(`QA02` and `PS07` say so): the scheduler moves her tasks and her answers to Thu 12 Nov. In the *Sundays worked* column the plan also assumes that Harsh and Siddhi answer on Sundays.")
 w("")
 w(md_table(rows_dates, ["Case", "Calendar", "Money core reviewed (RV2)", "Production ready (OPS07)", "Acceptance done (QA02)", "Go or no-go (QA04)", "Cut-over day could be", "First live day under the festival rule"]))
 w("")
 best_off = rows_dates[0]; best_on = rows_dates[1]; likely_off = rows_dates[2]; likely_on = rows_dates[3]; worst_off = rows_dates[4]; worst_on = rows_dates[5]
 w("**The honest reading.**")
 w("")
-w(f"- *Earliest sensible go-live:* **{fmt(GO[('low','on')][1])}** if everything goes at the best factor and Sundays are worked, **{fmt(GO[('low','off')][1])}** with Sundays off "
-  f"(the cut-over day itself would be {fmt(GO[('low','off')][0])}, which is in Dhanteras week). It holds only if "
-  "every agent task runs at the best factor, no review finds a High, Hostinger passes API-00c at the first attempt, Siddhi's domain "
-  "is connected and her full stock list and balances are in hand about a week from the day Harsh asks, her two testers are free for "
-  "two days, and nothing is asked of Harsh that he cannot answer the same day. Nothing measured says the money, browser and "
-  "Hostinger tasks will run at that speed; the first real measurement is tripwire TW1 (section 9).")
+w(f"- *Earliest sensible go-live:* **{fmt(min(GO[('low','on')][1], GO[('low','off')][1]))}** to **{fmt(max(GO[('low','on')][1], GO[('low','off')][1]))}**, and only if every agent task runs at the best factor, no review finds a High, "
+  "Hostinger passes the rest of the proof and the first GitHub deploy at the first attempt, Siddhi's full stock list and balances are in hand about a week after Harsh asks, and nothing is asked of Harsh that he cannot do the same day. "
+  "Nothing measured says the money, browser and Hostinger tasks will run at that speed; the first real measurements are tripwires TW1 to TW-ops (section 9).")
 _lk = sorted([GO[("mid", "off")][1], GO[("mid", "on")][1]])
-w(f"- *Most likely:* **{fmt(_lk[0])}** to **{fmt(_lk[1])}** (the average of the best and worst factors).")
-w(f"- *Worst case:* **{fmt(GO[('high','off')][1])}** (Sundays off) or **{fmt(GO[('high','on')][1])}** (Sundays worked), which is also the date if the tripwire shows the high factors.")
-w("- *Fallback:* if the cut-over cannot happen by Mon 2 Nov, the date is **Thu 12 Nov or the first working day after the worst-case gates**, never a day in 3 to 11 Nov; "
-  "the paper bill book stays the system of record until the go or no-go is signed and for ten days after.")
-w("- The dates move one-for-one with: Harsh's go (`PH01`), the domain (`PH04`), Siddhi's full data (`PS03`) and testers (`PS07`), and every "
+w(f"- *Most likely:* **{fmt(_lk[0])}** to **{fmt(_lk[1])}**. 'Likely' is the plain average of the best and worst factors; it carries no probability.")
+_wk = sorted([GO[("high", "off")][1], GO[("high", "on")][1]])
+w(f"- *Worst case:* **{fmt(_wk[0])}** to **{fmt(_wk[1])}**, which is also the date if the tripwires show the high factors. The static lanes make the worst case about two to four working days pessimistic (an idle lane waits for another); the orchestrator may hand the next task to whichever lane is free.")
+w("- *Fallback:* the first working day after the gates, never a day between 29 Oct and 11 Nov; the paper bill book stays the system of record until the go or no-go is signed and for ten days after. A first live day right after Bhai Dooj puts the final import straight after the busiest paper week, which is a reason to prefer a day after 16 Nov (`IMP03`).")
+w("- The dates move one-for-one with: Harsh's go (`PH01`), his hands at hPanel and GitHub Desktop, Siddhi's full data (`PS03`) and testers (`PS07`), and every "
   "fresh review that finds a High (RV1, RV2, RV3, RV4 each assume one fix round inside their elapsed time).")
 w("")
 w("**Critical-path detail** for the best and worst case is the list in section 6. The latest day each person's input can arrive, without moving "
@@ -377,37 +389,47 @@ w("Nothing in this plan is assumed done that Harsh has not done. The ask is made
 w("")
 w(md_table(people_rows, ["Task", "Who", "What is needed", "Lead (working days)", "Arrives (best to worst, Sundays off)", "Latest to hold the best-case date", "Latest to hold the worst-case date"]))
 w("")
-w("Hostinger work that needs Harsh at hPanel is lane O: `OPS01` (real domain and cookie), `OPS02` (the rest of the proof with exactly "
-  "the ten boxes, Hostinger's restore points), `OPS03` (staging deploy, cron, rollback tried), `OPS08` (three nights), `OPS04` "
-  "(real-network checks), `OPS05` (backup drills), `OPS06` (runbook), `OPS07` (production, the real pair, drill 2), `IMP02`/`IMP03` "
-  "(import rehearsal and production import) and `QA02` to `QA06`. Each says in `tasks.md` what Harsh does with his hands.")
+w("Work that needs Harsh at hPanel, at GitHub Desktop or in the shop is **lane O: one queue, one task at a time** (Harsh and the orchestrator are one resource, and every staging fix needs "
+  "a push from him and 30 seconds for the double start): `OPS01` (Safari, Firefox and the real pair), `OPS02a` (the Hostinger-only proofs, half a day, can start as soon as the staging "
+  "and scratch databases exist; `OPS02w`, the wait for Hostinger's own restore point, runs beside it as calendar time and takes no queue time; `PH05b` removes the proof apps and creates the staging app between `OPS02a` and `OPS03a`), `OPS03a` (the first GitHub deploy of the walking skeleton), `OPS02` (the proofs that need the code), `OPS03` (staging deploy, cron, rollback tried), "
+  "`OPS04` (real-network checks), `OPS05` (backup drills), `OPS06` (runbook), `IMP02` (import rehearsal), `OPS07` (production, the real pair, drill 2 with real data), `QA02` to `QA05`; "
+  "`OPS08` (three nights) and `QA06` are time passing. Harsh's minutes at the screen are about half a day for each of OPS02a and OPS03a, a day each for the others (agree two push "
+  "windows a day for staging, serialised with the agents' merges). Each task says in `tasks.md` what Harsh does with his hands.")
 w("")
 w("## 9. Tripwires")
 w("")
-w(f"- **TW1, the one to trust (first money write function with its two-session tests): `API21` + `API22`**, {tw1_pd:.1f} plan-days. Best case "
-  f"{tw1_lo:.2f} working days, worst {tw1_hi:.2f}; planned finish {date_str('low','API22','off')} (best) to {date_str('high','API22','off')} (worst), Sundays off. "
-  f"If both take **under 0.8 working day**, the best case stands; if they take **over 1.4**, the worst case applies and the orchestrator tells Harsh "
-  "that the go-live moves, with the new range recomputed by this script. In between, the likely case. The first five tasks (`API01` to `API05`) are pure "
-  "work and prove little, as the old plan's `DB01` to `DB05` (Supabase) proved little.")
-w("- **How the measurement is kept:** every finished task adds one row to `jewelvault-api/docs/unit-samples.csv` (task, plan-days, agent minutes, "
-  "orchestrator-check minutes, kind), as the Supabase build did in `unit-samples.csv`; the orchestrator recomputes the range with this script "
-  "after TW1 and after TW2 and tells Harsh in Hinglish.")
+w("**What is measured.** For a task: the wall-clock minutes from the moment its agent starts to the moment it is merged and checked, minus any time it waited for another lane, "
+  "divided by its plan-days (so it is *minutes per plan-day*, comparable with the 38 measured on the Supabase build). The best factor is the minutes shown below, the worst "
+  "factor the larger one; the best case holds if the measured value is at most 1.3 times the best, the worst case applies if it is at least 0.8 times the worst, and in between "
+  "the likely case applies. Every finished task adds a row to `jewelvault-api/docs/unit-samples.csv` (task, plan-days, agent minutes, orchestrator minutes, kind), as the Supabase build did, "
+  "the orchestrator recomputes the range with this script after each tripwire and tells Harsh in Hinglish.")
+w("")
+w(md_table([
+    ["TW1a", "`API03` + `API14` (transactions, deadline, deadlock re-run; numbers and the Idempotency-Key claim)", f"{tw1a_pd:.1f} money", f"{tw1a_min_lo:.0f}", f"{tw1a_min_hi:.0f}", f"{date_str('low','API14','off')} / {date_str('high','API14','off')}", "the first money-group read, early"],
+    ["TW1", "`API21` + `API22` (rebalance; record_payment with the two-session tests T-C09)", f"{tw1_pd:.1f} money", f"{tw1_min_lo:.0f}", f"{tw1_min_hi:.0f}", f"{date_str('low','API22','off')} / {date_str('high','API22','off')}", "the one to trust: the first money write with two-session tests"],
+    ["TW-web", "`WEB03` + `WEB04` (hydrate, poll, the first two-browser Playwright test)", f"{twweb_pd:.1f} web", f"{twweb_min_lo:.0f}", f"{twweb_min_hi:.0f}", f"{date_str('low','WEB04','off')} / {date_str('high','WEB04','off')}", "browser work was measured once only (FE02, with the back end mocked)"],
+    ["TW-ops", "`OPS03a` (the first GitHub deploy, rollback, cron path)", "explicit", "-", "-", f"{date_str('low','OPS03a','off')} / {date_str('high','OPS03a','off')}", "best 0.5, worst 1.5 working days; over 1.5 means every OPS task after it is read at its worst"],
+], ["Tripwire", "Tasks", "Size", "Best (min per plan-day)", "Worst (min per plan-day)", "Planned finish, best / worst, Sundays off", "Why here"]))
+w("")
+w("The first five tasks (`API01` to `API05`) are mostly pure work and prove little, as the old plan's `DB01` to `DB05` (Supabase) proved little. If TW1a or TW1 trips, the orchestrator also moves "
+  "tasks between lanes (the static lanes are a guess) before telling Harsh the new range.")
 w("- **TW2, second measurement: `API31`** (random sequences, three seeds, the matrix) and `RV2`'s mutation findings. A High finding that needs a redesign "
   "of a lock or of the rebalance moves the worst case by about 2 working days each time and is reported at once.")
-w("- **TW3, `OPS01`** (real domain and cookie): Hostinger refuses the domain, or the `__Host-` SameSite=Strict cookie fails in Safari or Firefox on the "
-  "real names. STOP and re-plan the name pair or put the API behind the website's own origin by a Vercel rewrite (spec A12); a no-go on the host "
-  "goes to Harsh (O44: a priced VPS comparison before any money is spent). Latest day for the domain to be ready: section 8.")
+w("- **TW3, `OPS01`** (Safari and Firefox on the real names, and the real pair): the domain is bought and two staging names work in Chrome (17 Oct). What can still trip is the `__Host-` "
+  "SameSite=Strict cookie in Safari or Firefox, Safari's 7-day cap, or the website name pointing at Vercel breaking the same-site rule. STOP and re-plan the name pair or put the API behind the "
+  "website's own origin by a Vercel rewrite (spec A12); a no-go on the host goes to Harsh (O44: a priced VPS comparison before any money is spent).")
 w("- **TW4, Siddhi's data:** if the sample sheet (`PS02`) is not in hand by its latest day in section 8, `IMP01` slips; if the full list "
   "(`PS03`) is not usable by its latest day, go-live slides day by day and Harsh tells her.")
-w("- **TW5, `OPS02` and `OPS03`:** the dump script as a Custom cron job and `GET_LOCK` were answered on 16 Oct for a miniature dump (275 ms, 72 MB resident); what is open is "
-  "the dump at real size (year 5 is about 400 MB) being killed by a CPU or process limit, the 255-character command field for the real site name, and the new-connection "
+w("- **TW5, `OPS02` and `OPS03a`:** the dump script as a Custom cron job and `GET_LOCK` were answered on 16 Oct for a miniature dump (275 ms, 72 MB resident); what is open is "
+  "the dump at real size (year 5 is about 400 MB) being killed by a CPU or process limit, the 255-character command field (227 characters for `billing-api.jaishrigoldpalace.com`, 243 for "
+  "`billing-api-staging.`; the 161-character base came from a zip-uploaded app and the Git-built layout is measured in `OPS03a`), and the new-connection "
   "budget shared by the app, the dump and the plan's other apps. A FAIL reopens the nightly dump (spec I8 (B)); the manual fallback is the same export run from Harsh's "
   "Mac through Remote MySQL, which is itself untried.")
 w("")
 w("## 10. Budget and cut line")
 w("")
-w("Budget: the days of section 7, nothing is bought by this plan except what Harsh decides (the domain in Siddhi's name, about Rs 800 to 1,500 "
-  "a year, her cost and the writer's estimate with no source; a Hostinger renewal; a VPS only if the proof fails). If a gate is late, "
+w("Budget: the days of section 7, nothing is bought by this plan except what Harsh decides (Harsh bought "
+  "`jaishrigoldpalace.com` himself on 17 Oct, its yearly price is his to write into the go or no-go list; a Hostinger renewal, price and term to be stated by him; a VPS only if the proof fails). If a gate is late, "
   "cut in this order, one item at a time, and tell Harsh each time. Prices are days saved on the finish of the last code gate (`RV4`):")
 w("")
 w(md_table(cut_rows, ["#", "Cut", "Best case (working days saved)", "Worst case (working days saved)"]))
@@ -415,9 +437,9 @@ w("")
 w(f"All four together save {all_save[0]} (best) to {all_save[1]} (worst) working days. The cut line is a last resort, not a plan, because the chain runs through "
   "the money core, the jobs and the people, not through these items. **Never cut:** the lock order and idempotency (`API14`, `API15`, `API20`, "
   "`API22`, `API29`), the role matrix and the owner-only weight (`API04`, `API11`), the cash and PAN rules (`API23`), the invariants and the nightly "
-  "check (`API32`, `API33`), the backup job and restore drills 1 and 2 (`API34`, `API36`, `OPS05`, `OPS07`), her data and the reconciliation "
-  "(`IMP01` to `IMP03`), the Hostinger go-live conditions (restore points, a pulled copy, renewal, Siddhi told: `OPS02`, `OPS05`, `PH06`, `PS06`), the reviews "
-  "`RV1` to `RV3`, hiding the unfinished screens (spec C15), T-B14 with three seeds and T-C15's stress run. If the cuts are not enough, the answer is a "
+  "check (`API32`, `API33`, `API33b`), the backup job and restore drills 1 and 2 (`API34`, `API36`, `OPS05`, `OPS07`), her data and the reconciliation "
+  "(`IMP01` to `IMP03`), the Hostinger go-live conditions (restore points, a pulled copy, renewal, Siddhi told: `OPS02`, `OPS02w`, `OPS05`, `PH06a`, `PH06b`, `PS06`), the reviews "
+  "`RV1` to `RV4`, the printed estimate (`WEB13`), the regression, the acceptance and the training with the paper break-glass sheet (`QA01` to `QA03`), hiding the unfinished screens (spec C15), T-B14 with three seeds and T-C15's stress run. If the cuts are not enough, the answer is a "
   "later go-live, not a thinner safety net.")
 w("")
 w("## 11. Deploy, rollback, nightly checks, backups and drills")
@@ -445,7 +467,7 @@ w("## 12. Gates and reviews")
 w("")
 w(md_table([
     ["G-P plan gate", "after the plan is written", "RV0 (two fresh agents)", "every finding closed or ruled; the generator prints 'coverage OK'; Harsh says go (PH01)"],
-    ["G-H Hostinger gate (final)", "after OPS01 and OPS02", "the two addenda to HOSTINGER-SPIKE.md", "the real domain, the cookie in three browsers, the ten-box suite, GET_LOCK, the Custom-cron dump, Remote MySQL, SFTP and Hostinger's restore points all PASS; a FAIL is a finding for Harsh (TW3, TW5)"],
+    ["G-H Hostinger gate (final)", "after OPS01, OPS02a, OPS02w and OPS02", "the addenda to HOSTINGER-SPIKE.md", "Safari and Firefox on the real names and the real pair, the ten-box suite, Remote MySQL, the pull, Hostinger's restore points and the dump at size all PASS and none is UNKNOWN (the domain, Chrome, GET_LOCK and the miniature cron dump were answered on 16 and 17 Oct); a FAIL is a finding for Harsh (TW3, TW5)"],
     ["G-A access gate", "after the core API and WEB02", "RV1", "no open Critical or High; the generated cell tests green; every deliberate breakage failed a test"],
     ["G-M money gate", "after API29 to API31", "RV2", "all A, B and C tests green three times in a row; each mutation of the reviewer failed a test; no deadlock in the stress run"],
     ["G-B backup gate", "after API34 to API36 and OPS05", "RV3", "no open Critical or High; drill 1 under 2 hours; the pull and the balance rebuild proved"],
@@ -459,11 +481,14 @@ w("")
 w(md_table([
     ["The unit is wrong for money, browser and Hostinger work (never measured)", "Three cases, not one date; TW1 and TW2 say which case it is; the worst case is in section 7."],
     ["Siddhi's data, the domain, her testers or her CA arrive late (the path is people-bound in the best case)", "Leads and latest days in section 8; one message asks for everything at once; the staging rehearsal runs on a first complete version; go-live slides day by day and Harsh tells her."],
-    ["Hostinger refuses the domain, the cookie fails in Safari or Firefox, or the narrowed ten-box user breaks something the all-boxes proof did not", "OPS01 and OPS02 come early and are a gate; fallbacks: another name pair, a Vercel rewrite of the API, a priced VPS (O44)."],
-    ["The new-connection budget (about 20 a second) is shared by every process of the plan's database user: the app, the dump script and the other apps (API-00c, 16 Oct)", "One pool of 8, the dump's own pool of one, every tool paced to 10 in 1.2 s; the proof apps are removed (PH03); OPS02 and OPS03 measure the budget with the app and the dump running together; a refused connection is retried once then `JV_BUSY`."],
+    ["The `__Host-` cookie fails in Safari or Firefox on the real names, or the narrowed ten-box user breaks something the all-boxes proof did not (the domain itself is bought and works in Chrome)", "OPS01 and OPS02 are early and a gate; fallbacks: another name pair, a Vercel rewrite of the API, a priced VPS (O44)."],
+    ["The first GitHub deploy has never been tried (only zip uploads), and it sits late in the chain", "`OPS03a` is a walking-skeleton deploy as soon as the repository and the staging app exist, so a surprise appears in the first week; tripwire TW-ops."],
+    ["The new-connection budget (about 20 a second) is shared by every process of the plan's database user: the app, the dump script and the other apps (API-00c, 16 Oct)", "One pool of 8, the dump's own pool of one, every tool paced to 10 in 1.2 s; the proof apps are removed (PH05b); OPS02 and OPS03 measure the budget with the app and the dump running together; a refused connection is retried once then `JV_BUSY`."],
     ["The dump cannot run as a Custom cron Node script (CPU or process kill), or `GET_LOCK` is not allowed", "OPS02 tests it with a stub first; fallback: the same export run from Harsh's Mac through Remote MySQL; if both fail, a smaller dump or another place to run it (spec I8 (B))."],
     ["One account holds the database, every export and Hostinger's own backup; the plan ends on 22 March 2027", "Weekly pull and monthly download are duties with a dashboard card and a health flag; Siddhi is told in plain words; renewal with auto-renew and a reminder is a go-live condition (PH06)."],
-    ["Dhanteras week", "No cut-over in 3 to 11 Nov; a change freeze for anything but critical fixes through Bhai Dooj; the paper bill book runs alongside for ten days."],
+    ["Dhanteras week and Harsh's own freeze", "No change between 29 Oct and 11 Nov (PLAN.md 3.1 rule 4) except critical fixes; Siddhi's tests and training do not happen 3 to 11 Nov; the paper bill book runs alongside for ten days."],
+    ["Certificates, the domain's yearly renewal and its hand-over to Siddhi", "Hostinger issues 90-day certificates whose renewal is unproven (the staging ones expire 15 Jan 2027): a reminder and a look in `QA06`; domain and hosting stay in one account until both move together (`PH04`); renewal prices are written in the go or no-go list (`PH06b`)."],
+    ["The import has no correction loop, and the final list arrives right after the busiest week", "`IMP02` carries 1 to 3 days for corrections; `IMP03` names who produces the final list, when, and the fallback."],
     ["Three agents, an orchestrator and fresh reviewers hit the session usage limit (it hit the QA run: Playbook 8)", "Bounded prompts, results saved to files after every step, heavy suites run once per task and at merge (`npm run verify`), an agent resumes from its saved file."],
     ["Two-session tests are flaky", "One gate per session, a polling wait of under 3 seconds, both release orders, three runs in a row before a task counts, a negative control for every lock."],
     ["Pricing drifts between the app and the API", "`check:pricing` compares SHA-256 values in the verify of both repositories; `me` returns the API's hash and the screen disables Save on a mismatch."],
@@ -477,23 +502,50 @@ w("## 14. What Harsh decides, and what the writer is least sure of")
 w("")
 w("**Decisions only Harsh can make** (each with a default, so nothing blocks; the first four change the dates):")
 w("")
-w("1. The go on this plan and the date plan: a cut-over on or before Mon 2 Nov only if every gate is green early (best case), or after Bhai Dooj (Thu 12 Nov or later). Recommended: plan for after Bhai Dooj and treat the early date as a bonus.")
-w("2. Siddhi's own domain for the API and the website (a new one in her name, her cost, or one she already has): the message is ready in `jewelvault-api-design/MESSAGE-FOR-SIDDHI-domain.md`. Nothing is bought without his yes.")
-w("3. Sending Siddhi the eight-item data request in one message today, and the dates of her two testers (not in Dhanteras week).")
-w("4. Whether the printed estimate and the rate card by purity (`WEB13`, `WEB16`, 1.8 plan-days; PLAN.md P3-T1 and P3-T2, outside the spec) stay on the go-live path. Recommended: yes; the second is the first cut if time presses.")
-w("5. The weekly pull (O54, a duty of his), the key custody (O40), telling Siddhi that backups sit in one account (O45), the Hostinger renewal with auto-renew (O46).")
+w("1. The go on this plan (given on 17 Oct) and the date plan: the earliest first live day is Thu 12 Nov and the likely one a week or two later; anything inside 29 Oct to 11 Nov overrules his own PLAN.md 3.1 rule 4, in his words. Recommended: tell Siddhi 'not before 12 Nov, most likely the week of 17 to 23 Nov'.")
+w("2. The domain: bought by him on 17 Oct (`jaishrigoldpalace.com`). What is left is who owns what at hand-over (the registrant and the hosting stay in one account until both move together), the yearly price, and Vercel's DNS record for the website name.")
+w("3. Sending Siddhi the eight-item data request in one message today, and the dates of her two testers and of the training (not 3 to 11 Nov).")
+w("4. Whether the printed estimate and the stale-rate guard (`WEB13`, `WEB16`; PLAN.md P3-T1 and P3-T2, outside the spec) stay on the go-live path (recommended: yes) and the rate card by purity (`WEB17`) is the first cut.")
+w("5. The weekly pull (O54, a duty of his), the key custody (O40), telling Siddhi that backups sit in one account (O45), the Hostinger renewal with auto-renew and its price (O46), the domain's yearly renewal.")
 w("6. The vetoable defaults of `PH07` (per-line rounding O22, Reports in M1 O32, the walk-in silver settlement O52, the login throttle O55, the photo caps O56 and others).")
-w("7. If `OPS01` or `OPS02` fails: whether to pay for the comparison of a small VPS (O44).")
+w("7. How many hours a day he can give on the days that need his hands (hPanel, GitHub Desktop pushes), who supports the system after day 30 and at what price (PLAN.md decision 8), and whether to pay for a small VPS comparison if the proof fails (O44).")
+w("8. Which branch of `jewelvault-app` he pushes before go-live: only the work branch `api-web` (default), never `main`, so that the live demo on Vercel does not change until `PH08`; and whether the preview-mode screens (sample data, no API) may stay visible on that branch until `WEB15` (default: yes).")
+w("9. A new fact against a spec line: the domain is bought (O38 still says the default is a domain in Siddhi's name; NODE-DESIGN DEC-1 and `API-00C-RESULTS.md` section 5 record it). The plan does not edit the spec; the next spec revision should amend O38.")
 w("")
 w("**The lines the writer is least sure of:** (1) the speed factors of the money, web and ops groups (judgement from one measurement of pure work); (2) the lead "
   "times of people (nobody has measured Siddhi's speed, and the data request is not known to have been sent); (3) the Custom cron job that runs the dump script "
   "and the hourly job that usually ends at once (untried); (4) `MB05`/`MB07`: the database session was still committing while this plan was written (`a2a720b` at 15:15 on 16 Oct); the plan names the functions it relies on and `MB07` re-checks them; (5) the 3-night wait, the 0.8 and 1.4 thresholds of TW1, and the cut prices, which are arithmetic over guesses; (6) that "
   "Vercel holds a `NEXT_PUBLIC_PREVIEW_MODE` variable (the memory says the live site shows 'not connected'; Harsh removes it at go-live in any case); (7) "
-  "the festival rule (a switch on Mon 2 Nov is legal here but is four days before Dhanteras).")
+  "the serial queue of Harsh's hands and the Siddhi-away rule of 3 to 11 Nov, which move the dates a week or more and are the plan's newest rules; (8) Hostinger's own backup, which skipped a day without a message.")
 w("")
 w("## 15. How this draft answers the plan review")
 w("")
-w("*(Filled in after `RV0`: one row per finding.)*")
+agent_pd = sum(t["pd"] for t in TASKS if t["status"] == "TODO" and t["agent"])
+w("Two fresh agents read the plan on 17 Oct 2026 (`plan-review.md`: traceability and task correctness, 17 findings, 0 Critical, 4 High; `plan-review-2.md`: schedule, risk, people and "
+  "Hostinger, 18 findings, 0 Critical, 5 High). Both said **pass with fixes**. Both are answered in this revision B. "
+  "The writer did not review its own plan: a third read of only the changed lines is the next step (Playbook 4).")
+w("")
+ans = [
+    ["PR1 (High)", "Done. PH04 now means the Vercel DNS record and the hand-over decision; OPS01 is Safari, Firefox and the real pair only; PH03 removes only the failed app; the two proof apps stay until OPS01 and OPS02a are done, then `PH05b` removes them and creates the staging app; the databases are asked for early (`PH05`) and the wait for a Hostinger restore point is its own calendar task (`OPS02w`); `OPS03` and `OPS07` connect the domain before `JV_BACKUP_DIR` and the cron commands are typed; the runbook warns that hPanel's 'Restore database' overwrites in place; the pull works from a file downloaded by hand (`API36`, proved first in `OPS05`). The amendment of O38 belongs to the spec (decision 9): the plan edits no spec."],
+    ["PR2 (High)", "Done. `API08` wraps the database half's `scripts/login-counters.mjs` (`694b435`) and writes no SQL; the admin-door, tick and photo rows of T-D24 are clauses with owners (`API09`, `API33`, `API17`); the five-quiet-hours case is the T-D30 clause of `API33b`, which calls `closeFinishedHour`; `MB07` records the commit."],
+    ["PR3 (High)", "Done. Edges added: `RV1` to `OPS07` and `RV4`; `OPS01` to `API05` and `API09`; `API25` to `API24`; `API11` and `API15` to `API10`; `IMP02` to `OPS04`. `WEB01`'s contract test no longer creates a customer (that is `WEB07`'s). `API14` to `API04` is not added: the one case that needed the route wrapper moved to `API19`, the first creating route, so lane A does not wait for lane C."],
+    ["PR4 (High)", "Done. Clauses with owners: T-E01 poll halves to `WEB04`; T-D26 polling to `API11`; T-C19 on the real X2 to `API30`; T-C15's I6 and I11 to `API31` (not to `API32`, which would have made the jobs wait for the stress run: it cost a week in the worst case); T-B26 over every money function to `API31`; T-A14's screen half to `WEB08`."],
+    ["PR5 (Medium)", "Done. The bill and line half of T-A09 is a clause of `API18` (`quote_bill`) and `API20` (`create_bill`)."],
+    ["PR6 (Medium)", "Done. Every clause is now a standalone check printed into its owner's Done-when in `tasks.md` ('Also proves') and by `brief.py`; the generator fails when a task extends a test that no clause names."],
+    ["PR7 (Medium)", "Done. `writeEvent` is built in `API05` and used by login, logout, change-password, the admin door (`API09`) and each tick phase (`API33`); T-D14 has a clause for each."],
+    ["PR8 (Medium)", "Done. T-D03 clauses: results of X1 and X7 for a biller (`API20`) and the generated function matrix over every role (`API31`)."],
+    ["PR9 (Medium)", "Done. `scripts/seed-volume.mjs` is in `API12`; `npm run make-token` and `npm run keygen` are in `API09`; `PH06a` waits for `API09`; `OPS05` waits for `PH06a`."],
+    ["PR10 (Medium)", "Done. IMP03's rollback is a fresh drill-tested export, then a NEW empty production database and a corrected run until the first live bill, then the B5 restore."],
+    ["PR11 (Medium)", f"Done by splitting: `API13` into `API13` and `API13b`, `WEB12` into `WEB12` and `WEB12b`, `API33` into `API33` and `API33b`; `API08` lost the rows that belong to other routes; `API29` and `API36` went from 1.0 to 1.2. The agent tasks now add up to {agent_pd:.1f} plan-days; no task is over 1.5. The dates in section 7 are recomputed with the splits in; the effect is about one working day in the worst case. Harsh decides whether to accept it (decision 1)."],
+    ["PR12 (Low)", "Done. Worktrees `jewelvault-api-wt/b` (`api-b`) and `jewelvault-app-wt/c` (`api-web-c`, for `WEB14`); `JV_API_DIR` is the orchestrator's checkout of `main` of `jewelvault-api`, which the orchestrator keeps merged."],
+    ["PR13 (Low)", "Done. Preview mode shows sample data inside `PREVIEW_MODE` builds only until `WEB15` (`WEB02`, `WEB03`); Harsh pushes only the branch `api-web`, never `main`, until `PH08` (`PH02`, decision 8)."],
+    ["PR14 (Low)", "Done. `WEB14` checks the text of `vercel.json` (the `curl -I` on a host is `OPS04`'s clause); an UNKNOWN keeps gate G-H shut (`OPS02a`, `OPS02`, `OPS02w`, section 12); `MB07` runs after `API01` on a lane database and never uses `npm run db:up`."],
+    ["PR15 (Low)", "Done. 567 schema tests, 25 tables, 87 CHECKs, 18 foreign keys, 1,205 lines, `s21` in `MB06`'s files, `DB09a` and `45a444e` in `WEB15`; `ALTER` is in the grep of `API03` (A7); `withRead` is in `API03` and `tx.trail` with `LockOrderViolation` in `API15`."],
+    ["PR16 (Low)", "Done. Only a run with no flag (or `--build`) writes; dead ignores were removed and now fail the run; an ignore reason may name only a task that owns a clause of that test (this found and fixed 12 loose reasons, and T-C01, T-C03, T-F08 got their clauses)."],
+    ["PR17 (Low)", "Done. The old-browser-export reader in `IMP01` is built only if `PS01` says data was entered there."],
+    ["PR2-1 to PR2-18", "Answered (domain bought; Siddhi's absence 3 to 11 Nov in the scheduler; 31 Oct and 2 Nov not offered; TW1a, TW1, TW-web and TW-ops in minutes per plan-day; `OPS02a` and `OPS03a` earlier; `PH06a`/`PH06b`; lane O as one queue; the 255-character numbers; certificate, hand-over and renewal risks; the import correction loop; the legal line in `QA04`; drill 2 with real data and Harsh performing the first restore steps; `WEB16`/`WEB17`; the credential path; `PH03`; the additive-only release-week rule and `OPS08` high of 5.0; section 14). **Ruled, not changed:** PR2-7, the static lanes: they stay a stated guess; the orchestrator re-assigns after TW1a or TW1."],
+]
+w(md_table(ans, ["Finding", "Answer"]))
 w("")
 w("## Appendix: coverage, generated")
 w("")
@@ -559,7 +611,7 @@ p = P.append
 p("# Tasks: P1 foundation and money (JewelVault on Node.js + MariaDB 11.8, Hostinger; front end on Vercel)")
 p("")
 p(f"Generated on {core.TODAY.isoformat()} from `_plan-build/plan_*.py` by `build_plan.py`, which also checks every requirement, open item and test of "
-  f"`spec.md` draft 5.2 (commit `7920e6c`, {len(lines)} lines) against these tasks, that each test can pass in the task that introduces it, and that every existing "
+  f"`spec.md` draft 5.2 (commit `7920e6c`, {len(lines) - (1 if lines and lines[-1] == '' else 0)} lines) against these tasks, that each test can pass in the task that introduces it, and that every existing "
   "file path exists in its repository. Plan-days are the planning unit of `plan.md` section 4 (plus or minus 30 percent); \"elapsed\" is working days "
   "from `plan.md` section 5 (best to worst). \"Spec lines\" are the IDs this task OWNS (each ID is on exactly one task); \"also touches\" lists IDs owned "
   "elsewhere that this task uses. \"Tests first written here\" are spec tests introduced (and seen failing) in this task; \"extends\" are spec tests this task "
@@ -607,6 +659,9 @@ for t in TASKS:
     if t["tripwire"]:
         p(f"- **Tripwire:** {t['tripwire']}")
     p(f"- **Done when:** {t['done']}")
+    cl = [(x, c) for (x, c, tid) in chk.TEST_CLAUSES if tid == t["id"]]
+    if cl:
+        p("- **Also proves (clauses of tests introduced in other tasks; each is one check here):** " + "; ".join(f"{x}: {c}" for x, c in cl))
     p(f"- **Rollback:** {t['rollback']}")
     p("")
 
