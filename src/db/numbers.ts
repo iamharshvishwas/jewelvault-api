@@ -12,6 +12,7 @@
 //    times, then JV_INVALID_INPUT. A duplicate-key error on a bill's number is NEVER caught: catching it would keep the failed insert's next-key locks until the commit, and S12 (1) forbids carrying
 //    on after a database error.
 import { BusyError, JvError, classifyError, isConnectionLost } from '../errors.js';
+import { noteStep } from './locks.js';
 import type { DbConnection } from './pool.js';
 import { checkStatement } from './stmt.js';
 import type { Tx, TxContext } from './tx.js';
@@ -163,6 +164,7 @@ const TAKE_SQL = 'UPDATE sys_counters SET last_value = LAST_INSERT_ID(last_value
  */
 export async function takeNumber(tx: Tx, key: string): Promise<number> {
   checkSeriesKey(key);
+  noteStep(tx, 'counter'); // X0 item 6: the counter is the last lock; the trail refuses a customer or piece lock after this
   const ok = await tx.run(TAKE_SQL, [key]);
   const n = Number(ok.insertId);
   if (ok.affectedRows !== 1 || !Number.isSafeInteger(n) || n < 1) {

@@ -1,5 +1,5 @@
-// A5, D22, S6: the ordinary edits. One mechanism for every table an edit can write; the tables (designs, pieces, categories, subcategories here, the rates, settings and customers of API13b
-// next) only say which fields they take (FieldSpec, fields.ts) and which rules of their own apply (a RuleCheck).
+// A5, D22, S6: the ordinary edits. One mechanism for every table an edit can write; the tables (designs, pieces, categories, subcategories of API13; the daily rates, the settings and the
+// customers of API13b) only say which fields they take (FieldSpec, fields.ts) and which rules of their own apply (an UpdateRule, an InsertRule).
 //
 // AN UPDATE (PATCH, shape `changes`): { expected_updated_at, changes: { only the changed fields } }.
 //   1. before the database is touched: every field is classified by the matrix (writeFieldVerdict). A field on another role's list, or a column of the table that is on nobody's list, is refused
@@ -12,11 +12,17 @@
 //      row is locked, so the guard cannot fail here; if it does, the call is answered JV_STALE all the same and nothing is written.
 //   4. the row is read again and answered in the wire format of the sync read for the caller's role (C5 (a): "on success the returned row replaces it").
 // AN INSERT (POST, shape `fields`): the fields themselves; the id, both stamps and both person columns are the API's. 201 with the new row.
+// AN UPSERT (PUT, shape `fields`, the settings): the key is in the address, the body is the fields themselves and there is no stamp to compare (A4: the last write wins; the row is locked for the
+// length of the write): the row is read FOR UPDATE and made when it is not there (201), changed when its value differs (200), left alone when it does not (200, nothing written).
+// EXTRA PERSON COLUMNS. A table may name more columns than `created_by` and `updated_by` that the API sets from the session user on every insert and update (`EditTable.person`: the
+// `confirmed_by` of a daily rate, D4); no request may name them (STAMP_AND_PERSON_COLUMNS of the matrix).
 //
 // AUDIT (L1). Mechanism (a), the generated triggers, writes the audit row of every statement below by itself, from the actor variables that withTx sets. Mechanism (b), the Node writer, is
-// API15's (src/db/audit.ts, JV_AUDIT_MODE=node): it is called from the two places marked "L1 (b)" below, which know the table, the id, the row before and the row after.
+// API15's (src/db/audit.ts, JV_AUDIT_MODE=node): auditChange is called from the two places marked "L1 (b)" below, which know the table, the id, the row before and the row after.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { auditChange } from '../db/audit.js';
+import type { Reading } from '../clock.js';
 import { newId } from '../db/ids.js';
 import type { Param } from '../db/stmt.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
@@ -34,6 +40,10 @@ export type Row = Record<string, unknown>;
 /** One table an edit can write. */
 export interface EditTable {
   readonly table: string;
+  /** The primary key column: `id`, except for the settings (`setting_key`). */
+  readonly key?: string;
+  /** Person columns besides `created_by` and `updated_by` that the API sets to the session user on every insert and update (`confirmed_by` of a daily rate, D4, D22). */
+  readonly person?: readonly string[];
   /** The row of the matrix for an update of this table, if the table has one. */
   readonly update?: EditAction;
   /** The row of the matrix for an insert, if the table has one. */
@@ -46,14 +56,30 @@ export interface EditTable {
 export interface RuleInput {
   readonly tx: Tx;
   readonly role: Role;
+  /** The reading of the API clock that stamps this write, taken on first use: a rule that needs today's business date (S5) asks here, so that the rule and the stamps see one instant. */
+  readonly now: () => Reading;
   readonly id: string;
   readonly current: Row;
   /** only the fields whose new value differs from the stored one, with the new values as the statement will bind them */
   readonly diff: Readonly<Record<string, unknown>>;
 }
 export type UpdateRule = (input: RuleInput) => Promise<void>;
+/** What an insert rule is told besides the values: who is asking, and the reading of the API clock that will stamp the row (taken on first use). */
+export interface InsertContext {
+  readonly role: Role;
+  readonly now: () => Reading;
+}
 /** A check before an insert: the values after validation. */
-export type InsertRule = (tx: Tx, values: Readonly<Record<string, unknown>>) => Promise<void>;
+export type InsertRule = (tx: Tx, values: Readonly<Record<string, unknown>>, context: InsertContext) => Promise<void>;
+
+/** The primary key column of a table. */
+const keyOf = (table: EditTable): string => table.key ?? 'id';
+
+/** One reading of the clock for one write, taken the first time it is asked for. */
+function oneReading(app: FastifyInstance): () => Reading {
+  let reading: Reading | undefined;
+  return () => (reading ??= app.clock.read());
+}
 
 // ------------------------------------------------------------------ names that reach a statement
 
@@ -95,9 +121,9 @@ export function wireRow(table: string, role: string, row: Row): Row {
  * SELECT with an explicit column list (never `*`), by id. `lock` takes the row lock the edit needs for the rest of the transaction. Every column the matrix knows is read, the ones no role reads
  * as well (the import's bookkeeping), so that the row before and the row after are complete for the audit row of mechanism (b); the answer to the caller is cut to the columns of its role.
  */
-export async function readRow(tx: Tx, table: string, id: string, lock: boolean): Promise<Row | undefined> {
+export async function readRow(tx: Tx, table: string, id: string, lock: boolean, key = 'id'): Promise<Row | undefined> {
   const columns = columnsOfTable(table).map((c) => `\`${ident(c)}\``).join(', ');
-  const [row] = await tx.rows<Row>(`SELECT ${columns} FROM \`${ident(table)}\` WHERE id = ?${lock ? ' FOR UPDATE' : ''}`, [id]);
+  const [row] = await tx.rows<Row>(`SELECT ${columns} FROM \`${ident(table)}\` WHERE ${ident(key)} = ?${lock ? ' FOR UPDATE' : ''}`, [id]);
   return row;
 }
 
@@ -177,6 +203,44 @@ function changed(table: EditTable, current: Row, values: Record<string, unknown>
 }
 
 /**
+ * The stamped UPDATE of the fields that differ, on a row the caller holds locked. Both stamps come from the one reading `now` (S6); `updated_by` and the table's extra person columns are the session
+ * user (D22); `guard` is the stamp text the row must still carry (`AND updated_at = ?`, A5). Returns the row as it is afterwards.
+ */
+async function writeUpdate(tx: Tx, auth: Auth, table: EditTable, current: Row, diff: Record<string, unknown>, guard: string, now: Reading): Promise<Row> {
+  const role = auth.user.role;
+  const key = keyOf(table);
+  const id = String(current[key]);
+  const columns = Object.keys(diff).map(ident);
+  const person = (table.person ?? []).map(ident);
+  const params: Param[] = columns.map((c) => table.fields[c].param(diff[c], now.timestamp));
+  const result = await tx.run(
+    `UPDATE \`${ident(table.table)}\` SET ${columns.map((c) => `\`${c}\` = ?`).join(', ')}${person.map((c) => `, \`${c}\` = ?`).join('')}, updated_at = ?, updated_by = ? WHERE ${ident(key)} = ? AND updated_at = ?`,
+    [...params, ...person.map(() => auth.user.id), now.timestamp, auth.user.id, id, guard],
+  );
+  if (result.affectedRows !== 1) throw stale(table.table, role, (await readRow(tx, table.table, id, false, key)) ?? current); // cannot happen under the lock; if it does, nothing was written
+  const after = await readRow(tx, table.table, id, false, key);
+  if (!after) throw new Error(`${table.table} ${id}: the row is gone after its own update`);
+  await auditChange(tx, { table: table.table, rowId: id, action: 'update', before: current, after }); // L1 (b): the Node writer, only when JV_AUDIT_MODE=node; with the triggers (a) nothing is written here
+  return after;
+}
+
+/** The stamped INSERT of one row under `id` (the value of the table's key column): both stamps from the one reading, the person columns the session user. Returns the row as stored. */
+async function writeInsert(tx: Tx, auth: Auth, table: EditTable, id: string, values: Record<string, unknown>, now: Reading): Promise<Row> {
+  const key = keyOf(table);
+  const columns = Object.keys(values).map(ident);
+  const person = (table.person ?? []).map(ident);
+  const params: Param[] = columns.map((c) => table.fields[c].param(values[c], now.timestamp));
+  await tx.run(
+    `INSERT INTO \`${ident(table.table)}\` (${ident(key)}, ${columns.map((c) => `\`${c}\``).join(', ')}${person.map((c) => `, \`${c}\``).join('')}, created_at, updated_at, created_by, updated_by) VALUES (?, ${columns.map(() => '?').join(', ')}${person.map(() => ', ?').join('')}, ?, ?, ?, ?)`,
+    [id, ...params, ...person.map(() => auth.user.id), now.timestamp, now.timestamp, auth.user.id, auth.user.id],
+  );
+  const after = await readRow(tx, table.table, id, false, key);
+  if (!after) throw new Error(`${table.table} ${id}: the row is gone after its own insert`);
+  await auditChange(tx, { table: table.table, rowId: id, action: 'insert', before: null, after }); // L1 (b): the Node writer, only when JV_AUDIT_MODE=node
+  return after;
+}
+
+/**
  * An update of one row by id with the stale check (A5). Returns the row the screen's copy is replaced with. `rules` are the table's own (selling method locked, photo ids, weights ...); they run on
  * the row as it is now, under its lock, after the stale check and before anything is written.
  */
@@ -191,49 +255,67 @@ export async function updateRecord(app: FastifyInstance, request: FastifyRequest
   if (!UUID_TEXT.test(id)) throw notFound(); // not an id: there is no such row, and the database is not asked
 
   return withTx(contextOf(app, request, auth), async (tx) => {
-    const current = await readRow(tx, table.table, id, true);
+    const key = keyOf(table);
+    const current = await readRow(tx, table.table, id, true, key);
     if (!current) throw notFound();
     if (stampText(current.updated_at) !== expected) throw stale(table.table, role, current); // A5: nothing is changed, the screen reloads
     const diff = changed(table, current, values);
-    await rules?.({ tx, role, id, current, diff });
+    const now = oneReading(app); // both stamps from one reading (S6), which a rule that needs today's date shares
+    await rules?.({ tx, role, now, id, current, diff });
     if (Object.keys(diff).length === 0) return { row: wireRow(table.table, role, current) }; // nothing to change: nothing is written, the stamp stays
 
-    const now = app.clock.read(); // both stamps from one reading (S6)
-    const columns = Object.keys(diff).map(ident);
-    const params: Param[] = columns.map((c) => table.fields[c].param(diff[c], now.timestamp));
-    const result = await tx.run(
-      `UPDATE \`${ident(table.table)}\` SET ${columns.map((c) => `\`${c}\` = ?`).join(', ')}, updated_at = ?, updated_by = ? WHERE id = ? AND updated_at = ?`,
-      [...params, now.timestamp, auth.user.id, id, expected],
-    );
-    if (result.affectedRows !== 1) throw stale(table.table, role, (await readRow(tx, table.table, id, false)) ?? current); // cannot happen under the lock; if it does, nothing was written
-    const after = await readRow(tx, table.table, id, false);
-    if (!after) throw new Error(`${table.table} ${id}: the row is gone after its own update`);
-    // L1 (b): API15 writes the Node audit row here from { table: table.table, rowId: id, action: 'update', before: current, after } when JV_AUDIT_MODE=node; with the triggers (a) nothing is written here
+    const after = await writeUpdate(tx, auth, table, current, diff, expected, now());
     return { row: wireRow(table.table, role, after) };
   });
 }
 
-/** An insert of one row with a new id (categories, subcategories). `rules` check the values (a name that is taken, a parent that must exist) inside the transaction. */
+/** An insert of one row with a new id (categories, subcategories, daily rates). `rules` check the values (a name that is taken, a parent that must exist, a date) inside the transaction. */
 export async function insertRecord(app: FastifyInstance, request: FastifyRequest, auth: Auth, table: EditTable, input: Record<string, unknown>, rules?: InsertRule): Promise<{ row: Row }> {
   const action = table.insert;
   if (!action) throw new Error(`${table.table} has no insert row in the matrix`);
+  if (keyOf(table) !== 'id') throw new Error(`${table.table} is keyed by ${keyOf(table)}: its rows are made by upsertRecord`);
   const role = auth.user.role;
   assertMayCall(role, action);
   const values = checkFields(table, action, role, input, '', insertFields(action, role));
 
   return withTx(contextOf(app, request, auth), async (tx) => {
-    await rules?.(tx, values);
-    const now = app.clock.read();
-    const id = newId();
-    const columns = Object.keys(values).map(ident);
-    const params: Param[] = columns.map((c) => table.fields[c].param(values[c], now.timestamp));
-    await tx.run(
-      `INSERT INTO \`${ident(table.table)}\` (id, ${columns.map((c) => `\`${c}\``).join(', ')}, created_at, updated_at, created_by, updated_by) VALUES (?, ${columns.map(() => '?').join(', ')}, ?, ?, ?, ?)`,
-      [id, ...params, now.timestamp, now.timestamp, auth.user.id, auth.user.id],
-    );
-    const after = await readRow(tx, table.table, id, false);
-    if (!after) throw new Error(`${table.table} ${id}: the row is gone after its own insert`);
-    // L1 (b): API15 writes the Node audit row here from { table: table.table, rowId: id, action: 'insert', before: null, after } when JV_AUDIT_MODE=node
+    const now = oneReading(app);
+    await rules?.(tx, values, { role, now });
+    const after = await writeInsert(tx, auth, table, newId(), values, now());
     return { row: wireRow(table.table, role, after) };
+  });
+}
+
+/**
+ * The write of a row whose key is in the address and that has no stamp to compare (the settings, A4: "S, I, U", the matrix row has the shape `fields`): the row is read FOR UPDATE and made when it
+ * is not there (`created: true`), changed when the value differs, and left alone, with nothing written and no new stamp, when it is the value already stored. One row of the matrix covers both,
+ * so the table names the same action as its `insert` and its `update`. The last write wins: the caller is the only role that has the row, and the row is locked while it writes. `check` holds the
+ * rules of the value that need no row (they run on the validated values, before the transaction).
+ */
+export async function upsertRecord(
+  app: FastifyInstance,
+  request: FastifyRequest,
+  auth: Auth,
+  table: EditTable,
+  key: string,
+  input: Record<string, unknown>,
+  check?: (values: Readonly<Record<string, unknown>>) => void,
+): Promise<{ row: Row; created: boolean }> {
+  const action = table.update;
+  if (!action || table.insert !== action) throw new Error(`${table.table}: an upsert needs one matrix row for both the insert and the update`);
+  const role = auth.user.role;
+  assertMayCall(role, action);
+  const values = checkFields(table, action, role, input, '', insertFields(action, role));
+  check?.(values); // the rules of the key that need no row: refused before the database is asked
+
+  return withTx(contextOf(app, request, auth), async (tx) => {
+    const keyColumn = keyOf(table);
+    const current = await readRow(tx, table.table, key, true, keyColumn);
+    const now = oneReading(app);
+    if (!current) return { row: wireRow(table.table, role, await writeInsert(tx, auth, table, key, values, now())), created: true };
+    const diff = changed(table, current, values);
+    if (Object.keys(diff).length === 0) return { row: wireRow(table.table, role, current), created: false }; // the value already stored: nothing is written, the stamp stays
+    const after = await writeUpdate(tx, auth, table, current, diff, stampText(current.updated_at), now());
+    return { row: wireRow(table.table, role, after), created: false };
   });
 }
