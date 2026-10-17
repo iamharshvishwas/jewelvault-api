@@ -107,6 +107,8 @@ describe('T-F02 (API06 clause) the constants file src/limits.ts', () => {
       maxLines: 200, // a bill has 1 to 200 lines
       maxPhotoBytes: 2097152, // 2 MiB (Harsh's photo rule of 15 Oct 2026)
       maxPhotosPerDesign: 3,
+      maxUnattachedPhotos: 60, // P2, O56: at most 60 photos that no design owns yet ...
+      maxUnattachedPhotoBytes: 104857600, // ... or 100 MB of them
       maxPiecesPerGroup: 100, // X8: a group of identical pieces has 1 to 100 pieces
       maxPiecesPerCall: 500, // X8: at most 500 pieces in a call (T-C17); X9 changes at most as many
       cashLimit: 200000, // cash_limit (Z1, Z2)
