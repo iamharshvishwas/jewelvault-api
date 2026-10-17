@@ -31,7 +31,8 @@ FACTORS = {
 # --------------------------------------------------------------------------------------------- calendar
 import datetime as dt
 
-TODAY = dt.date(2026, 10, 16)          # the day this plan is written (Friday)
+TODAY = dt.date(2026, 10, 16)          # the day this plan was first written (Friday)
+GENERATED = dt.date(2026, 10, 17)      # the day of the latest revision (printed in tasks.md; a fixed date keeps the output reproducible)
 START = dt.date(2026, 10, 17)          # day 1: the plan review (RV0) starts; implementers start when it passes
 DUSSEHRA = dt.date(2026, 10, 20)       # Tuesday: nobody works (same rule as the Supabase plan)
 DHANTERAS = dt.date(2026, 11, 6)       # Friday

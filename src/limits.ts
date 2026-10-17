@@ -1,0 +1,32 @@
+// S4, D18: the API's one constants file. The code reads the caps and the thresholds from here and nowhere else; none of them is a table.
+// The caps are also written as literals in the named CHECK constraints of db/migrations. tests/api/limits.test.ts (T-F02) compares this file with db/limits.json
+// and with every CHECK read from information_schema.CHECK_CONSTRAINTS, so a number that changes in one place and not in the other fails the test run.
+// Money caps are in rupees and weight caps in grams, as the wire carries them (S3); the money path itself works in integer paise and milligrams.
+
+export const limits = Object.freeze({
+  /** A weight is at most 100,000 g. */
+  maxWeightGrams: 100000,
+  /** A rate or a piece price is at most 100,000,000. */
+  maxRate: 100000000,
+  /** Every line amount, line total, subtotal, grand total, payment, refund, discount, additional charge, opening balance and fine_cash amount is at most 1,000,000,000. */
+  maxAmount: 1000000000,
+  /** A quantity is 1 to 1,000. */
+  minQuantity: 1,
+  maxQuantity: 1000,
+  /** A bill has 1 to 200 lines. */
+  minLines: 1,
+  maxLines: 200,
+  /** A design photo is at most 2 MiB, and a design has at most 3 photos (Harsh's rule of 15 Oct 2026, O21). */
+  maxPhotoBytes: 2097152,
+  maxPhotosPerDesign: 3,
+  /** Section 13, Z1 and Z2: cash of this amount or more (`cash_limit`). For the CA to confirm (O14). */
+  cashLimit: 200000,
+  /** Z3: a bill of this amount or more asks for the customer's PAN (`pan_threshold`). */
+  panThreshold: 200000,
+  /** I11: the review line lists bills with a discount above this percent of the subtotal (`discount_flag_percent`). */
+  discountFlagPercent: 10,
+  /** I11: the review line lists a fine_cash rate more than this percent away from the day's Silver rates, and a daily rate that moved more than this percent (`rate_flag_percent`). */
+  rateFlagPercent: 5,
+});
+
+export type Limits = typeof limits;

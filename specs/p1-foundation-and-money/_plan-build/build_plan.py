@@ -262,14 +262,17 @@ def schedule(case, durs=None, cal=None):
     as soon as its dependencies are done. With a calendar, Siddhi's tasks avoid her absence in Dhanteras week (3 to 11 Nov)."""
     durs = durs or {t["id"]: duration(t, case) for t in TASKS}
     lanes = dict(chk.AGENT_ORDER)
-    lanes["O"] = [x for x in chk.ORCH_ORDER]
+    # lane O (Harsh and the orchestrator, one resource) is not a fixed order: among the ready tasks the one that can start first goes first
+    # (ties by ORCH_ORDER), and a task may fill a gap that Siddhi's absence leaves, so the queue never idles while there is work Harsh can do
+    Oleft = list(chk.ORCH_ORDER)
+    Obusy = []          # (start, finish, task)
     start, fin, why = {}, {}, {}
     free = {a: 0.0 for a in lanes}
     last_in_lane = {a: None for a in lanes}
     ptr = {a: 0 for a in lanes}
     lane_of = {x: a for a, order in lanes.items() for x in order}
-    pending = {t["id"] for t in TASKS if t["id"] not in lane_of}
-    left = sum(len(v) for v in lanes.values()) + len(pending)
+    pending = {t["id"] for t in TASKS if t["id"] not in lane_of and t["id"] not in chk.ORCH_ORDER}
+    left = sum(len(v) for v in lanes.values()) + len(pending) + len(Oleft)
     b0 = b1 = None
     if cal is not None:
         b0 = next(i for i, d in enumerate(cal) if d >= core.SIDDHI_AWAY_FROM)
@@ -287,6 +290,20 @@ def schedule(case, durs=None, cal=None):
             elif s < b1 and s + d > b0:
                 s = float(b1)                # she starts again on Thu 12 Nov
         return s, s + d
+
+    def fit(tid, s0):
+        """Earliest start at or after s0 that overlaps no busy interval of lane O and respects Siddhi's absence."""
+        d = durs[tid]
+        s = s0
+        for _ in range(1000):
+            for (a, b, _t) in sorted(Obusy):
+                if s < b - 1e-9 and s + d > a + 1e-9:
+                    s = b
+            s2, f2 = place(tid, s)
+            if abs(s2 - s) < 1e-9 and not any(s < b - 1e-9 and s + d > a + 1e-9 for (a, b, _t) in Obusy):
+                return s2, f2
+            s = max(s, s2)
+        return place(tid, s)
 
     guard = 0
     while left and guard < 100000:
@@ -319,12 +336,34 @@ def schedule(case, durs=None, cal=None):
                 ptr[a] += 1
                 left -= 1
                 moved = True
+        ready = [t for t in Oleft if all(d in fin for d in BY_ID[t]["deps"])]
+        best = None
+        for t in ready:
+            dep_ready = max([fin[d] for d in BY_ID[t]["deps"]] or [0.0])
+            s, f = fit(t, dep_ready)
+            key = (round(s, 6), chk.ORCH_ORDER.index(t))
+            if best is None or key < best[0]:
+                best = (key, t, s, f, dep_ready)
+        if best:
+            _k, t, s, f, dep_ready = best
+            start[t], fin[t] = s, f
+            blockers = [bt for (a, b, bt) in Obusy if abs(b - s) < 1e-9]
+            if BY_ID[t]["deps"] and (s <= dep_ready + 1e-9 or not blockers):
+                why[t] = max(BY_ID[t]["deps"], key=lambda d: fin[d])
+            else:
+                why[t] = blockers[0] if blockers else None
+            Obusy.append((s, f, t))
+            Oleft.remove(t)
+            left -= 1
+            moved = True
         if not moved:
             for a, order in lanes.items():
                 if ptr[a] < len(order):
                     head = order[ptr[a]]
                     wait = [d for d in BY_ID[head]["deps"] if d not in fin]
                     print(f"  deadlock: lane {a} waits at {head} for {wait}")
+            for t in Oleft:
+                print(f"  deadlock: lane O task {t} waits for {[d for d in BY_ID[t]['deps'] if d not in fin]}")
             return None, None, None, durs
     return start, fin, why, durs
 
@@ -410,7 +449,7 @@ if "--sched" in sys.argv:
         for tid in ("API03", "API22", "API26", "API31", "RV2", "WEB12", "OPS04", "OPS05", "OPS07", "QA02", "QA04", "IMP03", "QA05"):
             for cal in ("off", "on"):
                 pass
-            print(f"  {tid:6} start {r['start'][tid]:5.2f} finish {r['fin'][tid]:5.2f}  off {fmt(date_of(r['fin'][tid], core.CAL_OFF))}  on {fmt(date_of(r['fin'][tid], core.CAL_ON))}")
+            print(f"  {tid:6} start {r['start'][tid]:5.2f} finish {r['fin'][tid]:5.2f}  off {fmt(date_of(r['fin'][tid], core.CAL_OFF))}  on {fmt(date_of(RUNS_ON[case]['fin'][tid], core.CAL_ON))}")
         cp = critical_path(r["fin"], r["why"], end)
         print("critical path:", " > ".join(cp))
 # only a run with no flag (or with --build) writes plan.md and tasks.md; every other flag is read-only
