@@ -335,6 +335,7 @@ T("OPS04", "OPS", "Staging real-network checks: 10-second hydrate, cold start, t
 T("OPS05", "OPS", "Backup drills on the real plan: folder checks, restore drill 1, balances from the zip, the pull",
   agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS04", "API36", "API35", "WEB12b", "API09", "PH06a"],
   reqs=[], tests=["T-R01"], extends=["T-R02", "T-R05", "T-R06", "T-E09"], gate="G-B",
+  note="The pulled-forward tools (API36: restore-cli, backup-remote, zip-balances) were tested with a dump made by MB03's writer; here they meet API34's real dump (the pull requires `backup_runs.detail.export = {name, sha256, size}` for every dump), SFTP on port 65002 and the browser-download path with real files, drill 1 with a deliberately missing photo, the key holders' proof, and the zip-balances drill.",
   do="On staging, with data: T-R01 the nightly export in `daily/` and the photo copy in `photos/` exist in `jv-backup/`, are still there "
      "after a redeploy and are not reachable over HTTP, the export decrypts with Harsh's private key (the owner's copy is proved by Siddhi herself at the "
      "training, QA03), a failed run is visible; restore DRILL 1 with the restore "

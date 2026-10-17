@@ -340,6 +340,7 @@ T("API08", "API", "Login throttles on the counter library: per-e-mail waits, per
 T("API09", "API", "Admin door and the admin command",
   agent="C", grp="pure", pd=1.2, deps=["API05"],
   reqs=["U3", "U2", "A8"], tests=["T-D27", "T-D20", "T-E09"], extends=["T-D24", "T-D14"], uses=["O41"],
+  note="The pulled-forward API36 tool reports a pull with `npm run admin -- record-pull --file <daily/...enc> --sha256 <hex> --at <ISO> --by <name>`: accept these flags, or change `adminRecordPullCommand` in scripts/restore-cli.mjs (one function).",
   do="`/admin/v1/*` routes that exist only while `JV_ADMIN_TOKEN_HASH` is set (constant-time comparison of the bearer token with "
      "the hash; no CORS headers; any request carrying an `Origin` header refused; throttled: 10 a minute per address, a "
      "15-minute pause after two wrong tokens in a row, a global limit of 5 wrong tokens an hour if the address cannot be "
@@ -930,7 +931,7 @@ T("API34", "API", "The nightly dump script: due logic, locks, run records, pruni
      "or with fewer files than the last recorded count, and does a dry run first), and raises the alerts it returns into "
      "`sys_error_log` with `logError`. The once-only photo copy writer (`directoryPhotos` over `JV_BACKUP_DIR/photos`, compared "
      "by size and sha256 when the name exists, never overwritten, recorded in `sys_photo_copies` only after a `stat`) is called "
-     "by the tick's slices (API33b). The docs are already rewritten (MB06). The key pair is made with `npm run keygen` of API09.",
+     "by the tick's slices (API33b). The docs are already rewritten (MB06), except the table row of BACKUP-RESTORE.md that says the Mac tool is not done (the tool exists since API36): correct that row. The key pair is made with `npm run keygen` of API09.",
   files=["scripts/backup-folder.mjs", "scripts/export-file.mjs", "scripts/pacing.mjs", "BACKUP-RESTORE.md"],
   done="`npm test -- -t T-R03` passes on a temporary folder with a test key pair (made by `npm run keygen`, API09): the dump decrypts with the private key (via `unpackExport`) "
        "and its row counts equal the manifest; a photo is copied once and a second run copies nothing and records an `ok` 'nothing new' run; "
@@ -965,6 +966,7 @@ T("API35", "API", "Download-everything record route, last_download and last_pull
 T("API36", "API", "Restore and pull tool for Harsh's Mac (SFTP source, decrypt, drill harness)",
   agent="C", grp="pure", pd=1.2, deps=["API34", "MB03"],
   reqs=["B4"], tests=[],
+  note="PULLED FORWARD on Harsh's instruction (17 Oct) and done in a separate session (commit 94876f4 on branch api-d, merged by the orchestrator after a re-run of the whole suite). Its listed dependency on API34 is not hard: the tool needs only MB03's libraries, and its tests make the dump file with MB03's export writer and record `backup_runs.detail.export = {name, sha256, size}` the way API34 is to; the check against API34's real file is part of OPS05. The tool reports a pull through `npm run admin -- record-pull --file <daily/...enc> --sha256 <hex> --at <ISO> --by <name>`: API09 accepts these flags, or `adminRecordPullCommand` in scripts/restore-cli.mjs changes.",
   do="`scripts/restore-cli.mjs`: a `Source` over SFTP (port 65002, Harsh's own login, no secret of the app) or a local folder, a "
      "`PhotoStore` over `photos/`, decryption with the private key file by `unpackExport` of the database half (never on the server or in the repository), then "
      "`restoreDatabase` of MB03 against an EMPTY database (a database with tables is refused); the pull command takes the SFTP source OR a file downloaded by hand from hPanel's File Manager "
