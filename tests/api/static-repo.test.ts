@@ -96,6 +96,7 @@ describe('T-D11 the dependencies (A7)', () => {
 const EXCEPTIONS: SecretException[] = [
   ...Object.values(NEEDLES).map((word) => ({ path: 'specs/', word, why: 'the spec, the plan and the task list quote the rule they implement (U10, H3, T-D29)' })),
   ...[NEEDLES.supabaseSecret, NEEDLES.adminPassword, NEEDLES.staffPassword].map((word) => ({ path: 'PART-A-MARIADB-MAPPING.md', word, why: 'row H3 says which strings the build check replaces and which it keeps' })),
+  { path: 'src/auth/password.ts', word: NEEDLES.adminPassword, why: 'the list of very common passwords that U9 refuses holds words of this shape: it is a list of refused passwords, not a credential' },
   { path: 'scripts/export-file.mjs', word: NEEDLES.pemHeader, why: 'tests whether a PUBLIC key file is PEM text (it never holds a key)' },
 ];
 
