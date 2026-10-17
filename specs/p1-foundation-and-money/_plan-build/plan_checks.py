@@ -9,7 +9,7 @@ AGENT_ORDER = {
           "API26", "API29", "API30", "RV2", "RV4", "QA01"],
     "B": ["API06", "API10", "WEB00", "WEB01", "WEB02", "WEB03", "WEB04", "WEB05", "WEB07", "WEB06", "WEB08",
           "WEB09", "WEB10", "WEB11", "WEB12", "WEB16", "WEB13", "WEB15"],
-    "C": ["RV0", "MB06", "API04", "API05", "API09", "API07", "API11", "API13", "API18", "API19", "API08", "API17",
+    "C": ["RV0", "API04", "API05", "API09", "API07", "API11", "API13", "API18", "API19", "API08", "API17",
           "API12", "API24", "API27", "API28", "API32", "API33", "API31", "API34", "API35", "API36", "WEB14", "IMP01",
           "RV1", "RV3"],
 }

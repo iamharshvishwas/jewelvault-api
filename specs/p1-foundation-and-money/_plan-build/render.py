@@ -153,7 +153,7 @@ w = O.append
 
 w("# Plan: P1 foundation and money (JewelVault on Node.js + MariaDB 11.8 at Hostinger, front end on Vercel)")
 w("")
-w(f"Status: **DRAFT 1**, written on {today} against `spec.md` draft 5.2 (commit `7920e6c`, {len(lines)} lines, "
+w(f"Status: **DRAFT 1, revision A (17 Oct 2026)**, written on {today} and revised on Sat 17 Oct for two things that arrived after it: the database session's commits `379ef68`, `a2a720b`, `a5790d8` (audit triggers, backup folder, locks) and the API-00c results of 16 Oct (`API-00C-RESULTS.md`); against `spec.md` draft 5.2 (commit `7920e6c`, {len(lines)} lines, "
   f"{len(spec_ids)} requirement and open-item IDs, {len(spec_tests)} tests; reviewed three times, no Critical). It replaces "
   "the plan for the Supabase stack (`jewelvault-app/specs/p1-foundation-and-money/plan.md`, 52 tasks, 10 done and now frozen; "
   "only `FE01`, the integer pricing code, survives). Not yet reviewed: task `RV0` is that review, by two fresh agents; the "
@@ -181,7 +181,7 @@ w("")
 w("## 1. Design: the simplest approach that meets the spec")
 w("")
 w("- **Backend first, and most of its database half exists.** The order Harsh asked for (\"pehle Backend\") stays. What is built "
-  "and green in `jewelvault-api` (521 tests on 15 Oct 2026): the schema, the create-only migration runner, the four derived "
+  "and green in `jewelvault-api` (521 tests on 15 Oct 2026, 630 on 16 Oct): the schema, the create-only migration runner, the four derived "
   "reads as query files, the invariant SQL, the health query, export, photo copy, restore, the import and the rebalance "
   "library (section 2). The Node API (`src/`) does not exist yet: it is tasks `API01` to `API36`.")
 w("- **Money rules run in Node, on the same `pricing.ts` file the screen uses** (a byte-identical copy with a hash check, spec C12), "
@@ -216,8 +216,8 @@ w("- **One owner per function.** A service function X1 to X12 is edited only by 
   "(`rebalance`, `cashRules`, `state`, `touch`), so two agents never edit one function. A bug found in another task's function goes to the "
   "orchestrator.")
 w("- **Migrations** stay forward-only and create-only (spec S9). Until the first one is applied to a real Hostinger database "
-  "(`OPS03`), a migration file may still be edited by the database session's alignment work (`MB05`, `MB07`); after that, every change is "
-  "a new file and the runner refuses edits. `db/` is changed only through `MB06` and the tasks that name a migration.")
+  "(`OPS03`), a migration file may still be edited by the database session's alignment work (`MB07`); after that, every change is "
+  "a new file and the runner refuses edits. `db/` is changed only through the tasks that name a migration.")
 w("- **Hostinger rules the code follows** (measured on Harsh's plan on 15 and 16 Oct 2026, `HOSTINGER-SPIKE.md`): no request over "
   "about 50 seconds (a 60-second cut gives a 504); one pool of 8 and at most 20 new database connections a second; every "
   "connection sets `wait_timeout` 300; only Custom-type cron jobs (the Node.js type cannot be listed or deleted); nothing durable in the build "
@@ -235,12 +235,12 @@ w("")
 w("The ids `MB01` to `MB07` are new on purpose: the old plan's `DB01` to `DB05`, `DB07`, `DB08`, `DB01b` and `FE02` (nine finished tasks on Supabase and Postgres, merged "
   "into `jewelvault-app` main) are frozen, are not reused and are removed from the repository by `WEB15`; only the old `FE01` carries over under its own id.")
 w("")
-w("The whole repository ran **521 tests green on 15 Oct 2026** (`npm run db:up`, `npx vitest run`, about 1 to 2 minutes). The "
-  "database session aligned `db/` to spec 5.2 in two commits on 16 Oct (`MB05`: `379ef68` at 14:53, `a2a720b` at 15:15: correlated "
-  "reads, health figures, the encrypted export writer, the backup-folder rules, pacing, admin SQL, caps), `MB07` closes the checklist "
-  "(two items are still open: the text of `BACKUP-RESTORE.md` and a function that closes finished login-failure hours, assigned to "
-  "`API34` and `API33`), and the audit trigger set is the one database piece still to finish (`MB06`: the database session had started it in the working tree at about 15:30 on 16 Oct, `db/optional/0910_audit_triggers.sql`, `scripts/audit-triggers.mjs`, `s20-audit-triggers`, not yet committed). Nothing has been applied to Hostinger. The converter from Siddhi's sheet does not exist because the "
-  "sheet has not been seen (`IMP01`). `FE01` (`pricing.ts` 533 lines, `selectors.ts` 465 lines, 323 unit tests) is unchanged and "
+w("The whole repository ran **521 tests green on 15 Oct 2026** and **630 passed, 2 skipped on 16 Oct** (549 of them in `tests/schema`; `npm run db:up`, "
+  "`npx vitest run`, about 1 to 2 minutes). The database session aligned `db/` to spec 5.2 in three commits on 16 Oct (`MB05`: `379ef68` at 14:53 and `a2a720b` at "
+  "15:15: correlated reads, health figures, the encrypted export writer, the backup-folder rules, pacing, admin SQL, caps; `MB06`: `a5790d8` at 15:35: the generated audit "
+  "triggers, the job locks, the docs rewritten). `MB07` closes the checklist; one item is still open: a function that closes finished login-failure hours, built in "
+  "`API33`. Nothing has been applied to Hostinger yet; the API-00c miniature kit of 16 Oct answered several Hostinger questions (section 9, `OPS02`). The converter from Siddhi's "
+  "sheet does not exist because the sheet has not been seen (`IMP01`). `FE01` (`pricing.ts` 533 lines, `selectors.ts` 465 lines, 323 unit tests) is unchanged and "
   "is the file the API copies.")
 w("")
 w("## 3. Tests")
@@ -399,9 +399,10 @@ w("- **TW3, `OPS01`** (real domain and cookie): Hostinger refuses the domain, or
   "goes to Harsh (O44: a priced VPS comparison before any money is spent). Latest day for the domain to be ready: section 8.")
 w("- **TW4, Siddhi's data:** if the sample sheet (`PS02`) is not in hand by its latest day in section 8, `IMP01` slips; if the full list "
   "(`PS03`) is not usable by its latest day, go-live slides day by day and Harsh tells her.")
-w("- **TW5, `OPS02`:** a FAIL for the dump script as a Custom cron job (killed by a CPU or process limit) or for `GET_LOCK` on the ten-box user "
-  "reopens the design of the nightly dump (spec I8 (B)); the manual fallback is the same export run from Harsh's Mac through Remote MySQL, "
-  "which is itself untried.")
+w("- **TW5, `OPS02` and `OPS03`:** the dump script as a Custom cron job and `GET_LOCK` were answered on 16 Oct for a miniature dump (275 ms, 72 MB resident); what is open is "
+  "the dump at real size (year 5 is about 400 MB) being killed by a CPU or process limit, the 255-character command field for the real site name, and the new-connection "
+  "budget shared by the app, the dump and the plan's other apps. A FAIL reopens the nightly dump (spec I8 (B)); the manual fallback is the same export run from Harsh's "
+  "Mac through Remote MySQL, which is itself untried.")
 w("")
 w("## 10. Budget and cut line")
 w("")
@@ -459,6 +460,7 @@ w(md_table([
     ["The unit is wrong for money, browser and Hostinger work (never measured)", "Three cases, not one date; TW1 and TW2 say which case it is; the worst case is in section 7."],
     ["Siddhi's data, the domain, her testers or her CA arrive late (the path is people-bound in the best case)", "Leads and latest days in section 8; one message asks for everything at once; the staging rehearsal runs on a first complete version; go-live slides day by day and Harsh tells her."],
     ["Hostinger refuses the domain, the cookie fails in Safari or Firefox, or the narrowed ten-box user breaks something the all-boxes proof did not", "OPS01 and OPS02 come early and are a gate; fallbacks: another name pair, a Vercel rewrite of the API, a priced VPS (O44)."],
+    ["The new-connection budget (about 20 a second) is shared by every process of the plan's database user: the app, the dump script and the other apps (API-00c, 16 Oct)", "One pool of 8, the dump's own pool of one, every tool paced to 10 in 1.2 s; the proof apps are removed (PH03); OPS02 and OPS03 measure the budget with the app and the dump running together; a refused connection is retried once then `JV_BUSY`."],
     ["The dump cannot run as a Custom cron Node script (CPU or process kill), or `GET_LOCK` is not allowed", "OPS02 tests it with a stub first; fallback: the same export run from Harsh's Mac through Remote MySQL; if both fail, a smaller dump or another place to run it (spec I8 (B))."],
     ["One account holds the database, every export and Hostinger's own backup; the plan ends on 22 March 2027", "Weekly pull and monthly download are duties with a dashboard card and a health flag; Siddhi is told in plain words; renewal with auto-renew and a reminder is a go-live condition (PH06)."],
     ["Dhanteras week", "No cut-over in 3 to 11 Nov; a change freeze for anything but critical fixes through Bhai Dooj; the paper bill book runs alongside for ten days."],

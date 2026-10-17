@@ -104,41 +104,37 @@ T("MB05", "MB", "DONE: the database half aligned to spec 5.2 (correlated reads, 
 T("MB07", "MB", "ALIGN check: close the 18.13 E checklist against the repository before the API relies on it",
   agent="A", grp="pure", pd=0.2, deps=[],
   reqs=[], tests=[],
-  do="A fresh `git log` and `git status` of `jewelvault-api` read against 18.13 E item by item: (1) V1 and the state reads, T-F11 fixture; "
-     "(2) the health figures; (3) the export sink and folder rules; (4) `BACKUP-RESTORE.md`; (5) the admin statements; (6) closing finished "
-     "login-failure hours; (7) the audit trigger set (MB06, started in the working tree). At 15:17 on 16 Oct items (1), (2), (3) and (5) are committed (MB05) and items (4) and (6) are not: they are "
-     "assigned to API34 and API33. If the database session has committed more by then, the task ticks it; if it has changed "
-     "a function signature that this plan names (`writeDailyExport`, `createExportWriter`, `prune`, `recordBackupRun`, `readHealth`, "
-     "`clearLoginCounters`, `recordPull`, `rebalanceCustomer`, `runInvariants`), it edits the names in the tasks that use them. It edits no "
-     "file in `db/`.",
+  do="A fresh `git log` and `git status` of `jewelvault-api` read against 18.13 E item by item and against the names this plan relies on. At "
+     "12:30 on 17 Oct items (1) V1 and the state reads, (2) the health figures, (3) the export sink and folder rules, (4) the docs, (5) the admin statements and "
+     "(7) the audit triggers are committed (MB05 `379ef68`, `a2a720b`, MB06 `a5790d8`); (6) a function that closes finished login-failure hours does not "
+     "exist in the database half and is built in API33. If the database session has committed more by the time the API work starts, this task ticks it; if "
+     "it has changed a function signature that this plan names (`writeDailyExport`, `createExportWriter`, `unpackExport`, `prune`, `recordBackupRun`, "
+     "`readRecordedExport`, `withJobLock`, `readHealth`, `clearLoginCounters`, `recordPull`, `logError`, `insertPhotoGuarded`, `rebalanceCustomer`, "
+     "`runInvariants`, `generateAuditTriggersSql`), it edits the names in the tasks that use them. It edits no file in `db/`.",
   files=[],
   done="`git log --oneline` of `jewelvault-api` is attached to the task report with each checklist item marked committed or assigned; "
        "`npm run db:up && npx vitest run tests/schema` is green on the commit the API work starts from.",
   rollback="Nothing to roll back (a check).")
 
-T("MB06", "MB", "Audit trigger set: finish and commit what the database session started, wire the actor variables, prove both modes",
-  agent="C", grp="pure", pd=0.4, deps=["API01"],
+T("MB06", "MB", "DONE: generated audit triggers (L1 a), exclude list, import audit mode, job locks per database",
+  status="DONE", grp="pure", commit="a5790d8 (16 Oct 15:35) (jewelvault-api); 549 schema tests in all (whole suite 630 passed, 2 skipped), s20 has 16",
   reqs=["L1", "L2", "O50"], tests=["T-D14"], uses=["D16", "D22", "D23"],
-  do="Mechanism (a) of L1, which the Hostinger proof showed works (CREATE TRIGGER works and fires; the append-only triggers refuse UPDATE and "
-     "DELETE with error 1644). **The database session started it in the working tree at about 15:30 on 16 Oct and had not committed it**: "
+  do="Committed by the database session on 16 Oct, after this plan's first draft. `db/optional/0910_audit_triggers.sql` is GENERATED from the catalogue by "
      "`scripts/build-audit-triggers.mjs` and `scripts/audit-triggers.mjs` (`generateAuditTriggersSql`, `loadExcludeList`, `auditTriggersInstalled`, "
-     "`AUDITED_TABLES`) generate `db/optional/0910_audit_triggers.sql` (one AFTER INSERT and one AFTER UPDATE trigger on each of the 13 audited "
-     "tables writing exactly one `audit_log` row with old and new row as JSON, the actor, role and request id read from the session variables "
-     "`@jv_actor`, `@jv_role` and `@jv_request`; no actor means role `sql`; an UPDATE that changes only `updated_at` or only an excluded column "
-     "writes nothing) from `db/optional/audit-exclude.json` (`password_hash` of `users`; a column named like hash, token, secret or password that is not "
-     "listed stops the build), and `tests/schema/s20-audit-triggers.test.ts` (16 tests, one of them fails when the file is out of date). "
-     "`0900` (append-only) stays. This task checks that work against the done-when below, finishes what is missing (the import sets role `import`; "
-     "the file runs twice as the ten-box user), commits it if the session has not, and wires the three variables into `withTx` (API03: set at the start "
-     "of each transaction and cleared at the end). The Node writer of mechanism (b) is API15's `audit.ts`; the mode is one setting "
-     "`JV_AUDIT_MODE=triggers|node` read at start-up (never both for one table).",
-  files=["db/optional/0900_audit_log_append_only.sql", "scripts/migrate.mjs"],
-  done="`npm test -- -t T-D14` (db part, including `tests/schema/s20-audit-triggers.test.ts`): for each of the 13 tables one insert and one update by a "
-       "plain connection give exactly one audit row each, with role `sql` when no actor variable is set and the injected actor when it is; an update "
-       "of `updated_at` alone gives none; no audit row of `users` contains the hash (checked table by table against `db/optional/audit-exclude.json`); "
-       "`UPDATE` and `DELETE` on `audit_log` are refused (error 1644) for the ten-box user; the trigger file runs twice as the ten-box user and the "
-       "second run changes nothing; the restore test of MB03 still passes with triggers applied last. The clause 'every service function and every edit counts "
-       "rows and audit rows, on both mechanisms' is extended by API13, API15, API16, API19, API20 and API22 to API28.",
-  rollback=RB)
+     "`AUDITED_TABLES`) and `db/optional/audit-exclude.json`: 13 audited tables, one AFTER INSERT and one AFTER UPDATE trigger each, exactly one `audit_log` "
+     "row per change, actor, role and request id from the session variables `@jv_actor`, `@jv_role` and `@jv_request` (role `sql` when none is set; a malformed "
+     "actor stops the change with error 1292), nothing for an UPDATE of `updated_at` alone, no `password_hash`; `runImport` with `audit: 'auto'` uses the "
+     "triggers when they exist (role `import`) and refuses the other modes there (never both). Also `jobLockName` and `withJobLock` in `scripts/housekeeping.mjs` "
+     "(`GET_LOCK('jv_tick:<database>', 0)` and `jv_dump:<database>`, `RELEASE_LOCK` in a `finally`, a thrown error marks `destroyConnection`), the docs "
+     "`BACKUP-RESTORE.md`, `SCHEMA.md`, `IMPORT-GUIDE.md` rewritten for 5.2, and the proof kit step S07b that tests the triggers on the plan. "
+     "What is left for the API: setting and clearing the three variables in `withTx` (API03), the Node writer of mechanism (b) and `JV_AUDIT_MODE` (API15), "
+     "and counting audit rows in every function's test (the clauses of T-D14).",
+  files=["db/optional/0900_audit_log_append_only.sql", "scripts/migrate.mjs", "scripts/audit-triggers.mjs", "scripts/build-audit-triggers.mjs",
+         "db/optional/0910_audit_triggers.sql", "db/optional/audit-exclude.json", "tests/schema/s20-audit-triggers.test.ts"],
+  done="Evidence, not re-done: `tests/schema/s20-audit-triggers.test.ts` green on 16 Oct 2026 as the ten-box user (one insert and one update on each of the 13 "
+       "tables give exactly one audit row; role `sql` with no actor; `updated_at` alone writes nothing; no hash in any audit row; `UPDATE`/`DELETE` on "
+       "`audit_log` refused; the file applies twice with no change). T-D14's database half is proved here; the other halves are the clauses of the API tasks.",
+  rollback="Already committed.")
 
 T("API01", "API", "Repo skeleton, lane harness, config, logging, clock",
   agent="A", grp="pure", pd=1.0, deps=["RV0", "PH01"],
@@ -862,9 +858,9 @@ T("API33", "API", "The hourly tick: phases, one run at a time, housekeeping, pho
   agent="A", grp="money", pd=1.2, deps=["API32", "API09"],
   reqs=["I8", "L6"], tests=["T-R04"], extends=["T-C05", "T-D30"],
   do="`POST /internal/jobs/tick` (bearer token, only its hash in the environment; throttled; no CORS headers; refuses an `Origin` "
-     "header; handler timer 50 s; statement limit 20 s). It takes one pool connection and `GET_LOCK('jv_tick:<database name>', 0)` "
-     "(a lock name is server-wide in MariaDB, so the name carries the database name), answers 'already running' at once if taken, "
-     "calls `RELEASE_LOCK` in a `finally` and destroys the connection instead of returning it if anything throws. Phases "
+     "header; handler timer 50 s; statement limit 20 s). It takes one pool connection and the lock with `withJobLock` of `scripts/housekeeping.mjs` (MB06: `GET_LOCK('jv_tick:<database>', 0)`, a lock name is "
+     "server-wide in MariaDB so it carries the database name), answers 'already running' at once if taken, "
+     "releases it in a `finally` and destroys the connection instead of returning it if anything throws (the helper marks `destroyConnection`). Phases "
      "(`sys_job_runs`, unique on `job` and `run_date` = the Asia/Kolkata business date, retry by UPDATE: `failed` goes back to "
      "`running`, a `running` row older than 10 minutes counts as abandoned): `nightly_check` (API32), the heartbeat, "
      "`housekeeping` (L6: empty `result` of `sys_idempotency` rows older than 90 days, after which a repeat of such a key is "
@@ -890,19 +886,20 @@ T("API34", "API", "The nightly dump script: due logic, locks, run records, pruni
   agent="C", grp="money", pd=1.0, deps=["API33", "MB07"],
   reqs=["B2"], tests=["T-R03"], uses=["I8", "D17", "D25"],
   do="`scripts/job.js dump`, started every hour by a Custom cron job whose command is the one hPanel generated (the app's Node 24 "
-     "binary, `--env-file` of the deployment's environment, the script of the current build): it reads `JV_BACKUP_DIR` through "
+     "binary, `--env-file` of the deployment's environment, the script of the current build; **the Custom command field takes at most 255 characters** "
+     "and this command is 161 plus twice the site folder name plus the mode word, so it does not fit for a site name of about 45 characters or more: then "
+     "a wrapper script in the home folder, or `job.js` reading `hbuilds/config/.env` itself, and no `> /dev/null 2>&1`): it reads `JV_BACKUP_DIR` through "
      "`resolveBackupDir` and `BACKUP_PUBLIC_KEY` through `loadPublicKey` (both of the database half, MB05), decides what is due "
      "(it ends at once when today's `db_dump` is `ok` in `sys_job_runs`, or it is before 02:00 Asia/Kolkata), takes "
-     "`GET_LOCK('jv_dump:<database name>', 0)` under the same release rule as the tick, opens its OWN pool of ONE connection through "
+     "the lock with `withJobLock` of `scripts/housekeeping.mjs` (`jv_dump:<database>`, released in a `finally`), opens its OWN pool of ONE connection through "
      "the pacer with `wait_timeout` 300, runs `writeDailyExport` with `exportDatabase` as ONE snapshot (never sliced; the "
      "retry rule, the run-specific name, `.partial`/`fsync`/`link()`, the monthly link and the `.partial` sweep are inside the "
      "database half's function and are NOT rewritten), records the run with `recordBackupRun` (`ok` only for a complete phase, "
-     "with the counts, `folderStats` and the sha256 recorded BEFORE the link), calls `prune` (which refuses without a good write tonight "
+     "with the counts, `folderStats` and the sha256 recorded BEFORE the link, in `detail.export = {name, sha256, size}` and `detail.folder = {files, bytes, free_bytes}`; **`statfs` shows the whole server's volume (9.9 TB free), not the plan's 50 GB, so the free-disk figure is the folder size against a stated budget, not `statfs`**), calls `prune` (which refuses without a good write tonight "
      "or with fewer files than the last recorded count, and does a dry run first), and raises the alerts it returns into "
      "`sys_error_log` with `logError`. The once-only photo copy writer (`directoryPhotos` over `JV_BACKUP_DIR/photos`, compared "
      "by size and sha256 when the name exists, never overwritten, recorded in `sys_photo_copies` only after a `stat`) is called "
-     "by the tick's slices (API33). It also corrects `BACKUP-RESTORE.md` (the dump is this cron script; the encryption exists; "
-     "the 130-second tick limit is gone).",
+     "by the tick's slices (API33). The docs are already rewritten (MB06).",
   files=["scripts/backup-folder.mjs", "scripts/export-file.mjs", "scripts/pacing.mjs", "BACKUP-RESTORE.md"],
   done="`npm test -- -t T-R03` passes on a temporary folder with a test key pair: the dump decrypts with the private key (via `unpackExport`) "
        "and its row counts equal the manifest; a photo is copied once and a second run copies nothing and records an `ok` 'nothing new' run; "

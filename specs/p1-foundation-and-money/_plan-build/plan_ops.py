@@ -231,20 +231,19 @@ T("OPS01", "OPS", "API-00c part 1 (WITH-HARSH): the real domain on a Hostinger N
                  "G-H: GO or NO-GO. A NO-GO goes to Harsh (O44: a priced VPS comparison before any money is spent).",
   rollback="Nothing durable: the proof app is removed afterwards by Harsh (PH03).")
 
-T("OPS02", "OPS", "API-00c part 2 (WITH-HARSH): the rest of the Hostinger proof, with exactly the ten boxes",
-  agent="C", repo="api", lo=1.0, hi=2.5, grp="ops", who="WITH-HARSH", deps=["OPS01", "PH05", "API02"],
+T("OPS02", "OPS", "API-00c part 2 (WITH-HARSH): what is still unproven on the plan, with exactly the ten boxes",
+  agent="C", repo="api", lo=0.5, hi=1.5, grp="ops", who="WITH-HARSH", deps=["OPS01", "PH05", "API02"],
   reqs=["B1"], tests=[], gate="G-H",
-  do="On the staging database with the ten-box user: the whole database suite again (the 15 Oct proof ran with all 18 boxes "
-     "ticked), including `GET_LOCK`/`RELEASE_LOCK` from a pool connection and `START TRANSACTION READ ONLY, WITH CONSISTENT "
-     "SNAPSHOT`; whether a unix-socket connection or a second app draws on the same 20-new-connections-a-second budget (never "
-     "tried two at once); Remote MySQL from Harsh's Mac as the ten-box user, paced at 10 connections in 1.2 s (migration and "
-     "import window, S1); an SFTP read of the backup folder with Harsh's own login (port 65002) or the browser download of a "
-     "file from hPanel's File Manager; a Custom cron job that runs the Node command of NODE-DESIGN 7.3 B with the app's "
-     "variables (a stub script that ends at once, then one that holds a connection for a minute), listed in hPanel and "
-     "deletable; a scheduled GitHub Actions run that calls the tick; **Hostinger's own restore points counted (how many, how old), "
-     "one downloaded and restored database-only into a scratch database (B1, a go-live condition)**; the database size limit "
-     "against hPanel; `SIGTERM` and the memory ceiling; `mariadb-dump` over SSH only if someone with SSH is at hand "
-     "(parked, optional).",
+  note="Answered on 16 Oct 2026 (API-00C-RESULTS.md, miniature kit on the DB test app, about 55 minutes of two Custom cron jobs, both deleted afterwards): a unix-socket connection IS counted against the new-connection limit (45 tried, 20 passed), the window is about 1 second, the sustained limit is about 20 a second, and the budget is SHARED by every process of the same database user (the app, a cron-run script, other apps, probably WordPress); `GET_LOCK` works and a lock left on a pooled connection stays held until `RELEASE_LOCK` or `destroy()`; a Custom cron job runs the hPanel Node command and a miniature dump (GET_LOCK, one REPEATABLE READ snapshot, 26 tables, 518 rows, gzip, AES-GCM, `.partial`, `fsync`, `link()`) ended in 275 ms with 72 MB resident, and a second run the same day ended at once; `link()` works and a second `link` answers EEXIST; the Custom command field takes at most 255 characters; `statfs` shows the whole server's volume. These are NOT repeated here.",
+  do="Still to do on the real plan, on the staging database with the ten-box user: the whole database suite again (the 15 Oct proof ran with all 18 boxes "
+     "ticked; the miniature kit ran on the DB test app's all-box user), including `START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT` and the "
+     "audit triggers' session variables (the kit's step S07b); the budget of new connections with BOTH the app (pool of 8) and a running dump script "
+     "(pool of one) AND the other apps of the plan (the proof apps are gone by then, PH03); Remote MySQL from Harsh's Mac as the ten-box user, paced at 10 "
+     "connections in 1.2 s (migration and import window, S1); an SFTP read of the backup folder with Harsh's own login (port 65002) or the browser "
+     "download of a file from hPanel's File Manager; the REAL command of the dump cron job for the real site name (the 255-character limit); a "
+     "scheduled GitHub Actions run that calls the tick; **Hostinger's own restore points counted (how many, how old), one downloaded and restored "
+     "database-only into a scratch database (B1, a go-live condition)**; the database size limit against hPanel; `SIGTERM` and the memory ceiling; "
+     "`mariadb-dump` over SSH only if someone with SSH is at hand (parked, optional).",
   files=[], done="A second addendum to `HOSTINGER-SPIKE.md` lists each of these with PASS, FAIL or UNKNOWN; B1's restore-point count and "
                  "the database-only restore are written with dates; any FAIL is a finding for Harsh.",
   rollback="The scratch database and any test cron job are removed by Harsh; nothing production exists yet.")
