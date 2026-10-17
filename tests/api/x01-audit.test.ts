@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { V, insert } from '../schema/support';
 import { type Designs, type EditWorld, addCustomer, addDesigns, addRate, billBody, editWorld, item, newKey, piece, postBill, requestIdOf, rows, saved } from './x01-support';
 
 // API20, X1 create_bill: the clause of T-D14 for X1. Exactly one audit row for each row the call changes, written in the same transaction, in BOTH mechanisms of L1: (a) the generated triggers, and
@@ -74,6 +76,34 @@ for (const mode of MODES) {
       for (const table of ['bills', 'bill_items', 'skus']) shapes[mode.name][table] = Object.keys(log.find((x) => x.table_name === table)!.new_row);
     });
 
+    it('a bill that takes an advance also writes one audit row for each allocation of the rebalance (API21), and the touches of the bills and the customer write none', async () => {
+      const c = await addCustomer(w);
+      const oldBill = randomUUID();
+      await insert(w.world.sql, 'bills', V.bill(c, { id: oldBill, bill_no: `AUD-${oldBill.slice(0, 8)}`, bill_date: '2026-10-01', subtotal: '100.00', grand_total: '100.00', created_at: '2026-10-01 05:00:00.000001', updated_at: '2026-10-01 05:00:00.000001' }));
+      const receipt = randomUUID();
+      await insert(w.world.sql, 'receipts', V.receipt(c, { id: receipt, amount: '300.00', mode: 'Other', paid_on: '2026-10-02', created_at: '2026-10-02 05:00:00.000001', updated_at: '2026-10-02 05:00:00.000001' }));
+      const p = await piece(w, d.gold24pp, { retail: '400.00' });
+      const res = await postBill(w, 'owner', billBody(c, 'Retail', [item(p, { metal_rate: '400.00' })]));
+      const r = await saved(res);
+      expect(r.advance_applied).toBe('200.00');
+      const log = await auditOf(w, requestIdOf(res));
+      const count = (table: string, action: string) => log.filter((x) => x.table_name === table && x.action === action).length;
+      expect([count('bills', 'insert'), count('bill_items', 'insert'), count('skus', 'update'), count('receipt_allocations', 'insert')]).toEqual([1, 1, 1, 2]);
+      expect(log, JSON.stringify(log.map((x) => [x.table_name, x.action]))).toHaveLength(5);
+      expect(log.map((x) => x.table_name), 'the log reads in the order of the writes, the same in both mechanisms').toEqual(['bills', 'bill_items', 'skus', 'receipt_allocations', 'receipt_allocations']);
+      expect(new Set(log.filter((x) => x.table_name === 'receipt_allocations').map((x) => x.row_id))).toEqual(new Set(r.allocations.map((a) => a.id)));
+      for (const x of log.filter((y) => y.table_name === 'receipt_allocations')) {
+        expect(x.old_row).toBeNull();
+        expect(x.actor).toBe(w.world.fixtures.owner.userId);
+        expect(x.actor_role).toBe('owner');
+        expect(x.new_row).toMatchObject({ receipt_id: receipt, customer_id: c, fine_grams: '0.000', released_at: null });
+      }
+      expect(log.filter((x) => x.table_name === 'receipt_allocations').map((x) => [x.new_row.bill_id, x.new_row.amount]).sort()).toEqual(
+        [[oldBill, '100.00'], [r.bill.id, '200.00']].sort(),
+      );
+      shapes[mode.name].receipt_allocations = Object.keys(log.find((x) => x.table_name === 'receipt_allocations')!.new_row);
+    });
+
     it('a replay, a refused call and a failed call write no audit row at all', async () => {
       const c = await addCustomer(w);
       const [p, q] = [await piece(w, d.gold24pp, { retail: '10.00' }), await piece(w, d.gold24pp, { retail: '10.00', status: 'Repair' })];
@@ -108,7 +138,7 @@ for (const mode of MODES) {
 
 describe('T-D14 the two mechanisms write rows of the same shape', () => {
   it('the audited columns of the bill, of a line and of a piece are the same list in both', () => {
-    for (const table of ['bills', 'bill_items', 'skus']) {
+    for (const table of ['bills', 'bill_items', 'skus', 'receipt_allocations']) {
       expect(shapes['node writer (L1 b)']?.[table], table).toBeDefined();
       expect(shapes['node writer (L1 b)'][table]).toEqual(shapes['triggers (L1 a)'][table]);
     }
