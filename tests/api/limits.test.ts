@@ -116,6 +116,8 @@ describe('T-F02 (API06 clause) the constants file src/limits.ts', () => {
       syncPageRows: 1000, // C3: a page of the read side has at most 1,000 rows (the old max_rows build check, now a constant of the API)
       ownerPageRows: 200, // C3: the owner's on-demand reads (the audit log, the health lists) have at most 200 rows a page
       dailyTotalsMaxDays: 400, // C3, A4: the owner reads the cash book (daily_totals) for at most 400 days in one call
+      downloadAllowanceMs: 120000, // B3: a Download everything record may be off by the rows made in the last two minutes
+      downloadFileRows: 100000000, // B3: no file of the zip has more rows than this
     });
   });
 

@@ -33,6 +33,10 @@ export const limits = Object.freeze({
   ownerPageRows: 200,
   /** C3, A4: the owner reads the cash book (GET /v1/daily-totals) for at most this many days in one call. (A biller's two days are BILLER_DAILY_TOTALS_DAYS of the permission matrix.) */
   dailyTotalsMaxDays: 400,
+  /** B3: the record of a Download everything accepts a file's row count that is off by at most the rows made in this many milliseconds before the call (the cache is up to one poll behind). */
+  downloadAllowanceMs: 2 * 60 * 1000,
+  /** B3: no file of the zip has more rows than this; a larger count in a record is refused as nonsense before the database is asked. */
+  downloadFileRows: 100000000,
   /** U4: a session idle for more than 12 hours (no call but polling) is over: JV_SESSION_EXPIRED. Siddhi's choice (O42). */
   sessionIdleMs: 12 * 60 * 60 * 1000,
   /** U4: a session lasts at most 14 days from the login (`sessions.expires_at` is set to this at login; the lookup reads the column). Siddhi's choice (O42). */
