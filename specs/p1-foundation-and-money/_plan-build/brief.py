@@ -14,7 +14,7 @@ SPEC_DIR = os.path.abspath(os.path.join(HERE, ".."))
 API_REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 WT_API = os.path.abspath(os.path.join(API_REPO, "..", "jewelvault-api-wt"))
 WT_APP = os.path.abspath(os.path.join(API_REPO, "..", "jewelvault-app-wt"))
-SPEC_COMMIT = "7920e6c"
+SPEC_COMMIT = "fcf2ba6"
 
 import plan_core as core
 import plan_api, plan_web, plan_ops  # noqa: F401

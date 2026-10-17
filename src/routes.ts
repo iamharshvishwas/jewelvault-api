@@ -9,7 +9,9 @@
 //   API09  the admin door and the job routes
 //   API11  the read side (the sync resources, the poll) ...
 import type { FastifyInstance } from 'fastify';
+import { registerAuthRoutes } from './auth/loginRoutes.js';
 
-export function registerRoutes(_app: FastifyInstance): void {
-  // nothing yet: /healthz is registered by buildApp() itself, because the start-up gate (S11) names it
+export function registerRoutes(app: FastifyInstance): void {
+  // /healthz is registered by buildApp() itself, because the start-up gate (S11) names it
+  registerAuthRoutes(app);
 }

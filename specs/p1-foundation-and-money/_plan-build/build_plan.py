@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Generate plan.md and tasks.md for specs/p1-foundation-and-money (new stack) from the plan_*.py data and check them
-against spec draft 5.2 (commit 7920e6c) and the two repositories.
+against spec draft 5.2.1 (commit fcf2ba6) and the two repositories.
 
     python3 _plan-build/build_plan.py            checks, then writes plan.md and tasks.md (exit 1 on a problem)
     python3 _plan-build/build_plan.py --check    checks only
@@ -30,7 +30,7 @@ sys.path.insert(0, HERE)
 SPEC_DIR = os.path.abspath(os.path.join(HERE, ".."))
 API_REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 APP_REPO = os.path.abspath(os.path.join(API_REPO, "..", "jewelvault-app"))
-SPEC_COMMIT = "7920e6c"
+SPEC_COMMIT = "fcf2ba6"
 
 import plan_core as core
 import plan_api, plan_web, plan_ops  # noqa: F401  (they register their tasks in core.TASKS)
@@ -420,7 +420,7 @@ def latest_finish(case):
 
 # ------------------------------------------------------------------------------------------------ report
 ok = not problems
-print(f"spec: {len(spec_ids)} requirement and open-item IDs, {len(spec_tests)} tests (draft 5.2, commit {SPEC_COMMIT}, {len(lines) - (1 if lines and lines[-1] == '' else 0)} lines)")
+print(f"spec: {len(spec_ids)} requirement and open-item IDs, {len(spec_tests)} tests (draft 5.2.1, commit {SPEC_COMMIT}, {len(lines) - (1 if lines and lines[-1] == '' else 0)} lines)")
 print(f"tasks: {len(TASKS)} ({sum(1 for t in TASKS if t['status']=='DONE')} done, {sum(1 for t in TASKS if t['status']=='TODO')} to do)")
 print(f"exempt IDs: {', '.join(chk.EXEMPT)}")
 for w in warnings:
