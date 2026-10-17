@@ -9,11 +9,14 @@
 //
 // `at` is the API's clock and `by` is the user who called, never what the screen says: the record is what lets the line go green, so the screen may not choose it (RF5-17). The generic settings
 // edit never writes this key (A4; NEVER_WRITTEN_SETTINGS of the permission matrix); this call is the only way. It is one transaction and one write, so exactly one audit row: the trigger's (L1 (a))
-// or, with JV_AUDIT_MODE=node, the one that API15's audit writer is to make at the place marked "L1 (b)" below. The route writes no `event` row of its own, which would be a second row for one change.
+// or, with JV_AUDIT_MODE=node, the one auditChange writes at the place marked "L1 (b)" below (src/db/audit.ts, API15). The route writes no `event` row of its own, which would be a second row for
+// one change.
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { formatTimestamp } from '../clock.js';
+import { auditChange } from '../db/audit.js';
 import { txContextFor, withTx } from '../db/tx.js';
+import { readRow } from '../edit/engine.js';
 import { unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
 import { route } from '../permissions/route.js';
@@ -41,6 +44,8 @@ export const COUNT_STATEMENTS: Readonly<Record<DownloadFile, string>> = Object.f
   settings: 'SELECT COUNT(*) AS n, COALESCE(SUM(created_at >= ?), 0) AS recent FROM settings',
   users: 'SELECT COUNT(*) AS n, COALESCE(SUM(created_at >= ?), 0) AS recent FROM users',
 });
+
+const KEY = 'last_download';
 
 /** The settings key and its write: the only statement that writes `last_download`. The stamp is the API's clock (S6), like every other write of a row that the screens poll. */
 export const RECORD_DOWNLOAD_SQL =
@@ -79,8 +84,12 @@ export function registerDownloadRoutes(app: FastifyInstance): void {
           // give or take the rows made in the last two minutes: the cache the zip was built from is up to one poll behind the database
           if (Math.abs(body.counts[file] - Number(row.n)) > Number(row.recent)) throw new wire.InvalidInputError(`counts.${file}`, 'does not match the books: update the screen and download again');
         }
+        const before = await readRow(tx, 'settings', KEY, true, 'setting_key'); // the earlier record, locked while this one is written (none the first time)
         await tx.run(RECORD_DOWNLOAD_SQL, [JSON.stringify(record), auth.user.id, reading.timestamp]);
-        // L1 (b): API15 writes the Node audit row here when JV_AUDIT_MODE=node: table settings, row 'last_download', an insert, or an update with the row as it was (read it with SELECT ... FOR UPDATE before the write); with the triggers (a) nothing is written here
+        const after = await readRow(tx, 'settings', KEY, false, 'setting_key');
+        if (!after) throw new Error('settings last_download: the row is gone after its own write');
+        // L1 (b): the Node writer of API15, only when JV_AUDIT_MODE=node; with the triggers (a) nothing is written here, and the row they write is the only one
+        await auditChange(tx, { table: 'settings', rowId: KEY, action: before ? 'update' : 'insert', before: before ?? null, after });
       });
       return { last_download: record };
     },

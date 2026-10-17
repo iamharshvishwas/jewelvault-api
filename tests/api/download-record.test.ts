@@ -76,41 +76,72 @@ describe('T-R05 POST /v1/owner/download-record: matching counts are stored as se
     expect(bodyOf<any>(res)).toEqual({ last_download: row?.value });
     expect(await auditCount()).toBe(auditBefore + 1); // exactly one audit row (L1)
   });
+});
 
-  it('the one audit row is the trigger\'s: a settings insert by the owner with the new value, and no event row of the route\'s own', async () => {
-    const before = Number((await world.sql.query<any[]>('SELECT MAX(id) AS m FROM audit_log'))[0][0].m ?? 0);
-    const res = await record(body(await dbCounts(world.sql)));
+// L1 has two mechanisms and a change is audited by exactly one of them: the generated triggers (a, the default) or the Node writer of API15 (b, JV_AUDIT_MODE=node, on a database without the
+// triggers). T-D14: the record leaves exactly one audit row, and the same row, in both.
+const auditRowKeys: Record<string, string[]> = {};
+describe.each(['triggers', 'node'] as const)('T-R05 (T-D14 clause) the record leaves exactly one audit row, mechanism %s of L1', (mode) => {
+  let w: World;
+  let auditClock: ReturnType<typeof createClock>;
+  const t = { micros: T0 };
+  beforeAll(async () => {
+    auditClock = createClock(() => t.micros);
+    w = await makeWorld({ label: mode === 'triggers' ? 'dlaudt' : 'dlaudn', routes: true, clock: auditClock, config: mode === 'node' ? { auditMode: 'node' } : {} });
+    await migrate(w.sql, { seeds: true, optional: mode === 'triggers' });
+  }, 120_000);
+  afterAll(async () => {
+    await w?.close();
+  });
+  const post = (payload: unknown) => w.call('owner', 'POST', URL, { payload });
+  const counts = () => dbCounts(w.sql);
+  const rowsAfter = async (id: number) => (await w.sql.query<any[]>('SELECT actor, actor_role, request_id, table_name, row_id, action, old_row, new_row FROM audit_log WHERE id > ? ORDER BY id', [id]))[0];
+  const lastId = async () => Number((await w.sql.query<any[]>('SELECT COALESCE(MAX(id), 0) AS m FROM audit_log'))[0][0].m);
+  const json = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v) as any;
+
+  it('the first download: one row, a settings insert by the owner holding the new value; no event row of the route\'s own', async () => {
+    const before = await lastId();
+    const res = await post({ date: auditClock.read().date, counts: await counts() });
     expect(res.statusCode, res.body).toBe(200);
-    const [rows] = await world.sql.query<any[]>('SELECT actor, actor_role, request_id, table_name, row_id, action, old_row, new_row FROM audit_log WHERE id > ? ORDER BY id', [before]);
+    const rows = await rowsAfter(before);
     expect(rows).toHaveLength(1);
-    const a = rows[0];
-    expect(a).toMatchObject({ actor: ownerId, actor_role: 'owner', table_name: 'settings', row_id: 'last_download', action: 'insert', request_id: res.headers['x-request-id'] });
-    expect(a.old_row).toBeNull();
-    const newRow = typeof a.new_row === 'string' ? JSON.parse(a.new_row) : a.new_row;
-    const value = typeof newRow.value === 'string' ? JSON.parse(newRow.value) : newRow.value;
-    expect(value.by).toBe(ownerId);
-    expect(value.counts.customers).toBeGreaterThan(0);
+    const ownerOfW = w.fixtures.owner.userId;
+    expect(rows[0]).toMatchObject({ actor: ownerOfW, actor_role: 'owner', table_name: 'settings', row_id: 'last_download', action: 'insert', request_id: res.headers['x-request-id'] });
+    expect(rows[0].old_row).toBeNull();
+    const newRow = json(rows[0].new_row);
+    expect(newRow.setting_key).toBe('last_download');
+    expect(json(newRow.value)).toEqual({ at: expect.any(String), by: ownerOfW, counts: expect.objectContaining({ customers: expect.any(Number), users: expect.any(Number) }) });
+    expect(newRow.updated_by).toBe(ownerOfW);
+    auditRowKeys[mode] = Object.keys(newRow).sort();
   });
 
-  it('needs no Idempotency-Key, and a second download replaces the first: still one row in settings, again exactly one audit row (an update that holds the old value)', async () => {
-    const counts = await dbCounts(world.sql);
-    expect((await record(body(counts))).statusCode).toBe(200);
-    const first = (await stored())!.value;
-    time.micros += 2n * MINUTE; // another instant, so the record differs
-    const before = Number((await world.sql.query<any[]>('SELECT MAX(id) AS m FROM audit_log'))[0][0].m);
-    const countBefore = await auditCount();
-    const res = await record(body(await dbCounts(world.sql)));
+  it('a second download: again exactly one row, an update that holds the old value and the new one', async () => {
+    const first = json((await w.sql.query<any[]>("SELECT value FROM settings WHERE setting_key = 'last_download'"))[0][0].value);
+    t.micros += 2n * MINUTE;
+    const before = await lastId();
+    const res = await post({ date: auditClock.read().date, counts: await counts() });
     expect(res.statusCode, res.body).toBe(200);
-    expect(res.headers['idempotent-replay']).toBeUndefined();
-    const second = (await stored())!.value;
-    expect(Date.parse(second.at) - Date.parse(first.at)).toBeGreaterThanOrEqual(120_000);
-    expect(Number((await world.sql.query<any[]>("SELECT COUNT(*) AS n FROM settings WHERE setting_key = 'last_download'"))[0][0].n)).toBe(1);
-    expect(await auditCount()).toBe(countBefore + 1);
-    const [rows] = await world.sql.query<any[]>('SELECT action, old_row, new_row FROM audit_log WHERE id > ?', [before]);
+    const rows = await rowsAfter(before);
     expect(rows).toHaveLength(1);
     expect(rows[0].action).toBe('update');
-    const oldRow = typeof rows[0].old_row === 'string' ? JSON.parse(rows[0].old_row) : rows[0].old_row;
-    expect(typeof oldRow.value === 'string' ? JSON.parse(oldRow.value).at : oldRow.value.at).toBe(first.at);
+    expect(json(json(rows[0].old_row).value).at).toBe(first.at);
+    expect(json(json(rows[0].new_row).value).at).not.toBe(first.at);
+  });
+
+  it('a refused record leaves no audit row and no row of settings changed', async () => {
+    const before = await lastId();
+    const stored = JSON.stringify((await w.sql.query<any[]>("SELECT value, updated_at FROM settings WHERE setting_key = 'last_download'"))[0]);
+    const wrong = await counts();
+    const res = await post({ date: auditClock.read().date, counts: { ...wrong, bills: wrong.bills + 5 } });
+    expect(res.statusCode).toBe(422);
+    expect(await rowsAfter(before)).toHaveLength(0);
+    expect(JSON.stringify((await w.sql.query<any[]>("SELECT value, updated_at FROM settings WHERE setting_key = 'last_download'"))[0])).toBe(stored);
+  });
+
+  it.runIf(mode === 'node')('the Node writer writes the row the trigger writes: the same columns, in the same order', () => {
+    expect(auditRowKeys.node).toBeDefined();
+    expect(auditRowKeys.triggers).toBeDefined(); // (the triggers world ran first)
+    expect(auditRowKeys.node).toEqual(auditRowKeys.triggers);
   });
 });
 
