@@ -13,26 +13,10 @@ import { V, insert, migratedDb } from './support';
 
 let db: string;
 let admin: Connection;
+let AUDIT = false; // the same workload runs twice: plain, and with the generated audit triggers installed (L1 (a))
+let seeded: Record<string, number> = {};
 let customers: string[];
 let skus: { id: string; design_no: string; sku_no: string; category: string; gross: string; net: string; labour: string; piroi: string }[];
-
-beforeAll(async () => {
-  ({ db, c: admin } = await migratedDb('s8_workload'));
-  const [cats] = await admin.query<any[]>('SELECT id, name FROM categories ORDER BY name LIMIT 1');
-  const design = (await insert(admin, 'designs', V.design(cats[0].id))) as { id: string; design_no: string };
-  customers = [];
-  for (let i = 0; i < 5; i++) customers.push(((await insert(admin, 'customers', V.customer({ name: `Customer ${i}` }))) as { id: string }).id);
-  skus = [];
-  for (let i = 0; i < 14; i++) {
-    const s = V.sku(design.id, { gross_weight: `${12 + i}.500`, customer_net_weight: `${10 + i}.250`, labour_retail: '350.00', piroi: '2.15' });
-    await insert(admin, 'skus', s);
-    skus.push({ id: s.id, design_no: design.design_no, sku_no: s.sku_no, category: cats[0].name, gross: s.gross_weight, net: s.customer_net_weight, labour: '350.00', piroi: '2.15' });
-  }
-});
-afterAll(async () => {
-  await admin.end();
-  await dropDb(db);
-});
 
 class Business extends Error {}
 const toPaise = (s: string) => BigInt(parseRupees(s));
@@ -204,29 +188,78 @@ async function workload(seed: number): Promise<Stats> {
   return stats;
 }
 
+const AUDITED = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations'];
+async function auditedCounts() {
+  const out: Record<string, number> = {};
+  for (const t of AUDITED) out[t] = Number((await admin.query<any[]>(`SELECT COUNT(*) AS n FROM \`${t}\``))[0][0].n);
+  return out;
+}
+
 /** The real thing: the SQL half of spec section 12 (scripts/invariants.mjs), one consistent snapshot. */
 async function invariants(): Promise<string[]> {
   const r = await runInvariants(admin);
   return r.rows.map((x) => `${x.invariant}: ${x.row_ref} ${x.detail}`);
 }
 
-describe('the lock-order workload on the real schema', () => {
-  it.each([1, 2, 3])('seed %i: 8 workers x 120 operations, no retry: 0 deadlocks, 0 lock timeouts, no constraint errors, invariants hold', async (seed) => {
-    const stats = await workload(seed);
-    console.log(`[s8] seed ${seed}: committed ${stats.ok}, business refusals ${stats.business}, deadlocks ${stats.deadlocks}, lock timeouts ${stats.timeouts}, other ${stats.other.length}`);
-    expect(stats.other).toEqual([]);
-    expect(stats.deadlocks).toBe(0);
-    expect(stats.timeouts).toBe(0);
-    expect(stats.ok).toBeGreaterThan(300);
-    expect(await invariants()).toEqual([]);
-  }, 180000);
+for (const audit of [false, true]) {
+  describe(`the lock-order workload on the real schema${audit ? ' WITH the generated audit triggers' : ''}`, () => {
+    beforeAll(async () => {
+      AUDIT = audit;
+      ({ db, c: admin } = await migratedDb(AUDIT ? 's8_workload_audit' : 's8_workload', { optional: AUDIT }));
+      seeded = await auditedCounts();
+      const [cats] = await admin.query<any[]>('SELECT id, name FROM categories ORDER BY name LIMIT 1');
+      const design = (await insert(admin, 'designs', V.design(cats[0].id))) as { id: string; design_no: string };
+      customers = [];
+      for (let i = 0; i < 5; i++) customers.push(((await insert(admin, 'customers', V.customer({ name: `Customer ${i}` }))) as { id: string }).id);
+      skus = [];
+      for (let i = 0; i < 14; i++) {
+        const s = V.sku(design.id, { gross_weight: `${12 + i}.500`, customer_net_weight: `${10 + i}.250`, labour_retail: '350.00', piroi: '2.15' });
+        await insert(admin, 'skus', s);
+        skus.push({ id: s.id, design_no: design.design_no, sku_no: s.sku_no, category: cats[0].name, gross: s.gross_weight, net: s.customer_net_weight, labour: '350.00', piroi: '2.15' });
+      }
+    });
+    afterAll(async () => {
+      await admin.end();
+      await dropDb(db);
+    });
 
-  it('the invariant checks have teeth: damaged data is reported (mutation test, T-B18 in miniature)', async () => {
-    const [r] = await admin.query<any[]>("SELECT s.id FROM skus s JOIN bill_items i ON i.sku_id = s.id JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE s.status = 'Sold' LIMIT 1");
-    expect(r.length, 'the workload should have left at least one piece on an active bill').toBe(1);
-    await admin.query("UPDATE skus SET status = 'In Stock', sold_bill_id = NULL WHERE id = ?", [r[0].id]);
-    expect((await invariants()).join(' ')).toContain('I1');
-    await admin.query("UPDATE skus SET status = 'Sold', sold_bill_id = (SELECT i.bill_id FROM bill_items i JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE i.sku_id = ? LIMIT 1) WHERE id = ?", [r[0].id, r[0].id]);
-    expect(await invariants()).toEqual([]);
+    it.each([1, 2, 3])('seed %i: 8 workers x 120 operations, no retry: 0 deadlocks, 0 lock timeouts, no constraint errors, invariants hold', async (seed) => {
+      const stats = await workload(seed);
+      console.log(`[s8] seed ${seed}: committed ${stats.ok}, business refusals ${stats.business}, deadlocks ${stats.deadlocks}, lock timeouts ${stats.timeouts}, other ${stats.other.length}`);
+      expect(stats.other).toEqual([]);
+      expect(stats.deadlocks).toBe(0);
+      expect(stats.timeouts).toBe(0);
+      expect(stats.ok).toBeGreaterThan(300);
+      expect(await invariants()).toEqual([]);
+    }, 180000);
+
+    it.skipIf(!audit)('with the audit triggers: still 0 deadlocks (above), and after the load every inserted row has exactly one insert audit row, every audit row of an update differs from its old row, and the last audit row of each piece, bill and allocation agrees with the row (nothing changed unaudited)', async () => {
+      for (const t of ['customers', 'designs', 'skus', 'bills', 'bill_items', 'receipts', 'receipt_allocations']) {
+        const rows = Number((await admin.query<any[]>(`SELECT COUNT(*) AS n FROM \`${t}\``))[0][0].n);
+        const inserts = Number((await admin.query<any[]>("SELECT COUNT(*) AS n FROM audit_log WHERE table_name = ? AND action = 'insert'", [t]))[0][0].n);
+        expect([t, inserts], `${t}: one insert audit row for each row inserted since the triggers existed`).toEqual([t, rows - (seeded[t] ?? 0)]);
+      }
+      const [dups] = await admin.query<any[]>("SELECT table_name, row_id, COUNT(*) AS n FROM audit_log WHERE action = 'insert' GROUP BY table_name, row_id HAVING COUNT(*) > 1");
+      expect(dups).toEqual([]);
+      const [same] = await admin.query<any[]>("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'update' AND old_row = new_row");
+      expect(Number(same[0].n)).toBe(0);
+      const [updates] = await admin.query<any[]>("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'update'");
+      expect(Number(updates[0].n)).toBeGreaterThan(100);
+      const last = (t: string) => `JOIN audit_log a ON a.table_name = '${t}' AND a.row_id = CAST(x.id AS CHAR) AND a.id = (SELECT MAX(m.id) FROM audit_log m WHERE m.table_name = '${t}' AND m.row_id = CAST(x.id AS CHAR))`;
+      const [skuBad] = await admin.query<any[]>(`SELECT COUNT(*) AS n FROM skus x ${last('skus')} WHERE NOT (JSON_VALUE(a.new_row, '$.status') <=> x.status AND JSON_VALUE(a.new_row, '$.sold_bill_id') <=> x.sold_bill_id)`);
+      const [billBad] = await admin.query<any[]>(`SELECT COUNT(*) AS n FROM bills x ${last('bills')} WHERE NOT (JSON_VALUE(a.new_row, '$.status') <=> x.status AND JSON_VALUE(a.new_row, '$.cancel_reason') <=> x.cancel_reason)`);
+      const [allocBad] = await admin.query<any[]>(`SELECT COUNT(*) AS n FROM receipt_allocations x ${last('receipt_allocations')} WHERE NOT (JSON_VALUE(a.new_row, '$.released_at') <=> DATE_FORMAT(x.released_at, '%Y-%m-%d %H:%i:%s.%f') AND JSON_VALUE(a.new_row, '$.amount') <=> CAST(x.amount AS CHAR))`);
+      expect([skuBad[0].n, billBad[0].n, allocBad[0].n].map(Number)).toEqual([0, 0, 0]);
+      console.log(`[s8] audit: ${Number(updates[0].n)} update rows and ${(await admin.query<any[]>("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'insert'"))[0][0].n} insert rows written by the triggers under 3 x 8 parallel workers`);
+    }, 180000);
+
+    it('the invariant checks have teeth: damaged data is reported (mutation test, T-B18 in miniature)', async () => {
+      const [r] = await admin.query<any[]>("SELECT s.id FROM skus s JOIN bill_items i ON i.sku_id = s.id JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE s.status = 'Sold' LIMIT 1");
+      expect(r.length, 'the workload should have left at least one piece on an active bill').toBe(1);
+      await admin.query("UPDATE skus SET status = 'In Stock', sold_bill_id = NULL WHERE id = ?", [r[0].id]);
+      expect((await invariants()).join(' ')).toContain('I1');
+      await admin.query("UPDATE skus SET status = 'Sold', sold_bill_id = (SELECT i.bill_id FROM bill_items i JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE i.sku_id = ? LIMIT 1) WHERE id = ?", [r[0].id, r[0].id]);
+      expect(await invariants()).toEqual([]);
+    });
   });
-});
+}
