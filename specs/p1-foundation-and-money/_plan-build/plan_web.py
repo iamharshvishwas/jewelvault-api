@@ -266,6 +266,7 @@ T("WEB12b", "WEB", "Download everything, the hidden screens and the Reports cut 
   agent="B", repo=APP, grp="web", pd=0.7, deps=["WEB12", "API35"],
   reqs=["C15"], tests=["T-E04"], extends=["T-R05", "T-D03"],
   uses=["B3", "O32"],
+  note="The zip must carry customers.csv, bills.csv, receipts.csv, receipt_allocations.csv (or allocations.csv) and MANIFEST.csv (columns file, rows), with CSV headers equal to the database column names (the list is under API36 in the API repository's docs/handoffs.md), or the pulled-forward `scripts/zip-balances.mjs` (T-R05 drill) refuses with the name of the missing column.",
   do="'Download everything' builds in the browser from the cache, after a fresh poll, one zip of "
      "CSV files (customers, bills, bill items, receipts, allocations, stock, daily rates, categories, settings, users' "
      "names and roles, never a hash; the owner-only weight only for the owner; a cell starting with `=`, `+`, `-`, `@`, a tab "
@@ -297,6 +298,7 @@ T("WEB13", "WEB", "Printed estimate and tag page (PLAN.md P3-T1)",
 T("WEB14", "WEB", "Hosting headers (vercel.json), build checks, no source maps, API address only",
   agent="C", repo=APP, grp="pure", pd=0.8, deps=["WEB02", "API10"],
   reqs=["H1", "H2", "H3", "H4", "C10", "U10"], tests=["T-D12"],
+  note="PULLED FORWARD on Harsh's instruction (17 Oct) and done in a separate session (commit aca0f4a on the branch api-web of jewelvault-app, which stays there: it is NOT merged into that repository's main, by Harsh's branch rule; WEB00 continues on api-web). Its listed dependencies are not hard: vercel.json and the build check need nothing from WEB02, and API10 is done. The checks that need WEB02, WEB01 or WEB15 are tests marked pending (6 todo): the strict single-variable rule (WEB15), the real build of the API-backed front end, the policy against real calls in a browser (WEB00), `curl -I` on a host (OPS04, OPS07). vercel.json names the production API origin only: see decision 11.",
   do="`vercel.json` with `Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: "
      "strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, a restrictive `Permissions-Policy` and a `Content-Security-Policy` "
      "(report-only first) that allows only the site itself, the API's origin in `connect-src` AND `img-src`, and the inline "
@@ -314,6 +316,7 @@ T("WEB14", "WEB", "Hosting headers (vercel.json), build checks, no source maps, 
 T("WEB15", "WEB", "Remove the Supabase pieces and preview mode; leave one clean app",
   agent="B", repo=APP, grp="web", pd=0.6, deps=["WEB12b", "WEB13", "WEB14", "WEB16", "WEB17"],
   reqs=[], tests=[],
+  note="Empty `TOLERATED` in scripts/check-build.mjs (the Supabase and preview variable names the build check still tolerates, from WEB14) so that only NEXT_PUBLIC_API_URL is left (H4).",
   ptests=["PT-W15 a production build with NEXT_PUBLIC_PREVIEW_MODE=1 opens the login screen exactly like a build without it; no file mentions supabase"],
   do="Delete `src/lib/supabase/client.ts`, the `@supabase/supabase-js` and `supabase` and `pg` dependencies, `supabase/` "
      "(the old migrations and seeds that are frozen, including `0016_write_prologue_customer.sql` of DB09a, commit 6b68285), `scripts/lane.mjs`, `scripts/check-migrations.sh` and their tests "

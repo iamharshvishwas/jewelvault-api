@@ -2,7 +2,7 @@
 """Agent lanes, exemptions and the clauses of tests that several tasks complete."""
 
 # Three Claude agents at most at once (Playbook section 1). Each runs its list in order, in its own git worktree and branch:
-#   A: jewelvault-api-wt/a, branch api-a      B: jewelvault-api-wt/b (api-b) and jewelvault-app-wt/b (api-web)      C: jewelvault-api-wt/c (api-c) and jewelvault-app-wt/c (api-web-c, for WEB14)
+#   A: jewelvault-api-wt/a, branch api-a      B: jewelvault-api-wt/b (api-b) and jewelvault-app-wt-web (api-web)      C: jewelvault-api-wt/c (api-c)
 # The orchestrator (the main session) merges, sets nothing else, and runs the "O" tasks with Harsh; those are not agents.
 AGENT_ORDER = {
     "A": ["API01", "API02", "API03", "API14", "API15", "API16", "API20", "API21", "API22", "API23", "API25",
