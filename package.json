@@ -3,22 +3,35 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "JewelVault backend: Node.js + MariaDB 11.8 (spike first, then schema)",
+  "description": "JewelVault backend: Node.js + MariaDB 11.8 (database half first, then the API)",
+  "engines": {
+    "node": ">=24.7"
+  },
+  "main": "dist/server.js",
   "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "check:routes": "node scripts/check-routes.mjs",
+    "verify": "npm run typecheck && npm run build && npm run check:routes && npm test",
+    "test": "vitest run",
+    "test:schema": "vitest run tests/schema",
+    "db:lane": "node scripts/lane.mjs",
     "db:up": "bash scripts/db-up.sh",
     "db:down": "bash scripts/db-down.sh",
-    "test": "vitest run",
     "db:migrate": "node scripts/migrate.mjs",
     "db:schema": "node scripts/build-schema.mjs",
-    "db:import": "node scripts/import-cli.mjs",
-    "test:schema": "vitest run tests/schema"
-  },
-  "devDependencies": {
-    "@types/node": "^22.20.5",
-    "typescript": "^7.0.2",
-    "vitest": "^3.2.7"
+    "db:import": "node scripts/import-cli.mjs"
   },
   "dependencies": {
-    "mysql2": "^3.24.6"
+    "fastify": "^5.12.7",
+    "mysql2": "^3.24.6",
+    "pino": "^10.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.7"
   }
 }

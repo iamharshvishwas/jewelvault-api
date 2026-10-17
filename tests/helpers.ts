@@ -2,7 +2,8 @@ import mysql, { type Connection, type ConnectionOptions } from 'mysql2/promise';
 
 export const HOST = '127.0.0.1';
 export const PORT = Number(process.env.JV_DB_PORT ?? 33307);
-const ROOT_PASSWORD = 'spike_root_only'; // throwaway container, tmpfs, bound to 127.0.0.1 only
+// The spike container's throwaway password (tmpfs, bound to 127.0.0.1 only). A lane container has its own, made up when it starts and handed in by vitest.config.ts.
+const ROOT_PASSWORD = process.env.JV_DB_ROOT_PASSWORD ?? 'spike_root_only';
 export const APP_USER = 'jv_app';
 const APP_PASSWORD = 'spike_app_only';
 
@@ -51,6 +52,13 @@ export async function appConn(database: string, extra: ConnectionOptions = {}): 
   const c = await mysql.createConnection({ ...baseOptions, ...extra, user: APP_USER, password: APP_PASSWORD, database });
   for (const sql of SESSION_SETUP) await c.query(sql);
   return c;
+}
+
+/** The selected lane's own database and its ten-box user (set by vitest.config.ts from scripts/lane.mjs when JV_LANE or the file .lane picks a lane). */
+export function laneConfig() {
+  const e = process.env;
+  if (!e.JV_LANE || !e.JV_LANE_DATABASE || !e.JV_LANE_USER || !e.JV_LANE_PASSWORD) throw new Error('no lane is selected: set JV_LANE or write the lane name into the file .lane, then npm run db:lane -- up <lane>');
+  return { lane: e.JV_LANE, host: HOST, port: PORT, database: e.JV_LANE_DATABASE, user: e.JV_LANE_USER, password: e.JV_LANE_PASSWORD };
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

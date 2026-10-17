@@ -14,3 +14,19 @@ npm run db:down    # docker rm -fv jv-mariadb-spike
 ```
 
 Never run `db:down`-style cleanup with `-v` against `keep-tourstack-and-unknown-volumes`.
+
+## Lanes, build and verify (API01)
+
+Every agent has its own database container, so two agents never reset each other's data (plan, "one lane, one database"). Lanes: `main`, `a`, `b`, `c`; container `jv-mariadb-<lane>` on 127.0.0.1, port 33310 plus the lane number (main 0, a 1, b 2, c 3); MariaDB 11.8, READ-COMMITTED, Hostinger's non-strict `sql_mode`, data in tmpfs (no volume).
+
+```bash
+npm run db:lane -- up a      # start lane a, create its database jv_lane and the ten-box user of A3, migrate as that user
+npm run db:lane -- reset a   # rebuild the lane database from the migration files
+npm run db:lane -- url a     # mysql://jv_lane@127.0.0.1:33311/jv_lane (the password is made up per container and never printed)
+npm run db:lane -- down a    # docker rm -fv jv-mariadb-a, nothing else
+echo a > .lane               # (untracked) or JV_LANE=a: npm test then uses lane a instead of the old spike container on port 33307
+npm run verify               # typecheck, build to dist/, check:routes, all tests
+```
+
+The API itself: `src/server.ts` (the only place that reads the environment; the variable names are in `.env.example`, `.env` is ignored), `src/app.ts` (`buildApp({ config })` for `inject()` tests), `src/config.ts`, `src/logging.ts`, `src/clock.ts`. `npm run build` writes `dist/server.js`.
+
