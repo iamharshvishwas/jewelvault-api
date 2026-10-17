@@ -220,7 +220,7 @@ w("- **One lane, one database.** Each agent has its own MariaDB container (`jv-m
 w("- **Three agents at most at once** (Playbook 1): **A** the money core, **B** the front end, **C** the rest of the API, side tasks and "
   "the reviews. The **orchestrator** (the main session) is not an agent: it merges locally, runs the tasks that need Harsh at "
   "hPanel (lane O), keeps the ledger and tells Harsh in short Hinglish. Each agent works in its own `git worktree` on its own "
-  "branch (`api-a`, `api-b` and `api-c` of `jewelvault-api` in `jewelvault-api-wt/a`, `b`, `c`; `api-web` of `jewelvault-app` in `jewelvault-app-wt/b` for agent B and `api-web-c` in `jewelvault-app-wt/c` for the one front-end task of agent C, `WEB14`); the front-end tests start the API from the orchestrator's checkout of `main` of `jewelvault-api` (`JV_API_DIR`), into which the orchestrator merges each finished API task before the web task that needs it starts; the old Supabase worktrees "
+  "branch (`api-a`, `api-b` and `api-c` of `jewelvault-api` in `jewelvault-api-wt/a`, `b`, `c`; `api-web` of `jewelvault-app` in `jewelvault-app-wt-web` for agent B (WEB14 was done there first, in a separate session); the front-end tests start the API from the orchestrator's checkout of `main` of `jewelvault-api` (`JV_API_DIR`), into which the orchestrator merges each finished API task before the web task that needs it starts; the old Supabase worktrees "
   "(`jewelvault-wt/a`, `b`, `c`) are not used. One local commit per task: what changed, the spec IDs it covers. **Nothing is "
   "pushed or pulled by any agent; Harsh pushes** (his GitHub account `iamharshvishwas`), and after each commit the orchestrator "
   "says which branch and commit are ready.")

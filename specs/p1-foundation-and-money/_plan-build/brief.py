@@ -55,7 +55,7 @@ def main(tid):
     wt = branch = None
     if lane:
         if t["repo"] == "app":
-            wt = os.path.join(WT_APP, lane.lower())
+            wt = os.path.abspath(os.path.join(API_REPO, "..", "jewelvault-app-wt-web")) if lane == "B" else os.path.join(WT_APP, lane.lower())
             branch = "api-web" if lane == "B" else "api-web-" + lane.lower()
         else:
             wt = os.path.join(WT_API, lane.lower())
