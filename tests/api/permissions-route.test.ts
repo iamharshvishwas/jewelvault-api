@@ -300,15 +300,16 @@ describe('T-D02 (D2, A2, A6, A10) the order of work: session, then the must-chan
     expect(me.json()).toMatchObject({ role: 'staff', must_change_password: true });
   });
 
-  it('the session is looked up in sessions, then users, and nothing is written (D2): two reads, in that order', async () => {
+  it('the session is looked up in sessions, then users: two reads, in that order; the one write is the session\'s own last_seen_at (U4), after them', async () => {
     reset();
     const res = await world.call('biller', 'GET', '/v1/auth/me');
     expect(res.statusCode).toBe(200);
     const sent = statements();
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
     expect(sent[0]).toMatch(/^SELECT[\s\S]*\bFROM sessions\b/i);
     expect(sent[1]).toMatch(/^SELECT[\s\S]*\bFROM users\b/i);
-    expect(sent.join('\n')).not.toMatch(/\b(INSERT|UPDATE)\b/i);
+    expect(sent[2]).toMatch(/^UPDATE sessions SET last_seen_at = \?/i); // U4: every call but a poll moves it, in its own statement
+    expect(sent.slice(0, 2).join('\n')).not.toMatch(/\b(INSERT|UPDATE)\b/i); // the lookup itself writes nothing (D2)
     expect(sent.join('\n')).not.toMatch(/SELECT\s+\*/i); // a read names its columns (A4)
     expect(sent.join('\n')).not.toMatch(/password_hash/i); // the hash is never read
   });

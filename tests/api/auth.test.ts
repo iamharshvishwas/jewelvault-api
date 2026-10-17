@@ -669,7 +669,7 @@ describe('T-D15 the role is read from users on every request; nothing the caller
 
 // ------------------------------------------------------------------------------------------------ T-D26: the second world, with a clock the test moves
 
-describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling and me do not extend, activity does; a deactivation, a password change and a logout end the session at once', () => {
+describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling does not extend, activity and every other call do; a deactivation, a password change and a logout end the session at once', () => {
   const time = { micros: T0 };
   const advance = (ms: number) => {
     time.micros += BigInt(ms) * 1000n;
@@ -697,26 +697,28 @@ describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling and me do not
 
   const me = (cookie: string) => inject('GET', '/v1/auth/me', { cookie, app: w.app });
   const activity = (cookie: string) => inject('POST', '/v1/auth/activity', { cookie, app: w.app });
+  // a poll: the paths under /v1/sync/ never move last_seen_at (U4), so it is the probe that shows a session is still alive without extending it
+  const probe = (cookie: string) => inject('GET', '/v1/sync/customers', { cookie, app: w.app });
   const login = async (role: 'owner' | 'biller' | 'staff' = 'owner') => signIn(role, {}, w);
   const expectEnded = (res: LightMyRequestResponse, code: 'JV_SESSION_EXPIRED' | 'JV_UNAUTHENTICATED') => {
     expect(res.statusCode).toBe(401);
     expect(errorOf(res).code).toBe(code);
   };
 
-  it('idle: after 12 hours with no activity the session is over (401 JV_SESSION_EXPIRED); me at 11 h 59 m works and does NOT extend it', async () => {
+  it('idle: after 12 hours with no activity the session is over (401 JV_SESSION_EXPIRED); a poll at 11 h 59 m works and does NOT extend it', async () => {
     const u = await login();
     advance(12 * HOUR - 60_000);
-    expect((await me(u.cookie)).statusCode).toBe(200);
-    advance(2 * 60_000); // 12 h 01 m after the login: me did not move the clock of the session
-    expectEnded(await me(u.cookie), 'JV_SESSION_EXPIRED');
+    expect((await probe(u.cookie)).statusCode).toBe(200);
+    advance(2 * 60_000); // 12 h 01 m after the login: the poll did not move the clock of the session
+    expectEnded(await probe(u.cookie), 'JV_SESSION_EXPIRED');
   });
 
   it('idle, the border: just inside 12 hours is alive and just past it is over', async () => {
     const u = await login();
     advance(12 * HOUR - 1000);
-    expect((await me(u.cookie)).statusCode).toBe(200);
+    expect((await probe(u.cookie)).statusCode).toBe(200);
     advance(2000);
-    expectEnded(await me(u.cookie), 'JV_SESSION_EXPIRED');
+    expectEnded(await probe(u.cookie), 'JV_SESSION_EXPIRED');
   });
 
   it('activity extends it: 11 h after the login an activity call restarts the 12 hours', async () => {
@@ -724,9 +726,9 @@ describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling and me do not
     advance(11 * HOUR);
     expect((await activity(u.cookie)).statusCode).toBe(200);
     advance(12 * HOUR - 60_000); // 23 h 59 m after the login, 11 h 59 m after the activity
-    expect((await me(u.cookie)).statusCode).toBe(200);
+    expect((await probe(u.cookie)).statusCode).toBe(200);
     advance(2 * 60_000);
-    expectEnded(await me(u.cookie), 'JV_SESSION_EXPIRED');
+    expectEnded(await probe(u.cookie), 'JV_SESSION_EXPIRED');
   });
 
   it('polling does not extend it: GET /v1/sync/* and POST /v1/sync/poll never move last_seen_at (the stub behind each is the wrapper\'s own path)', async () => {
@@ -740,6 +742,16 @@ describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling and me do not
     expect(rowAfter.last_seen_at).toBe(rowBefore.last_seen_at);
     advance(6 * HOUR + 60_000); // 12 h 01 m since the login, 6 h 01 m since the last poll
     expectEnded(await me(u.cookie), 'JV_SESSION_EXPIRED');
+  });
+
+  it('me is not a poll: it restarts the 12 hours like every other call (U4)', async () => {
+    const u = await login();
+    advance(11 * HOUR);
+    expect((await me(u.cookie)).statusCode).toBe(200);
+    advance(12 * HOUR - 60_000);
+    expect((await probe(u.cookie)).statusCode).toBe(200);
+    advance(2 * 60_000);
+    expectEnded(await probe(u.cookie), 'JV_SESSION_EXPIRED');
   });
 
   it('every other call does: a read of the audit log (not a poll) restarts the 12 hours (U4: "every other call does")', async () => {
@@ -838,13 +850,15 @@ describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling and me do not
     expect(microsOfDbTimestamp(row.last_seen_at)).toBeGreaterThanOrEqual(time.micros);
   });
 
-  it('me and the polls send no write for the session at all', async () => {
+  it('the polls send no write for the session at all; me, like every other call, sends one', async () => {
     const u = await login('owner');
     const from = w.spy.sent.length;
-    await me(u.cookie);
     await inject('GET', '/v1/sync/customers', { cookie: u.cookie, app: w.app });
     await inject('POST', '/v1/sync/poll', { cookie: u.cookie, payload: {}, app: w.app });
-    expect(w.spy.sent.slice(from).filter((s) => /^(UPDATE|INSERT)/i.test(s.sql))).toEqual([]);
+    expect(w.spy.sent.slice(from).filter((x) => /^(UPDATE|INSERT)/i.test(x.sql))).toEqual([]);
+    const fromMe = w.spy.sent.length;
+    await me(u.cookie);
+    expect(w.spy.sent.slice(fromMe).filter((x) => /^UPDATE sessions\b/i.test(x.sql))).toHaveLength(1);
   });
 
   it('control: the same walk with the clock never moving keeps the session (the tests above end it only because time moved)', async () => {

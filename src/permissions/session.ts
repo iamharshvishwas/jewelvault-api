@@ -143,12 +143,12 @@ export async function lookupSession(app: FastifyInstance, request: FastifyReques
 }
 
 /**
- * U4: whether a call that got through the wrapper moves `last_seen_at`. Every call does except the screen's polling (GET /v1/sync/<resource> and POST /v1/sync/poll: the paths under /v1/sync/)
- * and `me` (the plan's Done-when for this task: `me` does not extend a session; the screen calls it at start-up and after a 403, which is not a click). `POST /v1/auth/activity` is the call
- * the screen makes on a click or key press (at most once a minute) and it does.
+ * U4: whether a call that got through the wrapper moves `last_seen_at`. Every call does except the screen's polling (GET /v1/sync/<resource> and POST /v1/sync/poll: the paths under /v1/sync/),
+ * and that includes `me` and `POST /v1/auth/activity` (the call the screen makes on a click or key press, at most once a minute). The plan's first wording said `me` does not count; U4 says
+ * every other call does, and the plan was corrected to the spec.
  */
 export function countsAsActivity(route: { action?: string; url: string }): boolean {
-  return !route.url.startsWith('/v1/sync/') && route.action !== 'session:me';
+  return !route.url.startsWith('/v1/sync/');
 }
 
 /**
