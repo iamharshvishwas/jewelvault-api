@@ -18,7 +18,7 @@ T("RV0", "RV", "Plan review: two fresh agents read this plan and its generator, 
 
 T("RV1", "RV", "Implementation review 1: access and security (fresh agent) - gate G-A",
   agent="C", repo="api", lo=0.5, hi=1.0, grp="review",
-  deps=["API05", "API07", "API08", "API09", "API10", "API11", "API12", "API13", "WEB02", "WEB14"],
+  deps=["API05", "API07", "API08", "API09", "API10", "API11", "API12", "API13", "API13b", "WEB02", "WEB14"],
   reqs=[], tests=[], gate="G-A",
   do="A fresh agent reads the diff against spec sections 3, 4.1, 5 and 6.2 and runs: the generated cell tests, the static "
      "checks, the secrets scan; tries to read the original weight as a biller and staff by every route including function "
@@ -65,15 +65,15 @@ T("RV4", "RV", "Implementation review 4: end to end on staging (fresh agent) - g
 T("PH01", "PH", "WITH-HARSH: read the plan, give the go, choose the date plan",
   who="WITH-HARSH", lead=(0, 2), deps=["RV0"], reqs=[], tests=[],
   do="Needed from Harsh: a go on the plan (nothing is bought and nothing is created on Hostinger, GitHub or Vercel by this "
-     "plan without his say in the step that does it) and a choice between the two dates the plan gives: switch billing "
-     "before Dhanteras week (only if every gate is green by Thu 29 Oct) or after Bhai Dooj (Thu 12 Nov or later). "
+     "plan without his say in the step that does it) and the date plan: switch billing after Bhai Dooj (not before Thu 12 Nov, most likely the week of 16 to 23 Nov). "
+     "A switch before Dhanteras week would overrule his own rule in PLAN.md 3.1 rule 4 (no change between 29 Oct and 11 Nov), so the plan does not offer it; if he wants it he says so in his own words and the plan is recomputed. "
      "Latest day: the go must arrive on the day RV0 ends; every day later moves every date by a day.",
   done="Harsh writes the go and the date plan in the ledger.", rollback=RBN)
 
 T("PH02", "PH", "WITH-HARSH: private GitHub repository for the API, pushed by Harsh, Hostinger's GitHub app connected",
   who="WITH-HARSH", lead=(1, 3), deps=["PH01"], reqs=[], tests=[],
   do="Needed from Harsh (he pushes; Claude never does): make `iamharshvishwas/jewelvault-api` a PRIVATE repository from GitHub Desktop "
-     "and push `main`; check that Hostinger's GitHub app (one GitHub account per plan, all Node sites share it) can see it; "
+     "and push `main` and, from the same commit, a branch `staging` (PH05b creates the staging app from it); check that Hostinger's GitHub app (one GitHub account per plan, all Node sites share it) can see it; "
      "later pushes of the staging and production branches are his too. The website repository `jewelvault-app` is already on "
      "GitHub and Vercel: until PH08 Harsh pushes only the work branch `api-web` of it (never `main`), so that Vercel's production site keeps showing what it shows today and a half-built login cannot reach it; "
      "Vercel makes a preview for the branch. Latest day: before OPS03a (the first staging deploy).",
@@ -114,7 +114,7 @@ T("PH05", "PH", "WITH-HARSH: staging database and a scratch database created in 
   done="hPanel shows the staging database and the scratch database; the ten-box list is checked by OPS02a and by OPS03's start-up check.", rollback=RBN)
 
 T("PH05b", "PH", "WITH-HARSH: remove the two proof apps, then create the staging Node app from the private repository under the two staging names",
-  who="WITH-HARSH", lead=(0, 1), deps=["PH02", "PH05", "OPS01", "OPS02a"], reqs=[], tests=[],
+  who="WITH-HARSH", lead=(0, 1), deps=["PH02", "PH03", "PH05", "OPS01", "OPS02a"], reqs=[], tests=[],
   do="Needed from Harsh, after OPS01 and OPS02a are done (the proof apps are still needed until then): remove the runtime proof app, the database proof app and the database "
      "`u992795260_proof` (**removing an app frees its domain name**); add a Node.js web app for staging from the private repository (branch `staging`) and give it "
      "`billing-api-staging.jaishrigoldpalace.com`; `billing-staging.` stays with Vercel (PH04). **Connecting a domain renames the site's folder** (API-00C-RESULTS section 7), so "
@@ -147,7 +147,7 @@ T("PH07", "PH", "WITH-HARSH: the decisions he may veto (every open item with a d
   soft_before=["API08", "API09", "API17", "API20", "API24", "API35", "WEB12"],
   do="Needed from Harsh: either 'defaults stand' or a different answer for each of these, in one reply: O8 opening balances as ordinary "
      "rows; O17 old Credit payments not carried over; O18 all bills in memory in M1; O19 database tests on the local Docker MariaDB "
-     "(creating the Hostinger staging app needs his OK, PH05); O22 per-line rounding to paise (a ruling: the bill total "
+     "(creating the Hostinger staging app needs his OK, PH05b); O22 per-line rounding to paise (a ruling: the bill total "
      "differs by Rs 1 from the prototype on about 0.8 percent of bills); O32 the Reports date controls and exports hidden in M1 "
      "(his option: the Reports fix in M1, about 0.5 day); O36 the region; O39 the website stays on Vercel Hobby with the terms risk "
      "his own; O41 the admin door shut after the first owner and no route changes a role; O43 the staging app stays after "
@@ -159,7 +159,7 @@ T("PH07", "PH", "WITH-HARSH: the decisions he may veto (every open item with a d
 
 T("PH08", "PH", "WITH-HARSH: go-live day steps in Vercel, hPanel and on his Mac",
   who="WITH-HARSH", lead=(0, 1), deps=["QA04"], reqs=[], tests=[],
-  do="Needed from Harsh on the cut-over day, each in the checklist: set `NEXT_PUBLIC_API_URL` to the production API in the "
+  do="Needed from Harsh on the cut-over day, each in the checklist: merge `api-web` into `main` of `jewelvault-app` in GitHub Desktop and push, so that Vercel builds production from the new code (a redeploy of the old `main` would ship the old demo; to roll back he promotes the previous deployment); set `NEXT_PUBLIC_API_URL` to the production API in the "
      "Vercel project and REMOVE `NEXT_PUBLIC_PREVIEW_MODE` there (preview mode must not exist in the live build; WEB15 "
      "removed the code, this removes the variable), redeploy and wait; switch Remote MySQL OFF again after the import "
      "window; remove `JV_ADMIN_TOKEN_HASH` from the production environment once the first owner exists (O41 default); check "
@@ -242,14 +242,14 @@ T("OPS01", "OPS", "API-00c part 1 (WITH-HARSH): Safari and Firefox on the real n
   agent="C", repo="api", lo=0.5, hi=1.5, grp="ops", who="WITH-HARSH", deps=["PH04", "API07", "API05", "API09"],
   reqs=["O48"], tests=[], gate="G-H", tripwire="TW3: if the `__Host-` SameSite=Strict cookie fails in Safari or Firefox on the real names, or Safari caps it at 7 days, or the website name pointing at Vercel breaks the same-site rule, STOP and re-plan the name pair or put the API behind the website's own origin by a Vercel rewrite (A12). That costs about 1 to 2 plan-days of WEB01/WEB02/API07 and is Harsh's decision.",
   note="Done on 17 Oct 2026 (API-00C-RESULTS.md section 5): `jaishrigoldpalace.com` bought by Harsh at Hostinger; `billing-staging.` and `billing-api-staging.` connected through the Add-domain wizard (no DNS work by hand), Let's Encrypt certificates (17 Oct to 15 Jan 2027), the cookie, CORS and image flow passed in Chrome 155. NOT repeated here. Still open: Safari and Firefox on the real names, Safari's 7-day cap, and the real pair (website on Vercel, API on Hostinger).",
-  do="Through Harsh's logged-in hPanel (Claude drives, Harsh watches and types any password himself): with the website name pointed at a Vercel project (PH04) and the "
-     "API on its Hostinger name, deploy the API skeleton with login (API01 to API09, by zip upload to the runtime proof app that still carries `billing-api-staging.`; the GitHub deploy is OPS03a) and check, in Safari and Firefox "
+  do="Through Harsh's logged-in hPanel (Claude drives, Harsh watches and types any password himself): with the website name pointed at a Vercel project (PH04) that serves a static test page (one HTML file that the orchestrator makes from the Chrome page of 17 Oct, committed on `api-web` and shown by a Vercel preview; the real screens need WEB02) and the "
+     "API on its Hostinger name, deploy the API skeleton with login (API01 to API07 and API09, by zip upload to the runtime proof app that still carries `billing-api-staging.`; the GitHub deploy is OPS03a) and check, in Safari and Firefox "
      "(Chrome again for the pair): login from the website's origin sets `__Host-jv_session`, it survives a reload, a `PATCH` and a `POST` with `X-JV-Client` and "
      "`Idempotency-Key` pass their preflight, a request from another origin gets no cookie and no allow-origin header, photos load in `<img>`; read whether Safari caps the "
      "cookie at 7 days. Result: an addendum to `HOSTINGER-SPIKE.md` that turns 'GO, provisional' into GO or NO-GO.",
   files=[], done="The addendum states each of the lines for Chrome, Safari and Firefox with the exact names used, and the verdict G-H: GO or NO-GO. A NO-GO goes to Harsh "
                  "(O44: a priced VPS comparison before any money is spent).",
-  rollback="Nothing durable: the proof pages are removed afterwards by Harsh (PH03).")
+  rollback="Nothing durable: the proof pages are removed afterwards by Harsh (PH05b).")
 
 T("OPS02a", "OPS", "API-00c part 2a (WITH-HARSH): Hostinger-only proofs that need no code",
   agent="C", repo="api", lo=0.5, hi=1.0, grp="ops", who="WITH-HARSH", deps=["PH05"],
@@ -287,9 +287,9 @@ T("OPS02", "OPS", "API-00c part 2b (WITH-HARSH): the proofs that need the code, 
   reqs=[], tests=[], gate="G-H",
   note="Answered on 16 Oct 2026 (API-00C-RESULTS.md, a miniature kit on the DB proof app, about 55 minutes of two Custom cron jobs, both deleted afterwards): a unix-socket connection IS counted against the new-connection limit (45 tried, 20 passed), the window is about 1 second, the sustained limit is about 20 a second, and the budget is SHARED by every process of the same database user (the app, a cron-run script, other apps, probably WordPress); `GET_LOCK` works and a lock left on a pooled connection stays held until `RELEASE_LOCK` or `destroy()`; a Custom cron job runs the hPanel Node command and a miniature dump (GET_LOCK, one REPEATABLE READ snapshot, 26 tables, 518 rows, gzip, AES-GCM, `.partial`, `fsync`, `link()`) ended in 275 ms with 72 MB resident, and a second run the same day ended at once; `link()` works and a second `link` answers EEXIST; the Custom command field takes at most 255 characters; `statfs` shows the whole server's volume. These are NOT repeated here.",
   do="On staging with the ten-box user and the real code: the whole database suite again as the API user (the 15 Oct proof and the 16 Oct kit ran with all boxes ticked); the budget of "
-     "new connections with the app (pool of 8), a running dump script (pool of one) and the plan's other apps all at once (the proof apps are gone by then, PH03): a refused "
-     "connection is retried once then `JV_BUSY`; the REAL command of the dump cron job for the real site name, listed in hPanel and deletable; a scheduled GitHub Actions run that "
-     "calls the tick; `SIGTERM` and the memory ceiling; the dump at a size near year 5 (about 400 MB) against a CPU or process kill.",
+     "new connections with the app (pool of 8), a running dump script (pool of one) and the plan's other apps all at once (the proof apps are gone by then, PH05b): a refused "
+     "connection is retried once then `JV_BUSY`; a Custom cron job whose command has the length of the real dump command for the real site name (it runs the proof kit's stub script; the real dump script is API34 and its cron job is OPS03), listed in hPanel and deletable; a scheduled GitHub Actions run that "
+     "calls a stub endpoint (the real tick and workflow are OPS03); `SIGTERM` and the memory ceiling; the proof kit's dump scaled to a size near year 5 (about 400 MB) against a CPU or process kill.",
   files=[], done="A fourth addendum to `HOSTINGER-SPIKE.md` lists each of these with PASS, FAIL or UNKNOWN; any FAIL is a finding for Harsh and an UNKNOWN keeps gate G-H shut.",
   rollback="Any test cron job is removed by Harsh; nothing production exists yet.")
 
@@ -323,7 +323,7 @@ T("OPS04", "OPS", "Staging real-network checks: 10-second hydrate, cold start, t
   agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS03", "WEB06", "WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "PH04"],
   reqs=[], tests=["T-E10"], extends=["T-F03", "T-D12"], gate="G-E",
   do="The static site on a Vercel preview with `NEXT_PUBLIC_API_URL` set to the staging API; on the staging pair of names "
-     "(Siddhi's domain once PH04 is in, else two `hostingersite.com` addresses): the first hydrate of the C2 volumes "
+     "(`billing-staging.` and `billing-api-staging.` of the domain Harsh bought, once PH04 is in): the first hydrate of the C2 volumes "
      "(2,500 pieces, 2,000 customers, 3,000 bills, seeded by `scripts/seed-volume.mjs` of API12) in under 10 seconds on a 4G profile, "
      "repeated with the browser throttled; the first call after a long idle (cold start) timed; T-E10 in Chromium, WebKit and "
      "Firefox (login, reload, PATCH edit, POST with the custom headers, another origin refused, photos in `<img>`); T-D12 "
@@ -346,7 +346,7 @@ T("OPS05", "OPS", "Backup drills on the real plan: folder checks, restore drill 
      "newest export and the new photos with Harsh's login (the download-by-hand path of the File Manager, which worked on 17 Oct, FIRST; SFTP second, it is untried), checks their hashes and reports the pull through the admin "
      "door; Harsh runs each of the three admin commands once from the runbook draft (T-E09 DRILL), and **performs the pull and the first three restore steps himself** with "
      "a script (he could not run an SSH command on his own on 15 Oct): the person who restores one day is not Claude.",
-  files=[], done="The drill log (times, counts, hashes, who held which key) is saved in `docs/drills/`; every check of T-R01, T-R05 "
+  files=[], done="The drill log (times, counts, hashes, who held which key) is saved in `docs/drills/`; every check of T-R01 (except the owner's own copy of the key, which Siddhi proves at the training, QA03), T-R05 "
                  "and T-R06's DRILL halves and T-E09's DRILL half is ticked; drill 1 took under 2 hours.",
   rollback="The target is a throw-away Docker database; staging is untouched.")
 
@@ -374,9 +374,9 @@ T("OPS07", "OPS", "Production: app, database, domain, cron jobs, first owner, th
   reqs=[], tests=[], extends=["T-D12", "T-E10"],
   do="With Harsh at hPanel, in a closing-time window: the production Node app (branch `main`) and database with exactly the ten "
      "boxes; the domain connected first, then the environment variables typed by Harsh (never in chat; `JV_BACKUP_DIR` and the cron commands only after the domain is connected); migrations through Remote MySQL, then Remote MySQL OFF; the "
-     "seeds of D20 only; the first owner by the admin command; both Custom cron jobs and the workflow; Siddhi's domain "
+     "seeds of D20 only; the first owner by the admin command; both Custom cron jobs and the workflow; the real domain "
      "connected; the Vercel production project pointed at the production API; **the real pair is tested once: T-D12 (headers "
-     "by `curl -I`) and T-E10 (three browsers) on the website on Vercel and the API on Hostinger under Siddhi's domain "
+     "by `curl -I`) and T-E10 (three browsers) on the website on Vercel and the API on Hostinger under the real domain "
      "(H5, a go-live condition)**. **Restore DRILL 2 is done with real data**: after the staging rehearsal (IMP02) the staging export with her real data and photos is restored into a "
      "SECOND Hostinger database through Remote MySQL (the path production would use) and timed; it is repeated on the cut-over eve after IMP03 if time allows; the second database is left for Harsh "
      "to remove. Production holds no customer data until the import (IMP03), so a drill on an empty production export would prove nothing.",
@@ -386,7 +386,7 @@ T("OPS07", "OPS", "Production: app, database, domain, cron jobs, first owner, th
 
 # =============================================================================================== IMPORT
 T("IMP01", "IMP", "Converter from Siddhi's sheet (and the old browser export) to an import pack",
-  agent="C", repo="api", grp="pure", pd=1.2, deps=["PS02", "MB04"],
+  agent="C", repo="api", grp="pure", pd=1.2, deps=["PS01", "PS02", "MB04"],
   reqs=["IM7"], tests=[], ptests=["PT-I1 the converter turns the sample sheet into a pack that the import accepts with RESULT: OK, lists blank or invalid mobile numbers, and keeps her piece codes"],
   do="`scripts/convert-sheet.mjs`: reads her sheet (Excel or CSV exported from it) in the shape PS02 showed and writes the pack "
      "of `IMPORT-GUIDE.md` (customers with dues, fine and advances; designs with pieces and her own `design_no`, `sku_no` "
