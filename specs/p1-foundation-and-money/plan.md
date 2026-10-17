@@ -6,7 +6,7 @@ Maps to: `PLAN.md` phases P1 (foundation) and P2 (money), the data side of P3-T4
 
 ## 0. In one page
 
-- **107 tasks** (7 done, 100 to do): 65 for the three agents (58.8 plan-days), 18 run by the orchestrator with Harsh or Siddhi (Hostinger, import, acceptance, go-live), 17 are people's tasks (Harsh, Siddhi, her CA). Every one of the 242 spec requirement and open-item IDs is on exactly one task (4 exempt, with reasons) and every one of the 123 tests is introduced by exactly one task (appendix).
+- **107 tasks** (7 done, 100 to do): 64 for the three agents (58.6 plan-days), 19 run by the orchestrator with Harsh or Siddhi (Hostinger, import, acceptance, go-live), 17 are people's tasks (Harsh, Siddhi, her CA). Every one of the 242 spec requirement and open-item IDs is on exactly one task (4 exempt, with reasons) and every one of the 123 tests is introduced by exactly one task (appendix).
 - **No date is promised.** First live day (never between Thu 29 Oct and Wed 11 Nov: Harsh's own freeze, PLAN.md 3.1 rule 4): best **Thu 12 Nov** to **Mon 16 Nov**; most likely **Sat 21 Nov** to **Mon 23 Nov**; worst **Tue 01 Dec** to **Tue 08 Dec** (section 7). The old 'before Dhanteras' dates (31 Oct, 2 Nov) are not offered: they need every best factor and break the freeze.
 - **What the dates depend on:** the speed of the money, browser and Hostinger tasks (never measured: tripwires TW1 to TW-ops, section 9), Hostinger passing the rest of the proof (`OPS01` Safari and Firefox on the real names, `OPS02a`, `OPS02w`, `OPS02`), the first GitHub deploy (`OPS03a`), Harsh's hands at hPanel and GitHub Desktop (one queue, section 6), and the inputs of people that sit close to the path: Harsh's go, Siddhi's full stock list and balances, her business answers, and her presence for the rehearsal, the acceptance and the training, which cannot happen between 3 and 11 Nov (section 8). The domain is no longer waited for: Harsh bought it on 17 Oct.
 - **The longest chain** runs through the money core (agent A) and the rest of the API (agent C), then staging, the backup drills, the three reviews, the regression, the acceptance by her two testers, the training, the go or no-go and the cut-over (section 6).
@@ -118,7 +118,7 @@ The spec defines 123 tests (section 15). A test is **introduced** in the one tas
 
 ## 4. Tasks
 
-The full text of each task is in `tasks.md`; this is the list. **The unit.** A *plan-day* is the planning unit of `PLAN.md`: the work an implementer is expected to finish in one focused day, tests and commit included. It is not elapsed time and it is untested for everything in this plan except pure database and pure TypeScript work (section 5). Days are estimated from the spec lines a task owns, plus or minus 30 percent; no implementer task is over 1.5 and the generator fails above that. **107 tasks**: 7 done, 100 to do (65 for agents, 18 run by the orchestrator with Harsh or Siddhi, 17 are people's tasks), **58.8 plan-days** of work for agents (23 tasks are over 1.0, the largest is 1.5), of which the Node API 38.8, the front end 17.8, the database alignment and the audit triggers 0.2, the import converter 1.2 and the regression 0.8; reviews, Hostinger work, acceptance and training are given as explicit elapsed time, not plan-days.
+The full text of each task is in `tasks.md`; this is the list. **The unit.** A *plan-day* is the planning unit of `PLAN.md`: the work an implementer is expected to finish in one focused day, tests and commit included. It is not elapsed time and it is untested for everything in this plan except pure database and pure TypeScript work (section 5). Days are estimated from the spec lines a task owns, plus or minus 30 percent; no implementer task is over 1.5 and the generator fails above that. **107 tasks**: 7 done, 100 to do (64 for agents, 19 run by the orchestrator with Harsh or Siddhi, 17 are people's tasks), **58.6 plan-days** of work for agents (23 tasks are over 1.0, the largest is 1.5), of which the Node API 38.8, the front end 17.8, the database alignment and the audit triggers 0.0, the import converter 1.2 and the regression 0.8; reviews, Hostinger work, acceptance and training are given as explicit elapsed time, not plan-days.
 
 | Task | Who | Title | Depends on | Plan-days | Elapsed working days (best to worst) |
 |---|---|---|---|---|---|
@@ -127,7 +127,7 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A *
 | MB03 | done | DONE: health query, export, once-only photo copy, restore library | - | - | - |
 | MB04 | done | DONE: import library and command, rebalance library (Y6), counter seeding | - | - | - |
 | MB05 | done | DONE: the database half aligned to spec 5.2 (correlated reads, health figures, backup folder and ... | - | - | - |
-| MB07 | A | ALIGN check: close the 18.13 E checklist against the repository before the API relies on it | API01 | 0.2 | 0.02 to 0.08 |
+| MB07 | O | ALIGN check (done by the database session): close the 18.13 E checklist against the repository before the API ... | - | - | 0.10 to 0.50 |
 | MB06 | done | DONE: generated audit triggers (L1 a), exclude list, import audit mode, job locks per database | - | - | - |
 | API01 | A | Repo skeleton, lane harness, config, logging, clock | RV0, PH01 | 1.0 | 0.12 to 0.40 |
 | API02 | A | Connection layer: one pool of 8, per-checkout session settings, paced connect, start-up check | API01 | 0.9 | 0.11 to 0.36 |
@@ -247,10 +247,10 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A *
 
 | Group | Tasks | Plan-days | Factor (elapsed days per plan-day) | Sum of elapsed working days, best to worst |
 |---|---|---|---|---|
-| Pure SQL or TypeScript with a written oracle | 20 | 20.2 | 0.12 to 0.40 | 2.4 to 8.1 |
+| Pure SQL or TypeScript with a written oracle | 19 | 20.0 | 0.12 to 0.40 | 2.4 to 8.0 |
 | Money functions, locks, two-session tests, jobs | 22 | 21.6 | 0.30 to 0.90 | 6.5 to 19.4 |
 | Front end and browser tests | 18 | 17.0 | 0.25 to 0.70 | 4.2 to 11.9 |
-| Hostinger, import, acceptance, drills (with Harsh or Siddhi) | 18 | - | explicit per task | 15.3 to 33.3 |
+| Hostinger, import, acceptance, drills (with Harsh or Siddhi) | 19 | - | explicit per task | 15.4 to 33.8 |
 | Fresh-agent reviews | 5 | - | explicit per task | 3.0 to 6.5 |
 | Waiting for people (Harsh, Siddhi, her CA): lead times, mostly in parallel | 17 | - | lead times per task | 28.0 to 102.0 (not additive) |
 
@@ -258,15 +258,15 @@ The sums are not the schedule: three agents work side by side, and most waiting 
 
 ## 6. Order, agents and the critical path
 
-- **Agent A (money core)** (busy 6.0 to 16.7 working days): API01 > MB07 > API02 > API03 > API14 > API15 > API16 > API20 > API21 > API22 > API23 > API25 > API26 > API29 > API30 > RV2 > API35 > API36 > RV4 > QA01
+- **Agent A (money core)** (busy 6.0 to 16.6 working days): API01 > API02 > API03 > API14 > API15 > API16 > API20 > API21 > API22 > API23 > API25 > API26 > API29 > API30 > RV2 > API35 > API36 > RV4 > QA01
 - **Agent B (front end)** (busy 4.5 to 12.6 working days): API06 > API10 > WEB00 > WEB01 > WEB02 > WEB03 > WEB04 > WEB05 > WEB07 > WEB06 > WEB08 > WEB09 > WEB10 > WEB11 > WEB12 > WEB12b > WEB16 > WEB13 > WEB17 > WEB15
 - **Agent C (rest of the API, side tasks, reviews)** (busy 5.7 to 16.6 working days): RV0 > API04 > API05 > API09 > API07 > API11 > API13 > API13b > API18 > API19 > API08 > API17 > API12 > API24 > API27 > API28 > API32 > API33 > API33b > API31 > API34 > WEB14 > IMP01 > RV1 > RV3
 - **Orchestrator with Harsh or Siddhi (lane O), one queue in this order:** OPS01 > OPS02a > OPS03a > OPS02 > OPS03 > OPS04 > OPS05 > OPS06 > IMP02 > QA02 > QA03 > OPS07 > QA04 > IMP03 > QA05; `OPS02w`, `OPS08` and `QA06` are time passing and take no queue time (acceptance and training run on staging, so they come before the production setup)
 - **People:** PH01, PH02, PH03, PH04, PH05, PH05b, PH06a, PH06b, PH07, PH08, PS01, PS02, PS03, PS04, PS05, PS06, PS07
 
-The longest chain of work, in the best case, runs through the agent lanes and ends in the shop: `RV0 > API01 > MB07 > API02 > API03 > API04 > API05 > API09 > API07 > API11 > API13 > API15 > API16 > API20 > API21 > API22 > API23 > API24 > API25 > API27 > API28 > API32 > API33 > API33b > API31 > RV2 > API35 > WEB12 > WEB12b > WEB16 > WEB13 > WEB17 > WEB15 > OPS04 > OPS05 > OPS06 > IMP02 > QA02 > QA03 > QA04 > IMP03 > QA05 > QA06`.
+The longest chain of work, in the best case, runs through the agent lanes and ends in the shop: `RV0 > API01 > API02 > API03 > API04 > API05 > API09 > API07 > API11 > API13 > API15 > API16 > API20 > API21 > API22 > API23 > API24 > API25 > API27 > API28 > API32 > API33 > API33b > API31 > RV2 > API35 > WEB12 > WEB12b > WEB16 > WEB13 > WEB17 > WEB15 > OPS04 > OPS05 > OPS06 > IMP02 > QA02 > QA03 > QA04 > IMP03 > QA05 > QA06`.
 
-In the worst case: `RV0 > PH01 > API01 > MB07 > API02 > API03 > API04 > API05 > API09 > API07 > API11 > API13 > API15 > API16 > API20 > API21 > API22 > API23 > API24 > API25 > API27 > API28 > API32 > API33 > API33b > API31 > RV2 > API35 > WEB12 > WEB12b > WEB16 > WEB13 > WEB17 > WEB15 > OPS04 > OPS05 > OPS06 > IMP02 > QA02 > QA03 > OPS07 > QA04 > IMP03 > QA05 > QA06`.
+In the worst case: `RV0 > PH01 > API01 > API02 > API03 > API04 > API05 > API09 > API07 > API11 > API13 > API15 > API16 > API20 > API21 > API22 > API23 > API24 > API25 > API27 > API28 > API32 > API33 > API33b > API31 > RV2 > API35 > WEB12 > WEB12b > WEB16 > WEB13 > WEB17 > WEB15 > OPS04 > OPS05 > OPS06 > IMP02 > QA02 > QA03 > OPS07 > QA04 > IMP03 > QA05 > QA06`.
 
 Two things follow. First, **in all three cases the chain is carried by the agents' lanes and the Hostinger work, not by one person**: the money chain (A) and the lane that carries login, reads, edits and the jobs (C) decide how soon the code is ready, and the front end (B) follows them closely. Second, **the people are never far behind**: in the best case the inputs with less than 3 working days of float are PH08 (0.5) (float in brackets, section 8); a week's delay in any of them moves the date by about a week. In the worst case the agents are far later than the people and the people tasks have room, so the date is the agents' date.
 
@@ -427,7 +427,7 @@ Two fresh agents read the plan on 17 Oct 2026 (`plan-review.md`: traceability an
 | PR8 (Medium) | Done. T-D03 clauses: results of X1 and X7 for a biller (`API20`) and the generated function matrix over every role (`API31`). |
 | PR9 (Medium) | Done. `scripts/seed-volume.mjs` is in `API12`; `npm run make-token` and `npm run keygen` are in `API09`; `PH06a` waits for `API09`; `OPS05` waits for `PH06a`. |
 | PR10 (Medium) | Done. IMP03's rollback is a fresh drill-tested export, then a NEW empty production database and a corrected run until the first live bill, then the B5 restore. |
-| PR11 (Medium) | Done by splitting: `API13` into `API13` and `API13b`, `WEB12` into `WEB12` and `WEB12b`, `API33` into `API33` and `API33b`; `API08` lost the rows that belong to other routes; `API29` and `API36` went from 1.0 to 1.2. The agent tasks now add up to 58.8 plan-days; no task is over 1.5. The dates in section 7 are recomputed with the splits in; the effect is about one working day in the worst case. Harsh decides whether to accept it (decision 1). |
+| PR11 (Medium) | Done by splitting: `API13` into `API13` and `API13b`, `WEB12` into `WEB12` and `WEB12b`, `API33` into `API33` and `API33b`; `API08` lost the rows that belong to other routes; `API29` and `API36` went from 1.0 to 1.2. The agent tasks now add up to 58.6 plan-days; no task is over 1.5. The dates in section 7 are recomputed with the splits in; the effect is about one working day in the worst case. Harsh decides whether to accept it (decision 1). |
 | PR12 (Low) | Done. Worktrees `jewelvault-api-wt/b` (`api-b`) and `jewelvault-app-wt/c` (`api-web-c`, for `WEB14`); `JV_API_DIR` is the orchestrator's checkout of `main` of `jewelvault-api`, which the orchestrator keeps merged. |
 | PR13 (Low) | Done. Preview mode shows sample data inside `PREVIEW_MODE` builds only until `WEB15` (`WEB02`, `WEB03`); Harsh pushes only the branch `api-web`, never `main`, until `PH08` (`PH02`, decision 8). |
 | PR14 (Low) | Done. `WEB14` checks the text of `vercel.json` (the `curl -I` on a host is `OPS04`'s clause); an UNKNOWN keeps gate G-H shut (`OPS02a`, `OPS02`, `OPS02w`, section 12); `MB07` runs after `API01` on a lane database and never uses `npm run db:up`. |
