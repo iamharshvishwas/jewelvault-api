@@ -52,13 +52,18 @@ def spec_lines(ids):
 def main(tid):
     t = BY_ID[tid]
     lane = lane_of.get(tid)
-    wt = None
+    wt = branch = None
     if lane:
-        wt = (os.path.join(WT_APP, "b") if t["repo"] == "app" else os.path.join(WT_API, lane.lower()))
+        if t["repo"] == "app":
+            wt = os.path.join(WT_APP, lane.lower())
+            branch = "api-web" if lane == "B" else "api-web-" + lane.lower()
+        else:
+            wt = os.path.join(WT_API, lane.lower())
+            branch = "api-" + lane.lower()
     print(f"You are agent {lane or '-'} implementing task {tid}: {t['title']}")
     print(f"Plan: {SPEC_DIR}/plan.md and tasks.md (read the section of {tid} in tasks.md first). Spec: git show {SPEC_COMMIT}:specs/p1-foundation-and-money/spec.md in {API_REPO}.")
     if wt:
-        print(f"Your worktree: {wt} (branch {'api-web' if t['repo']=='app' else 'api-' + lane.lower()}); repository: {'jewelvault-app' if t['repo']=='app' else 'jewelvault-api'}.")
+        print(f"Your worktree: {wt} (branch {branch}); repository: {'jewelvault-app' if t['repo']=='app' else 'jewelvault-api'}.")
     print(f"Depends on (already merged): {', '.join(t['deps']) or '-'}")
     print()
     print(RULES)
@@ -75,6 +80,9 @@ def main(tid):
         print("NOTE:", t["note"])
     print()
     print("DONE WHEN:", t["done"])
+    cl = [(x, c) for (x, c, tid) in chk.TEST_CLAUSES if tid == t["id"]]
+    if cl:
+        print("ALSO PROVES (clauses of tests introduced in other tasks; each is one check here):", "; ".join(f"{x}: {c}" for x, c in cl))
     print("ROLLBACK:", t["rollback"])
     print()
     print("THE SPEC LINES (verbatim):")

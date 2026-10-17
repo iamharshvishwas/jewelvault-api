@@ -40,9 +40,14 @@ BHAI_DOOJ = dt.date(2026, 11, 11)      # Wednesday
 PLAN_EXPIRES = dt.date(2027, 3, 22)    # Hostinger plan expiry read in hPanel
 HOSTING_PROMISED_TO = dt.date(2027, 4, 30)
 
-# The shop does not switch billing in Dhanteras week: Tue 3 Nov (three days before Dhanteras) to Wed 11 Nov (Bhai Dooj).
-NO_SWITCH_FROM = dt.date(2026, 11, 3)
+# Harsh's own rule (PLAN.md 3.1 rule 4): the billing system is never changed between Thu 29 Oct and Wed 11 Nov; a late system waits
+# (rule 3: unless it is live by Wed 28 Oct). So no cut-over from Thu 29 Oct to Wed 11 Nov.
+NO_SWITCH_FROM = dt.date(2026, 10, 29)
 NO_SWITCH_TO = BHAI_DOOJ
+# Siddhi and her staff are not available for testing, training or reading a reconciliation in Dhanteras week (QA02, PS07 say so):
+# her tasks do not run, and her answers do not arrive, from Tue 3 Nov to Wed 11 Nov.
+SIDDHI_AWAY_FROM = dt.date(2026, 11, 3)
+SIDDHI_AWAY_TO = BHAI_DOOJ
 
 
 def calendar(sundays_worked, n=140):

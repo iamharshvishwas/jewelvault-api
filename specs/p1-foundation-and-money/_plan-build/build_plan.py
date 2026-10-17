@@ -5,7 +5,8 @@ against spec draft 5.2 (commit 7920e6c) and the two repositories.
 
     python3 _plan-build/build_plan.py            checks, then writes plan.md and tasks.md (exit 1 on a problem)
     python3 _plan-build/build_plan.py --check    checks only
-    python3 _plan-build/build_plan.py --show-ignores   list the test/requirement ignores that were actually needed
+    python3 _plan-build/build_plan.py --build    same as no flag: checks, then writes
+    python3 _plan-build/build_plan.py --show-ignores   (read-only) list the test/requirement ignores that were actually needed
 
 The checks (the same idea as the Supabase plan's generator, plus the new rule 'exactly one task per spec line'):
   1. every requirement ID and every open item of the spec is on the spec lines of EXACTLY ONE task (exempt IDs are listed
@@ -182,6 +183,8 @@ unused = {x: v for x, v in unused.items() if v}
 if SHOW_IGN:
     print("ignores used:", {k: sorted(v) for k, v in used_ignores.items()})
     print("ignores NOT needed:", unused)
+if unused:
+    problems.append(f"dead ignores in plan_checks.TEST_IGNORE (remove them): {unused}")
 
 # clauses
 for (xt, clause, tid) in chk.TEST_CLAUSES:
@@ -192,10 +195,16 @@ for (xt, clause, tid) in chk.TEST_CLAUSES:
 clause_owner = defaultdict(set)
 for (xt, clause, tid) in chk.TEST_CLAUSES:
     clause_owner[xt].add(tid)
+# an ignore reason that hands a part of a test to a later task must name a task that really owns a clause of that test
+for xt, ign in chk.TEST_IGNORE.items():
+    for r, reason in ign.items():
+        for tid in re.findall(r"\b(?:API|WEB|OPS|IMP|QA)\d+[ab]?\b", reason):
+            if tid in BY_ID and tid not in clause_owner.get(xt, set()) and tid not in test_owner.get(xt, []):
+                problems.append(f"the ignore of {xt}/{r} names {tid}, which owns no clause of {xt} in TEST_CLAUSES")
 for t in TASKS:
     for x in t["extends"]:
         if t["id"] not in clause_owner.get(x, set()):
-            warnings.append(f"{t['id']} extends {x} but no clause names it")
+            problems.append(f"{t['id']} extends {x} but no clause (TEST_CLAUSES) names it")
 
 # sizes
 for t in TASKS:
@@ -218,9 +227,12 @@ for t in TASKS:
 for x in placed:
     if x not in BY_ID:
         problems.append(f"agent lane lists unknown task {x}")
-for x in chk.ORCH_LANE:
+for x in chk.ORCH_LANE + chk.ORCH_ORDER:
     if x not in BY_ID:
         problems.append(f"orchestrator lane lists unknown task {x}")
+for x in chk.ORCH_ORDER:
+    if x not in chk.ORCH_LANE:
+        problems.append(f"{x} is in the orchestrator queue but not in ORCH_LANE")
 # file paths
 def repo_root(t):
     return APP_REPO if t["repo"] == "app" else API_REPO
@@ -245,15 +257,37 @@ def duration(t, case):
         return float(t["lo"] if k == 0 else t["hi"])
     return t["pd"] * FACT[t["grp"]][k]
 
-def schedule(case, durs=None):
+def schedule(case, durs=None, cal=None):
+    """List scheduling: three agent lanes in their stated order, the orchestrator-with-Harsh queue (one task at a time), everything else
+    as soon as its dependencies are done. With a calendar, Siddhi's tasks avoid her absence in Dhanteras week (3 to 11 Nov)."""
     durs = durs or {t["id"]: duration(t, case) for t in TASKS}
+    lanes = dict(chk.AGENT_ORDER)
+    lanes["O"] = [x for x in chk.ORCH_ORDER]
     start, fin, why = {}, {}, {}
-    free = {a: 0.0 for a in chk.AGENT_ORDER}
-    last_in_lane = {a: None for a in chk.AGENT_ORDER}
-    ptr = {a: 0 for a in chk.AGENT_ORDER}
-    lane_of = {x: a for a, order in chk.AGENT_ORDER.items() for x in order}
+    free = {a: 0.0 for a in lanes}
+    last_in_lane = {a: None for a in lanes}
+    ptr = {a: 0 for a in lanes}
+    lane_of = {x: a for a, order in lanes.items() for x in order}
     pending = {t["id"] for t in TASKS if t["id"] not in lane_of}
-    left = sum(len(v) for v in chk.AGENT_ORDER.values()) + len(pending)
+    left = sum(len(v) for v in lanes.values()) + len(pending)
+    b0 = b1 = None
+    if cal is not None:
+        b0 = next(i for i, d in enumerate(cal) if d >= core.SIDDHI_AWAY_FROM)
+        b1 = max(i for i, d in enumerate(cal) if d <= core.SIDDHI_AWAY_TO) + 1
+
+    def place(tid, s):
+        tk = BY_ID[tid]
+        d = durs[tid]
+        if cal is not None and tk["who"] == "WITH-SIDDHI":
+            is_wait = bool(tk["lead"]) and not tk["agent"] and tid not in chk.ORCH_LANE
+            if is_wait:
+                f = s + d
+                if b0 < f <= b1:
+                    s = (b1 + 0.5) - d       # her answer arrives half a day into Thu 12 Nov
+            elif s < b1 and s + d > b0:
+                s = float(b1)                # she starts again on Thu 12 Nov
+        return s, s + d
+
     guard = 0
     while left and guard < 100000:
         guard += 1
@@ -261,21 +295,21 @@ def schedule(case, durs=None):
         for tid in sorted(pending):
             tk = BY_ID[tid]
             if all(d in fin for d in tk["deps"]):
-                s = max([fin[d] for d in tk["deps"]] or [0.0])
-                start[tid], fin[tid] = s, s + durs[tid]
+                s0 = max([fin[d] for d in tk["deps"]] or [0.0])
+                start[tid], fin[tid] = place(tid, s0)
                 why[tid] = max(tk["deps"], key=lambda d: fin[d]) if tk["deps"] else None
                 pending.discard(tid)
                 left -= 1
                 moved = True
-        for a, order in chk.AGENT_ORDER.items():
+        for a, order in lanes.items():
             if ptr[a] >= len(order):
                 continue
             tid = order[ptr[a]]
             tk = BY_ID[tid]
             if all(d in fin for d in tk["deps"]):
                 dep_ready = max([fin[d] for d in tk["deps"]] or [0.0])
-                s = max(free[a], dep_ready)
-                start[tid], fin[tid] = s, s + durs[tid]
+                s0 = max(free[a], dep_ready)
+                start[tid], fin[tid] = place(tid, s0)
                 if tk["deps"] and dep_ready >= free[a]:
                     why[tid] = max(tk["deps"], key=lambda d: fin[d])
                 else:
@@ -286,7 +320,7 @@ def schedule(case, durs=None):
                 left -= 1
                 moved = True
         if not moved:
-            for a, order in chk.AGENT_ORDER.items():
+            for a, order in lanes.items():
                 if ptr[a] < len(order):
                     head = order[ptr[a]]
                     wait = [d for d in BY_ID[head]["deps"] if d not in fin]
@@ -310,13 +344,16 @@ def fmt(d):
 
 CASES = [("low", "off"), ("low", "on"), ("high", "off"), ("high", "on")]
 CAL = {"off": core.CAL_OFF, "on": core.CAL_ON}
-RUNS = {}
+RUNS = {}       # Sundays off
+RUNS_ON = {}    # Sundays worked
 for case in ("low", "high"):
-    s, f, w, d = schedule(case)
-    if s is None:
+    s_, f_, w_, d_ = schedule(case, cal=core.CAL_OFF)
+    if s_ is None:
         problems.append(f"the lanes deadlock in the {case} case: some lane waits for a task behind another waiting task")
         break
-    RUNS[case] = dict(start=s, fin=f, why=w, durs=d)
+    RUNS[case] = dict(start=s_, fin=f_, why=w_, durs=d_)
+    s2, f2, w2, d2 = schedule(case, cal=core.CAL_ON)
+    RUNS_ON[case] = dict(start=s2, fin=f2, why=w2, durs=d2)
 
 # latest finish (float on dependencies only; agent lanes ignored, so slightly optimistic)
 def latest_finish(case):
@@ -344,7 +381,7 @@ def latest_finish(case):
 
 # ------------------------------------------------------------------------------------------------ report
 ok = not problems
-print(f"spec: {len(spec_ids)} requirement and open-item IDs, {len(spec_tests)} tests (draft 5.2, commit {SPEC_COMMIT}, {len(lines)} lines)")
+print(f"spec: {len(spec_ids)} requirement and open-item IDs, {len(spec_tests)} tests (draft 5.2, commit {SPEC_COMMIT}, {len(lines) - (1 if lines and lines[-1] == '' else 0)} lines)")
 print(f"tasks: {len(TASKS)} ({sum(1 for t in TASKS if t['status']=='DONE')} done, {sum(1 for t in TASKS if t['status']=='TODO')} to do)")
 print(f"exempt IDs: {', '.join(chk.EXEMPT)}")
 for w in warnings:
@@ -376,7 +413,8 @@ if "--sched" in sys.argv:
             print(f"  {tid:6} start {r['start'][tid]:5.2f} finish {r['fin'][tid]:5.2f}  off {fmt(date_of(r['fin'][tid], core.CAL_OFF))}  on {fmt(date_of(r['fin'][tid], core.CAL_ON))}")
         cp = critical_path(r["fin"], r["why"], end)
         print("critical path:", " > ".join(cp))
-if "--check" in sys.argv or "--sched" in sys.argv or "--float" in sys.argv:
+# only a run with no flag (or with --build) writes plan.md and tasks.md; every other flag is read-only
+if any(a.startswith("--") and a != "--build" for a in sys.argv[1:]):
     sys.exit(0)
 
 exec(open(os.path.join(HERE, "render.py"), encoding="utf-8").read())
