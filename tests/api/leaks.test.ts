@@ -249,7 +249,7 @@ describe('T-D28 a body full of marker strings is absent from the log (A14)', () 
 
   function build() {
     const sink = logSink();
-    const app = buildApp({ config: testConfig({ logLevel: 'trace' }), logStream: sink.stream });
+    const app = buildApp({ config: testConfig({ logLevel: 'trace' }), logStream: sink.stream, routes: false }); // API19: the real route of X6 is registered now, and the stub below stands in for any row
     const toy = toyRoutes(app);
     toy.post('/toy/ok', async () => ({ ok: true }));
     toy.post('/toy/boom', async () => {
