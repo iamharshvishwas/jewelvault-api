@@ -4,7 +4,7 @@
 //   startSession   a login: a NEW ticket (32 random bytes from the system's random source), its SHA-256 stored in `sessions`, the ticket itself never kept; created now, last seen now, over in 14 days
 //                  (the absolute lifetime, in the API clock). The session the browser was carrying (the cookie of the login request, if it names one) is ended in the same transaction, whoever's it is
 //                  (against session fixation, U12).
-//   endSession     a logout. endOtherSessions: a password change ends the user's other sessions (U11).
+//   endSession     a logout. endOtherSessions: a password change ends the user's other sessions (U11). endAllSessions: the admin door's reset and deactivation end every one (U3, API09).
 //
 // Nothing is deleted (S7): a session that ends gets `revoked_at` and stays as a row. All of these run inside the caller's transaction, with the others of that call, and take "now" from one clock reading.
 import { type Reading, formatTimestamp } from '../clock.js';
@@ -39,6 +39,7 @@ const END_BY_TICKET = 'UPDATE sessions SET revoked_at = ? WHERE token_hash = ? A
 const INSERT_SESSION = 'INSERT INTO sessions (id, user_id, token_hash, created_at, last_seen_at, expires_at, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?)';
 const END_BY_ID = 'UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
 const END_OTHERS = 'UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id <> ? AND revoked_at IS NULL';
+const END_ALL = 'UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL';
 
 export interface StartSessionInput {
   userId: string;
@@ -68,4 +69,9 @@ export async function endSession(tx: Tx, sessionId: string, now: Reading): Promi
 /** Ends every live session of the user except one (U11: a password change ends the others and keeps the one it was made from). Returns how many it ended. */
 export async function endOtherSessions(tx: Tx, userId: string, keepSessionId: string, now: Reading): Promise<number> {
   return (await tx.run(END_OTHERS, [now.timestamp, userId, keepSessionId])).affectedRows;
+}
+
+/** Ends every live session of the user (U3: an admin reset ends them all, so that a stolen session does not survive it; a deactivation too, so that an activation does not bring them back). Returns how many. */
+export async function endAllSessions(tx: Tx, userId: string, now: Reading): Promise<number> {
+  return (await tx.run(END_ALL, [now.timestamp, userId])).affectedRows;
 }

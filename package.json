@@ -22,7 +22,10 @@
     "db:down": "bash scripts/db-down.sh",
     "db:migrate": "node scripts/migrate.mjs",
     "db:schema": "node scripts/build-schema.mjs",
-    "db:import": "node scripts/import-cli.mjs"
+    "db:import": "node scripts/import-cli.mjs",
+    "admin": "node scripts/admin.mjs",
+    "make-token": "node scripts/make-token.mjs",
+    "keygen": "node scripts/keygen.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
