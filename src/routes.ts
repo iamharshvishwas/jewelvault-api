@@ -16,12 +16,14 @@ import { registerAuthRoutes } from './auth/loginRoutes.js';
 import { registerEditRoutes } from './edit/routes.js';
 import { registerQuoteBill } from './money/x07QuoteBill.js';
 import { route } from './permissions/route.js';
+import { registerReadRoutes } from './reads/routes.js';
 import { registerSyncRoutes } from './sync/routes.js';
 
 export function registerRoutes(app: FastifyInstance): void {
   // /healthz is registered by buildApp() itself, because the start-up gate (S11) names it.
   registerAuthRoutes(app);
   registerSyncRoutes(app);
+  registerReadRoutes(app); // API12: the ledger, the daily totals, the audit log, the health lists, the dashboard line
   registerAdminRoutes(app); // API09: the admin door, only while JV_ADMIN_TOKEN_HASH is set
   registerEditRoutes(app); // API13: the ordinary edits
   registerQuoteBill(app); // API18: X7 quote_bill

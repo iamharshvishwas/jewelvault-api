@@ -59,7 +59,7 @@ const describe = (e: unknown): string => {
 const escapeRegExp = (c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** The database part of a GRANT, as MariaDB writes it: `db`.* (an unescaped _ is any one character, % any run, a backslash makes either literal). */
-function scopeMatches(pattern: string, database: string): boolean {
+export function scopeMatches(pattern: string, database: string): boolean {
   let re = '';
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i];
