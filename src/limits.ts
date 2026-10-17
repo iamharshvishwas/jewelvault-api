@@ -19,6 +19,9 @@ export const limits = Object.freeze({
   /** A design photo is at most 2 MiB, and a design has at most 3 photos (Harsh's rule of 15 Oct 2026, O21). */
   maxPhotoBytes: 2097152,
   maxPhotosPerDesign: 3,
+  /** X8: a group of identical pieces has 1 to 100 pieces, and one create_design call makes at most 500 pieces in all (it is also the most pieces X9 changes in one call). */
+  maxPiecesPerGroup: 100,
+  maxPiecesPerCall: 500,
   /** Section 13, Z1 and Z2: cash of this amount or more (`cash_limit`). For the CA to confirm (O14). */
   cashLimit: 200000,
   /** Z3: a bill of this amount or more asks for the customer's PAN (`pan_threshold`). */

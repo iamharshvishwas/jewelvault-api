@@ -76,7 +76,9 @@ export type BusyReason =
   | 'commit_lost'
   | 'handler_timeout'
   /** X0 item 3: the row an X4, X5 or X10 re-read after the customer lock belongs to another customer than the one it found first. Cannot happen (nobody moves a receipt or a bill); if it does, the call is rolled back. */
-  | 'customer_changed';
+  | 'customer_changed'
+  /** The series of a number (a category prefix, say) was changed between the read that made its counter row and the transaction. Cannot happen through the API; if it does the call is rolled back and the retry reads it again. */
+  | 'series_changed';
 
 /**
  * JV_BUSY (S8), 503 with Retry-After: 1. It NEVER promises "nothing was changed": a connection that drops during COMMIT leaves it unknown (`outcomeUnknown`), so the message says nothing about it
