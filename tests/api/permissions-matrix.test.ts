@@ -16,6 +16,7 @@ import {
   WRITE_COLUMNS,
   mayCall,
   mayUseField,
+  readableSettingKeys,
   type Action,
   type Role,
 } from '../../src/permissions/matrix';
@@ -250,8 +251,32 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
     }
   });
 
-  it('users: id, full_name, role and active only, and never the hash (A4, D1)', () => {
-    for (const role of ROLES) expect([...listFor('users', role)!].sort()).toEqual(['active', 'full_name', 'id', 'role']);
+  it('users: id, full_name, role and active, plus the stamp updated_at that C3 and C4 need, and never the hash or the e-mail (A4, D1)', () => {
+    // A4 gives the content of a users row as id, full_name, role and active (never the hash). C3 orders EVERY sync resource by (updated_at, key) and C4 takes the cursor "from the data" and
+    // merges "keeping the row with the greater updated_at": a row without its stamp cannot be placed in the order or merged, so users carry updated_at too (API11 confirmed this against C3/C4).
+    for (const role of ROLES) expect([...listFor('users', role)!].sort()).toEqual(['active', 'full_name', 'id', 'role', 'updated_at']);
+    for (const role of ROLES) for (const secret of ['email', 'password_hash', 'must_change_password', 'last_login_at', 'created_at', 'created_by', 'updated_by']) expect(listFor('users', role), `${role} ${secret}`).not.toContain(secret);
+  });
+
+  it('every sync resource lists the stamp and the key its cursor needs (C3, C4): updated_at for all, and the key named in C3 (id, setting_key, sku_id)', () => {
+    const KEY: Record<string, string> = { settings: 'setting_key', sku_private: 'sku_id' };
+    const synced = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'bill_summary', 'customer_balances'] as const;
+    for (const resource of synced) {
+      for (const role of ROLES) {
+        const list = listFor(resource, role);
+        if (!list) continue;
+        expect(list, `${resource}/${role} needs the stamp`).toContain('updated_at');
+        expect(list, `${resource}/${role} needs the key`).toContain(KEY[resource] ?? 'id');
+      }
+    }
+  });
+
+  it('readableSettingKeys: the owner and the biller read every key (null), staff the seven keys of A4, a name that is not a role reads none (A4, C3)', () => {
+    expect(readableSettingKeys('owner')).toBeNull();
+    expect(readableSettingKeys('biller')).toBeNull();
+    expect(readableSettingKeys('staff')).toEqual(STAFF_SETTING_KEYS);
+    expect(readableSettingKeys('staff')).toHaveLength(7);
+    for (const notARole of ['admin', 'OWNER', '', 'constructor', '__proto__']) expect(readableSettingKeys(notARole), notARole).toEqual([]);
   });
 
   it('the owner-only weight (D9): original_net_weight is listed for the owner of sku_private and nowhere else; no list holds a hash, a token hash or photo bytes', () => {

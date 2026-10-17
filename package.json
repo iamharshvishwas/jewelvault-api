@@ -22,7 +22,8 @@
     "db:down": "bash scripts/db-down.sh",
     "db:migrate": "node scripts/migrate.mjs",
     "db:schema": "node scripts/build-schema.mjs",
-    "db:import": "node scripts/import-cli.mjs"
+    "db:import": "node scripts/import-cli.mjs",
+    "seed:volume": "node scripts/seed-volume.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

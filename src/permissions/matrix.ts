@@ -249,11 +249,22 @@ export function mayUseField(role: string, field: FieldRight): boolean {
   return isRole(role) && (FIELD_RIGHTS[field] as readonly Role[]).includes(role);
 }
 
+/**
+ * A4, C3: the keys of `settings` a role reads. null means every key (the owner and the biller); staff read the seven of STAFF_SETTING_KEYS. A name that is not a role reads none, so the read
+ * side never has to compare a role itself (S10).
+ */
+export function readableSettingKeys(role: string): readonly string[] | null {
+  if (!isRole(role)) return [];
+  return role === 'staff' ? STAFF_SETTING_KEYS : null;
+}
+
 // ------------------------------------------------------------------ READ_COLUMNS
 
 type Columns = Partial<Record<Role, readonly string[]>>;
 
-const USERS = ['id', 'full_name', 'role', 'active'] as const;
+// A4 gives the content of a users row as id, full_name, role and active. C3 orders every sync resource by (updated_at, key) and C4 takes the cursor from the data and merges by the greater updated_at,
+// so the row carries its stamp too (API11 checked this against C3 and C4); the e-mail, the hash and the other stamps stay hidden.
+const USERS = ['id', 'full_name', 'role', 'active', 'updated_at'] as const;
 const STAMPS = ['created_at', 'updated_at', 'created_by', 'updated_by'] as const;
 
 const SETTINGS = ['setting_key', 'value', ...STAMPS] as const;
@@ -314,7 +325,6 @@ export const HIDDEN_COLUMNS = {
     must_change_password: 'only the session calls tell a user about their own flag (U11)',
     last_login_at: 'not a screen field in M1; A4 gives users as id, full_name, role and active only',
     created_at: 'A4 gives users as id, full_name, role and active only',
-    updated_at: 'A4 gives users as id, full_name, role and active only',
     created_by: 'A4 gives users as id, full_name, role and active only',
     updated_by: 'A4 gives users as id, full_name, role and active only',
   },

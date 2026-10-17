@@ -113,6 +113,7 @@ describe('T-F02 (API06 clause) the constants file src/limits.ts', () => {
       rateFlagPercent: 5, // rate_flag_percent (I11)
       sessionIdleMs: 12 * 60 * 60 * 1000, // U4: idle for more than 12 hours ends a session (O42)
       sessionAbsoluteMs: 14 * 24 * 60 * 60 * 1000, // U4: at most 14 days from the login (O42)
+      syncPageRows: 1000, // C3: a page of the read side has at most 1,000 rows (the old max_rows build check, now a constant of the API)
     });
   });
 

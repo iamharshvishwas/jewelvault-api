@@ -731,12 +731,12 @@ describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling does not exte
     expectEnded(await probe(u.cookie), 'JV_SESSION_EXPIRED');
   });
 
-  it('polling does not extend it: GET /v1/sync/* and POST /v1/sync/poll never move last_seen_at (the stub behind each is the wrapper\'s own path)', async () => {
+  it('polling does not extend it: GET /v1/sync/* and POST /v1/sync/poll never move last_seen_at (API11\'s read routes stand behind them now; the full clause, on data, is tests/api/sync-session.test.ts)', async () => {
     const u = await login('owner');
     const rowBefore = (await sessionsOf(u.userId, w)).find((s) => s.id !== u.sessionId)!;
     advance(6 * HOUR);
     for (const [method, url] of [['GET', '/v1/sync/customers'], ['GET', '/v1/sync/settings'], ['POST', '/v1/sync/poll']] as const) {
-      expect((await inject(method, url, { cookie: u.cookie, payload: method === 'POST' ? {} : undefined, app: w.app })).statusCode, url).toBe(200);
+      expect((await inject(method, url, { cookie: u.cookie, payload: method === 'POST' ? { cursors: {} } : undefined, app: w.app })).statusCode, url).toBe(200);
     }
     const rowAfter = (await sessionsOf(u.userId, w)).find((s) => s.id !== u.sessionId)!;
     expect(rowAfter.last_seen_at).toBe(rowBefore.last_seen_at);
@@ -854,7 +854,7 @@ describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling does not exte
     const u = await login('owner');
     const from = w.spy.sent.length;
     await inject('GET', '/v1/sync/customers', { cookie: u.cookie, app: w.app });
-    await inject('POST', '/v1/sync/poll', { cookie: u.cookie, payload: {}, app: w.app });
+    await inject('POST', '/v1/sync/poll', { cookie: u.cookie, payload: { cursors: {} }, app: w.app });
     expect(w.spy.sent.slice(from).filter((x) => /^(UPDATE|INSERT)/i.test(x.sql))).toEqual([]);
     const fromMe = w.spy.sent.length;
     await me(u.cookie);

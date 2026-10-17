@@ -230,18 +230,56 @@ export async function withTx<T>(ctx: TxContext, fn: (tx: Tx) => Promise<T>): Pro
   }
 }
 
-/** Reads outside a transaction on a checked-out connection (so with the same seven session settings), under the same deadline. SELECT and WITH only. */
-export async function withRead<T>(ctx: TxContext, fn: (db: Reader) => Promise<T>): Promise<T> {
+export interface ReadOptions {
+  /**
+   * C4: read inside one read-only snapshot. SET TRANSACTION ISOLATION LEVEL REPEATABLE READ (for the next transaction only, so the session's READ COMMITTED comes back by itself), then START
+   * TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT, and COMMIT when `fn` has returned: every statement of `fn` sees the database as it was when the snapshot began, so a poll never shows a bill
+   * without its lines or a payment without its allocation. At READ COMMITTED each statement would see its own moment (spec docs #5). Both statements are allowed to the plan's user.
+   */
+  snapshot?: boolean;
+}
+
+const BEGIN_SNAPSHOT = ['SET TRANSACTION ISOLATION LEVEL REPEATABLE READ', 'START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT'] as const;
+
+/**
+ * Reads on a checked-out connection (so with the same seven session settings), under the same deadline. SELECT and WITH only. Without `snapshot` there is no transaction: each statement is
+ * its own, at the session's READ COMMITTED.
+ */
+export async function withRead<T>(ctx: TxContext, fn: (db: Reader) => Promise<T>, options: ReadOptions = {}): Promise<T> {
   let conn: DbConnection | undefined;
   let s: Session | undefined;
   let broken = false;
+  let beginning = false; // the snapshot has been asked for and not yet committed: a failure must roll it back
   try {
     conn = await ctx.pool.checkout();
     s = session(conn, ctx, true);
     const owned = s;
-    return await fn({ rows: (sql, params = []) => rowsOf(owned, sql, params) });
+    if (options.snapshot) {
+      guard(ctx);
+      try {
+        for (const sql of BEGIN_SNAPSHOT) await conn.query(sql);
+      } catch (e) {
+        // SET TRANSACTION may have been taken by the server and START not: whatever runs next on this connection would be a REPEATABLE READ transaction. Such a connection is not given back.
+        broken = true;
+        throw e;
+      }
+      beginning = true;
+    }
+    const result = await fn({ rows: (sql, params = []) => rowsOf(owned, sql, params) });
+    if (beginning) {
+      await conn.query('COMMIT'); // nothing was written: this only ends the snapshot
+      beginning = false;
+    }
+    return result;
   } catch (e) {
-    broken = isConnectionLost(e);
+    broken = broken || isConnectionLost(e);
+    if (beginning && conn && !broken) {
+      try {
+        await conn.query('ROLLBACK');
+      } catch {
+        broken = true;
+      }
+    }
     throw classifyError(e);
   } finally {
     if (s) s.over = true;
