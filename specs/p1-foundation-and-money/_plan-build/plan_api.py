@@ -259,7 +259,7 @@ T("API05", "API", "Login, sessions, cookie, me, logout, activity, change-passwor
        "ticket per login and the old session ended; passwords of 9 and 129 characters, a very common password and one "
        "containing the local part are refused; the stored hash is a self-describing Argon2id string; at most 2 hashes at once; "
        "the scrypt fallback with `maxmem` 256 MiB works and exactly 128 MiB fails; with an injected clock a session ends after 12 h "
-       "idle and after 14 days absolute with `401 JV_SESSION_EXPIRED`, `me` does not extend it (the poll routes are the T-D26 clause of API11), `activity` does; a "
+       "idle and after 14 days absolute with `401 JV_SESSION_EXPIRED`, `me` extends it like every call that is not a poll (U4: only `GET /v1/sync/*` and `POST /v1/sync/poll` do not; the poll routes are the T-D26 clause of API11), `activity` does; a "
        "deactivation, a password change and a logout end the session at once; a changed role takes effect at the next call and "
        "a role named in a cookie, header or body has no effect; a login, a logout and a change-password each write exactly one `event` audit row with no secret in it (T-D14 clause).",
   rollback=RB)
@@ -294,7 +294,7 @@ T("API07", "API", "CORS, CSRF layers, security headers, nothing leaks, error log
      "`Idempotent-Replay`; three CSRF layers (SameSite=Strict cookie; every state-changing call needs `X-JV-Client: web`; the "
      "`Origin` must equal an allowed origin, a missing or `null` one is refused; failure is `403 JV_CSRF`); helmet headers; "
      "`Cache-Control: no-store` and `X-Request-Id` on data responses (photos excepted); `JV_INTERNAL` carries no SQL, stack or "
-     "table name; body limits (1 MiB, photos 2 MiB, 16 KiB elsewhere), unknown JSON keys refused, 30 s to receive a request, "
+     "table name; body limits (1 MiB for every call; the photo upload 2 MiB plus 16 KiB: A14), unknown JSON keys refused, 30 s to receive a request, "
      "handler timer 25 s (30 s login, 50 s tick) answering `503 JV_BUSY`; `/healthz` and `/readyz` answer only `{ok:true|false}`; "
      "`sys_error_log` writes through `logError` of `scripts/housekeeping.mjs` (MB05: at most 20 rows a minute for each error code, the rest counted inside the last row's `detail`); "
      "log redaction proved with marker strings.",
@@ -367,7 +367,7 @@ T("API10", "API", "Static checks: catalogue, EXPLAIN, dependencies, secrets scan
   do="`npm run check:static`: the catalogue test (a primary key, InnoDB and the collation `utf8mb4_unicode_ci` on every table; money "
      "columns `DECIMAL`; no FLOAT/DOUBLE; foreign keys RESTRICT; the named CHECKs of D8, D13 and S4; the list of UNIQUE keys "
      "equals the expected list of D19); the EXPLAIN test (every locking or writing statement and the sync comparison use an "
-     "index; the statements are collected by running the suite with a statement log); `npm audit` with no High or Critical "
+     "index; the statements are collected by running the suite with a statement log); `npm audit` of the RUNTIME dependency tree with no High or Critical "
      "finding; no install script in a runtime dependency; no bound money or weight parameter used in SQL arithmetic, ROUND or "
      "a comparison without `CAST`; every migration file holds only statements of the S9 list; no code opens a connection "
      "outside the pool; `ctx.pause` appears in no production bundle; a scan of every tracked file for URLs with passwords, "

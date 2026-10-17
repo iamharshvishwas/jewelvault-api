@@ -23,7 +23,7 @@ T("RV1", "RV", "Implementation review 1: access and security (fresh agent) - gat
   do="A fresh agent reads the diff against spec sections 3, 4.1, 5 and 6.2 and runs: the generated cell tests, the static "
      "checks, the secrets scan; tries to read the original weight as a biller and staff by every route including function "
      "results; tries sessions (fixation, expiry, deactivation), CSRF without the header and with a wrong Origin, the admin "
-     "door without a token and with an Origin header; mutation check: breaks one rule at a time (a matrix cell, the "
+     "door without a token and with an Origin header; reads the dev-tooling findings of `npm audit` that API10 prints but does not gate (on 17 Oct vitest 3.2.7 brought two critical, dev-only ones, and the fix is vitest 5, a major step) and rules on them; mutation check: breaks one rule at a time (a matrix cell, the "
      "customer-role read, the CSRF layer, the idle limit) and each must fail a test. Writes `impl-review-1.md`.",
   files=[], done="`impl-review-1.md` has no open Critical or High finding; every deliberate breakage failed a test; the local advisor-free "
                  "checks of A7 are green.", rollback=RBR)
