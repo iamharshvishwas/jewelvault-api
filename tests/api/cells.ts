@@ -281,6 +281,8 @@ export interface CellRoute {
   mustChange: boolean;
   /** a body that is accepted for the route, if it needs one */
   payload?: unknown;
+  /** The query string (with its ?) of a read whose page takes other keys than `limit`; checkReadColumns asks for `?limit=1000` without it (a sync page). A read refuses keys it does not know (422). */
+  query?: string;
 }
 
 /**
@@ -311,7 +313,7 @@ export async function checkPublicCell(world: World, route: { method: string; pat
 
 /** The keys of the rows in a read answer ({rows: [...]}) must be among the columns the matrix lists for the caller's role (A4: a read names its columns). */
 export async function checkReadColumns(world: World, route: CellRoute, caller: Role, allowed: readonly string[]): Promise<string | null> {
-  const res = await world.call(caller, route.method, `${concreteUrl(route.path)}?limit=1000`);
+  const res = await world.call(caller, route.method, `${concreteUrl(route.path)}${route.query ?? '?limit=1000'}`);
   if (res.statusCode !== 200) return `${caller} on ${route.method} ${route.path}: status ${res.statusCode}, expected a 200 read`;
   const keys = new Set<string>();
   for (const row of (JSON.parse(res.body) as { rows?: Record<string, unknown>[] }).rows ?? []) for (const k of Object.keys(row)) keys.add(k);

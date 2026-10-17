@@ -1,0 +1,170 @@
+import type { Connection } from 'mysql2/promise';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { migrate } from '../../scripts/migrate.mjs';
+import { readHealth as original } from '../../scripts/health.mjs';
+import { DB_RED_LINE_BYTES, FOLDER_FALL_WINDOW_DAYS, DOWNLOAD_AMBER_DAYS, DOWNLOAD_RED_DAYS, PULL_AMBER_DAYS, RED_AFTER_HOURS, readHealth as twin } from '../../src/reads/health';
+import { type Scratch, scratchDatabase } from '../helpers';
+
+// T-D18 (API12), the dashboard line of spec section 12 and I12: src/reads/health.ts is the TypeScript twin of readHealth in scripts/health.mjs (src cannot import scripts/*.mjs: tsconfig.build.json
+// compiles src alone). The twin must give the answer of the original on every state of the database, so each scenario below is asked of both, on the same connection and with the same "now".
+
+const NOW = '2026-10-17 10:00:00';
+const ago = (hours: number) => `${new Date(Date.parse('2026-10-17T10:00:00Z') - hours * 3600_000).toISOString().slice(0, 19).replace('T', ' ')}.000000`;
+
+let scratch: Scratch;
+let u: Connection;
+let root: Connection;
+
+beforeAll(async () => {
+  scratch = await scratchDatabase('hlthtwin', { schema: true });
+  u = await scratch.connect();
+  await migrate(u, { seeds: true, optional: false });
+  root = await scratch.root();
+}, 120_000);
+afterAll(async () => {
+  await u?.end();
+  await root?.end();
+  await scratch?.drop();
+});
+
+const clean = async () => {
+  await root.query(`DELETE FROM \`${scratch.database}\`.check_runs`);
+  await root.query(`DELETE FROM \`${scratch.database}\`.backup_runs`);
+  await root.query(`DELETE FROM \`${scratch.database}\`.settings WHERE setting_key IN ('last_download', 'last_pulled')`);
+};
+const check = (hours: number, ok = 1) => u.query('INSERT INTO check_runs (ran_at, ok, details) VALUES (?, ?, ?)', [ago(hours), ok, JSON.stringify({ counts: {} })]);
+const backup = (kind: string, hours: number, detail: unknown = null, ok = 1) => u.query('INSERT INTO backup_runs (ran_at, kind, ok, bytes, detail) VALUES (?, ?, ?, ?, ?)', [ago(hours), kind, ok, 1000, detail === null ? null : JSON.stringify(detail)]);
+const setting = (key: string, at: string) => u.query('INSERT INTO settings (setting_key, value) VALUES (?, ?)', [key, JSON.stringify({ at })]);
+const healthy = async () => {
+  await clean();
+  await check(1);
+  await backup('photo_copy', 3, { folder: { files: 6, bytes: 6000, free_bytes: 900000 } });
+  await backup('db_dump', 2, { folder: { files: 7, bytes: 7000, free_bytes: 800000 } });
+};
+const SIZE = { now: NOW, sizeBytes: 123_456_789 };
+
+/** Asks the original and the twin, and says they agree. Returns the answer for the checks of the scenario. */
+async function both(opts: Parameters<typeof original>[1] = SIZE, conn: Connection = u) {
+  const a = await original(conn, opts);
+  const b = await twin(conn, opts);
+  expect(b).toEqual(a);
+  return b;
+}
+
+describe('T-D18 the TypeScript twin of readHealth gives the answer of scripts/health.mjs on every state of the database', () => {
+  it('the constants are the original\'s', async () => {
+    const m = await import('../../scripts/health.mjs');
+    expect({ RED_AFTER_HOURS, DB_RED_LINE_BYTES, DOWNLOAD_AMBER_DAYS, DOWNLOAD_RED_DAYS, PULL_AMBER_DAYS, FOLDER_FALL_WINDOW_DAYS }).toEqual({
+      RED_AFTER_HOURS: m.RED_AFTER_HOURS,
+      DB_RED_LINE_BYTES: m.DB_RED_LINE_BYTES,
+      DOWNLOAD_AMBER_DAYS: m.DOWNLOAD_AMBER_DAYS,
+      DOWNLOAD_RED_DAYS: m.DOWNLOAD_RED_DAYS,
+      PULL_AMBER_DAYS: m.PULL_AMBER_DAYS,
+      FOLDER_FALL_WINDOW_DAYS: m.FOLDER_FALL_WINDOW_DAYS,
+    });
+  });
+
+  it('a new shop that has never run the check or a backup', async () => {
+    await clean();
+    const h = await both();
+    expect(h.level).toBe('red');
+    expect(h.reasons).toEqual(['check_never', 'dump_never', 'photo_copy_never']);
+  });
+
+  it('fresh check, export and photo copy, a download and a pull on record', async () => {
+    await healthy();
+    await setting('last_download', '2026-10-12T05:00:00.000Z');
+    await setting('last_pulled', '2026-10-15T05:00:00.000Z');
+    const h = await both();
+    expect(h.reasons).toEqual([]);
+    expect(h.level).toBe('green');
+  });
+
+  it('a check that says Problem; a check, an export and a photo copy older than 26 hours (26.0 fine, 26.5 not)', async () => {
+    await healthy();
+    await check(0.5, 0);
+    expect((await both()).reasons).toContain('check_problem');
+    for (const hours of [26, 26.5, 30]) {
+      await clean();
+      await check(hours);
+      await backup('db_dump', hours, { folder: { files: 1 } });
+      await backup('photo_copy', hours, { folder: { files: 1 } });
+      const h = await both();
+      expect(h.reasons.includes('check_stale'), `${hours} h`).toBe(hours > RED_AFTER_HOURS);
+    }
+  });
+
+  it('the file count of the backup folder falls: red for a week unless the run pruned that many files', async () => {
+    await clean();
+    await check(1);
+    await backup('db_dump', 30, { folder: { files: 10 } });
+    await backup('db_dump', 5, { folder: { files: 7 } });
+    await backup('photo_copy', 4, { folder: { files: 7 } });
+    const fell = await both();
+    expect(fell.reasons).toContain('backup_files_fell');
+    await clean();
+    await check(1);
+    await backup('db_dump', 30, { folder: { files: 10 } });
+    await backup('db_dump', 5, { folder: { files: 7 }, pruned: 3 });
+    await backup('photo_copy', 4, { folder: { files: 7 } });
+    expect((await both()).reasons).not.toContain('backup_files_fell');
+    await clean();
+    await check(1);
+    await backup('db_dump', 24 * 9, { folder: { files: 10 } });
+    await backup('db_dump', 24 * 8, { folder: { files: 7 } }); // fell eight days ago: out of the seven-day window
+    await backup('photo_copy', 2, { folder: { files: 7 } });
+    expect((await both()).reasons).not.toContain('backup_files_fell');
+  });
+
+  it('Download everything: 27 days is fine, 28 amber, 35 amber, 36 red; with none the first night counts; and Harsh\'s pull: 10 days fine, 11 amber', async () => {
+    const days = (d: number) => new Date(Date.parse('2026-10-17T05:00:00Z') - d * 86_400_000).toISOString();
+    for (const d of [27, 28, 35, 36]) {
+      await healthy();
+      await setting('last_download', days(d));
+      const h = await both();
+      expect(h.download.age_days).toBe(d);
+      expect(h.download.state).toBe(d > DOWNLOAD_RED_DAYS ? 'red' : d >= DOWNLOAD_AMBER_DAYS ? 'amber' : 'ok');
+    }
+    for (const d of [10, 11]) {
+      await healthy();
+      await setting('last_pulled', days(d));
+      const h = await both();
+      expect(h.pull.state).toBe(d > PULL_AMBER_DAYS ? 'amber' : 'ok');
+    }
+    await clean();
+    await check(24 * 40); // the first night was 40 days ago
+    await check(1);
+    await backup('db_dump', 24 * 12, { folder: { files: 1 } });
+    await backup('db_dump', 2, { folder: { files: 1 } });
+    await backup('photo_copy', 3, { folder: { files: 1 } });
+    const h = await both();
+    expect([h.download.from, h.download.age_days, h.pull.from, h.pull.age_days]).toEqual(['first_night', 40, 'first_export', 12]);
+  });
+
+  it('the database size against the red line of 2 GB: measured (with and without ANALYZE TABLE), and injected', async () => {
+    await healthy();
+    const below = await both({ now: NOW, sizeBytes: DB_RED_LINE_BYTES });
+    expect(below.reasons).not.toContain('db_size');
+    expect((await both({ now: NOW, sizeBytes: DB_RED_LINE_BYTES + 1 })).reasons).toContain('db_size');
+    const measured = await both({ now: NOW, analyze: false });
+    expect(measured.db_size.injected).toBe(false);
+    expect(measured.db_size.bytes).toBeGreaterThan(0);
+    await both({ now: NOW });
+  });
+
+  it('what the database user may do: the ten boxes of A3 are green; Delete or Drop makes it amber; other rights are listed', async () => {
+    await healthy();
+    expect((await both()).rights).toEqual({ delete: false, drop: false, extra: [] });
+    const name = `${scratch.user}`;
+    await root.query(`GRANT DELETE, EXECUTE ON \`${scratch.database}\`.* TO ?@'%'`, [name]);
+    const withDelete = await both();
+    expect(withDelete.rights.delete).toBe(true);
+    expect(withDelete.rights.extra).toContain('EXECUTE');
+    expect(withDelete.reasons).toContain('delete_or_drop_right');
+    expect(withDelete.level).toBe('amber');
+    await root.query(`GRANT DROP ON \`${scratch.database}\`.* TO ?@'%'`, [name]);
+    expect((await both()).rights.drop).toBe(true);
+    await root.query(`REVOKE DELETE, DROP, EXECUTE ON \`${scratch.database}\`.* FROM ?@'%'`, [name]);
+    expect((await both()).rights).toEqual({ delete: false, drop: false, extra: [] });
+  });
+});

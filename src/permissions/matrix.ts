@@ -258,6 +258,16 @@ export function readableSettingKeys(role: string): readonly string[] | null {
   return role === 'staff' ? STAFF_SETTING_KEYS : null;
 }
 
+/**
+ * A4, A9, O25: how many days of the cash book (daily_totals) a role reads, counted back from today with today included. null means the wide range (the owner's, up to limits.dailyTotalsMaxDays);
+ * the biller's is BILLER_DAILY_TOTALS_DAYS (today and yesterday); a name that is not a role reads none. Like readableSettingKeys it keeps the role names in this file (S10).
+ */
+export function dailyTotalsWindowDays(role: string): number | null {
+  if (!isRole(role)) return 0;
+  if (role === 'owner') return null;
+  return role === 'biller' ? BILLER_DAILY_TOTALS_DAYS : 0;
+}
+
 // ------------------------------------------------------------------ READ_COLUMNS
 
 type Columns = Partial<Record<Role, readonly string[]>>;

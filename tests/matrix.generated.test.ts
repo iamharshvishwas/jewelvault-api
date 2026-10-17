@@ -24,7 +24,13 @@ const routedActions = new Set(catalog.routeTable.map((r) => r.action).filter(Boo
 const routedPublic = new Set(catalog.routeTable.filter((r) => r.kind === 'public').map((r) => r.name));
 await catalog.close();
 
-const cellRoute = (action: Action) => ({ action, method: MATRIX[action].method, path: MATRIX[action].path, roles: MATRIX[action].roles, mustChange: MATRIX[action].mustChange });
+// The reads that are not a sync page take their own keys (API12): checkReadColumns asks them with these. The fixture clock is 17 Oct 2026, so 16 and 17 Oct are yesterday and today (a biller's window).
+const READ_QUERY: Partial<Record<Action, string>> = {
+  'read:daily_totals': '?from=2026-10-16&to=2026-10-17',
+  'read:audit_log': '?limit=200',
+  'read:health_checks': '?limit=200',
+};
+const cellRoute = (action: Action) => ({ action, method: MATRIX[action].method, path: MATRIX[action].path, roles: MATRIX[action].roles, mustChange: MATRIX[action].mustChange, query: READ_QUERY[action] });
 
 describe('T-D02 the real routes: every registered route, every caller', () => {
   let world: World;
