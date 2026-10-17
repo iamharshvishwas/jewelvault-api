@@ -93,15 +93,14 @@ T("PH03", "PH", "WITH-HARSH: remove the failed Hostinger test app and find the u
 
 T("PH04", "PH", "WITH-HARSH: the domain's DNS for Vercel, and (after go-live) the hand-over of the domain to Siddhi",
   who="WITH-HARSH", lead=(0, 2), deps=["PH01"], reqs=["O38"], tests=[],
-  do="**Changed on 17 Oct 2026: Harsh bought `jaishrigoldpalace.com` himself at Hostinger, in his own Hostinger account** (API-00C-RESULTS.md section 5), so the old plan of "
-     "asking Siddhi for a domain is gone (`MESSAGE-FOR-SIDDHI-domain.md` is marked not needed). The names are fixed: production `billing.jaishrigoldpalace.com` (the website, "
+  do="**Corrected on 17 Oct 2026, in Harsh's words: `jaishrigoldpalace.com` is SIDDHI's domain (her name and her money); it is registered in HARSH's own Hostinger account (API-00C-RESULTS.md section 5) and stays there until hand-over.** So the old plan of "
+     "asking Siddhi for a domain is gone because she has already supplied the name (`MESSAGE-FOR-SIDDHI-domain.md` stays marked not needed). The names are fixed: production `billing.jaishrigoldpalace.com` (the website, "
      "on Vercel) and `billing-api.jaishrigoldpalace.com` (the API, Hostinger); staging `billing-staging.` and `billing-api-staging.`. Two staging names are already connected "
      "to the proof apps, with Let's Encrypt certificates (17 Oct to 15 Jan 2027), and the cookie, CORS and image flow passed in Chrome 155. **Needed from Harsh:** (1) in "
      "Hostinger's DNS for the domain, the record that Vercel asks for, for `billing-staging` (a Vercel preview project) and later for `billing` (production), "
-     "replacing the connection to the proof app (that name is now served by a Hostinger app); (2) the decision about who owns what at hand-over (O38): the "
-     "registrant of the domain and the Hostinger hosting stay in one account until both move together (a registrant in Siddhi's account while the apps stay in Harsh's "
-     "can break the connected names the way `harshvishwas.com` was refused), the yearly renewal price of the domain is written in the go or no-go list, and it "
-     "moves to Siddhi's account after the first month, with Siddhi's say. Nothing else is hosted on any subdomain of this domain (same-site with the API).",
+     "replacing the connection to the proof app (that name is now served by a Hostinger app); (2) the hand-over (O38): after go-live (the plan suggests after the first month, with Siddhi's say) the registrant moves to an account in Siddhi's name; until then "
+     "the registrant and the Hostinger hosting stay together in Harsh's one account (a registrant in Siddhi's account while the apps stay in Harsh's "
+     "can break the connected names the way `harshvishwas.com` was refused), and the yearly renewal is Siddhi's to pay by default, with the price stated by Harsh in the go or no-go list. Nothing else is hosted on any subdomain of this domain (same-site with the API).",
   done="The website name resolves to Vercel and the API name to Hostinger, each with a certificate; Harsh has written the ownership and renewal decision in the ledger.", rollback=RBN)
 
 T("PH05", "PH", "WITH-HARSH: staging database and a scratch database created in hPanel with exactly the ten boxes",
@@ -133,10 +132,10 @@ T("PH06a", "PH", "WITH-HARSH: the backup key pair, the token hashes and the Acti
 
 T("PH06b", "PH", "WITH-HARSH: security and accounts for go-live (two-step login, plan and domain renewal, certificates)",
   who="WITH-HARSH", lead=(2, 10), deps=["PH01"], reqs=["B6", "O46"], tests=[],
-  do="Needed from Harsh before go-live: two-step login on GitHub, Hostinger, Vercel, the domain's registrar or DNS account (the same Hostinger account) and the password "
+  do="Needed from Harsh before go-live: two-step login on GitHub, Hostinger, Vercel, the Hostinger account that holds the domain and the DNS (the same account as the hosting) and the password "
      "manager; the Hostinger plan renewed with auto-renew ON and a calendar reminder 30 days before the end date (it expires on 22 March 2027; the hosting promised to Siddhi "
-     "runs to 30 April 2027; set the reminder for 20 February 2027); **the yearly renewal of `jaishrigoldpalace.com` and its price, and the renewal price and term of the Hostinger "
-     "plan, written in the go or no-go list** (this plan buys nothing; Harsh has already bought the domain); the database and the plan are never deleted without Harsh "
+     "runs to 30 April 2027; set the reminder for 20 February 2027); **the yearly renewal of `jaishrigoldpalace.com` (Siddhi's domain, registered in Harsh's account until hand-over): who pays it (default: Siddhi), its price stated by Harsh, a calendar reminder 30 days before the domain's renewal date, "
+     "and the renewal price and term of the Hostinger plan, all written in the go or no-go list** (this plan buys nothing); the database and the plan are never deleted without Harsh "
      "and the owner both agreeing in writing; Hostinger issues 90-day Let's Encrypt certificates (the staging ones expire on 15 Jan 2027): a reminder to look at them before; "
      "read hPanel's Details for the plan's real limits (version, database size, backup retention, O46). Latest day: all of it ticked in the go or no-go checklist (QA04).",
   done="The go or no-go checklist (QA04) shows each item ticked with a date; the renewal dates and the reminders are written down.", rollback=RBN)
@@ -241,7 +240,7 @@ T("PS07", "PS", "WITH-SIDDHI: her two testers (two days) and her signature on th
 T("OPS01", "OPS", "API-00c part 1 (WITH-HARSH): Safari and Firefox on the real names, and the real pair with the website on Vercel",
   agent="C", repo="api", lo=0.5, hi=1.5, grp="ops", who="WITH-HARSH", deps=["PH04", "API07", "API05", "API09"],
   reqs=["O48"], tests=[], gate="G-H", tripwire="TW3: if the `__Host-` SameSite=Strict cookie fails in Safari or Firefox on the real names, or Safari caps it at 7 days, or the website name pointing at Vercel breaks the same-site rule, STOP and re-plan the name pair or put the API behind the website's own origin by a Vercel rewrite (A12). That costs about 1 to 2 plan-days of WEB01/WEB02/API07 and is Harsh's decision.",
-  note="Done on 17 Oct 2026 (API-00C-RESULTS.md section 5): `jaishrigoldpalace.com` bought by Harsh at Hostinger; `billing-staging.` and `billing-api-staging.` connected through the Add-domain wizard (no DNS work by hand), Let's Encrypt certificates (17 Oct to 15 Jan 2027), the cookie, CORS and image flow passed in Chrome 155. NOT repeated here. Still open: Safari and Firefox on the real names, Safari's 7-day cap, and the real pair (website on Vercel, API on Hostinger).",
+  note="Done on 17 Oct 2026 (API-00C-RESULTS.md section 5): `jaishrigoldpalace.com` (Siddhi's domain, registered by Harsh in his own Hostinger account); `billing-staging.` and `billing-api-staging.` connected through the Add-domain wizard (no DNS work by hand), Let's Encrypt certificates (17 Oct to 15 Jan 2027), the cookie, CORS and image flow passed in Chrome 155. NOT repeated here. Still open: Safari and Firefox on the real names, Safari's 7-day cap, and the real pair (website on Vercel, API on Hostinger).",
   do="Through Harsh's logged-in hPanel (Claude drives, Harsh watches and types any password himself): with the website name pointed at a Vercel project (PH04) that serves a static test page (one HTML file that the orchestrator makes from the Chrome page of 17 Oct, committed on `api-web` and shown by a Vercel preview; the real screens need WEB02) and the "
      "API on its Hostinger name, deploy the API skeleton with login (API01 to API07 and API09, by zip upload to the runtime proof app that still carries `billing-api-staging.`; the GitHub deploy is OPS03a) and check, in Safari and Firefox "
      "(Chrome again for the pair): login from the website's origin sets `__Host-jv_session`, it survives a reload, a `PATCH` and a `POST` with `X-JV-Client` and "
@@ -323,7 +322,7 @@ T("OPS04", "OPS", "Staging real-network checks: 10-second hydrate, cold start, t
   agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS03", "WEB06", "WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "PH04"],
   reqs=[], tests=["T-E10"], extends=["T-F03", "T-D12"], gate="G-E",
   do="The static site on a Vercel preview with `NEXT_PUBLIC_API_URL` set to the staging API; on the staging pair of names "
-     "(`billing-staging.` and `billing-api-staging.` of the domain Harsh bought, once PH04 is in): the first hydrate of the C2 volumes "
+     "(`billing-staging.` and `billing-api-staging.` of Siddhi's domain (registered in Harsh's account), once PH04 is in): the first hydrate of the C2 volumes "
      "(2,500 pieces, 2,000 customers, 3,000 bills, seeded by `scripts/seed-volume.mjs` of API12) in under 10 seconds on a 4G profile, "
      "repeated with the browser throttled; the first call after a long idle (cold start) timed; T-E10 in Chromium, WebKit and "
      "Firefox (login, reload, PATCH edit, POST with the custom headers, another origin refused, photos in `<img>`); T-D12 "
@@ -362,7 +361,7 @@ T("OPS06", "OPS", "The two-page runbook, deploy and rollback sheet, break-glass 
      "with `UPDATE ... SET updated_at = NOW(6)` and a new `data_epoch`), the one planned purge (tick Delete for minutes), the "
      "owner's monthly Download everything and Harsh's weekly pull, and reading the nightly check each morning for the first two "
      "weeks; plus a one-page paper break-glass sheet for the shop (what to do when the internet or the system is down: "
-     "write the paper bill, enter it later). The runbook is accepted when someone who did NOT write it follows it to "
+     "write the paper bill, enter it later; and a line that the domain sits in Harsh's Hostinger account until hand-over, with whom to call). The runbook is accepted when someone who did NOT write it follows it to "
      "restore the throw-away copy.",
   files=[], done="A fresh agent (standing in for the person) follows `RUNBOOK.md` alone and restores the staging export into a Docker "
                  "database in under 2 hours (T-R02), writing down every step that was unclear; the unclear steps are fixed and the "
@@ -462,7 +461,7 @@ T("QA04", "QA", "Go or no-go checklist - gate G-GO",
   do="One page, every line ticked with a date and an owner: G-H GO (OPS01, OPS02a, OPS02w, OPS02: no UNKNOWN left); restore points counted and one database-only "
      "restore proved (B1); drill 1 and drill 2 logged under 2 hours; a pulled copy exists on Harsh's Mac and the weekly pull "
      "works; the owner's first Download everything is done; both key holders proved they can decrypt; the Hostinger plan renewed "
-     "with auto-renew on and the reminder set (O46); Siddhi told about the backups (O45); two-step login on every account (B6); "
+     "with auto-renew on and the reminder set (O46); the domain: two-step login on the Hostinger account that holds it, who pays the yearly renewal (default Siddhi, price stated), a reminder 30 days before its renewal date, and the break-glass sheet says it sits in Harsh's account until hand-over; Siddhi told about the backups (O45); two-step login on every account (B6); "
      "devices checked (H6); the nightly check green for the last 3 nights on staging; both cron jobs listed; no `DELETE`/`DROP` "
      "right on (the dashboard line is not amber); `NEXT_PUBLIC_PREVIEW_MODE` removed (WEB15, PH08); Remote MySQL off; the "
      "paper book will be kept in parallel; the date is not between 29 Oct and 11 Nov; **the legal and tax line: data-request item 1 (how she bills today, GST registration, who issues "
