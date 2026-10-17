@@ -464,6 +464,15 @@ T("API13b", "API", "Ordinary edits: daily rates, settings and customer content c
        "(A biller's `daily_totals` range is the T-D04 clause of API12.)",
   rollback=RB)
 
+T("API13c", "API", "Ordinary edit of the owner-only original weight (sku_private), found missing by WEB05",
+  agent="C", grp="pure", pd=0.3, deps=["API13b"],
+  reqs=[], tests=[], uses=["D12", "A4", "A5"], extends=["T-D14", "T-D02"],
+  note="Added on 17 Oct 2026: the matrix has the row `edit:sku_private.update` (owner only) but no task built its route, so the owner could not correct an original weight after X8 created the piece (found by WEB05, the screen shows it read-only). It is a small addition to the edit engine of API13 (table `sku_private`, key `sku_id`), no new rule.",
+  do="`PUT /v1/sku-private/:sku_id` on the edit engine: the owner (never a biller or staff) sets or corrects `original_net_weight` of a piece (the weight rules of D7: a plain 3-decimal text, within the cap, not above the gross weight); the row is created when the piece has none yet (X8 stores one only when the owner sent a weight); the stale check applies when the row exists; stamps and person columns as for every edit; the answer is the sync row for the owner and no other role ever receives it (D12, T-D03). Nothing else about the original weight changes: it is never in a result for a biller or staff.",
+  files=[],
+  done="`npm test -- -t \"T-D02|T-D14|T-D03\"` passes with the new route: the owner sets and then corrects a weight, a stale edit returns 409 with the current row, a biller and staff are 403, a weight above the gross weight or with 4 decimals is `JV_INVALID_INPUT`, one audit row per change in both audit modes, the generated matrix test walks the row, and no read or function result for a biller or staff holds the weight.",
+  rollback=RB)
+
 T("API14", "API", "Numbers and repeat-safety: counters, formats, Idempotency-Key claim, ids",
   agent="A", grp="money", pd=1.0, deps=["API03"],
   reqs=["L3", "L4", "L5", "S2"],

@@ -9,7 +9,7 @@ AGENT_ORDER = {
           "API26", "API29", "API30", "RV2", "API35", "API36", "RV4", "QA01"],
     "B": ["API06", "API10", "WEB00", "WEB01", "WEB02", "WEB03", "WEB04", "WEB05", "WEB07", "WEB06", "WEB08",
           "WEB09", "WEB10", "WEB11", "WEB12", "WEB12b", "WEB16", "WEB13", "WEB17", "WEB15"],
-    "C": ["RV0", "API04", "API05", "API09", "API07", "API11", "API13", "API13b", "API18", "API19", "API08", "API17",
+    "C": ["RV0", "API04", "API05", "API09", "API07", "API11", "API13", "API13b", "API13c", "API18", "API19", "API08", "API17",
           "API12", "API24", "API27", "API28", "API32", "API33", "API33b", "API31", "API34", "WEB14", "IMP01",
           "RV1", "RV3"],
 }
@@ -53,6 +53,7 @@ TEST_CLAUSES = [
     ("T-E10", "the same three-browser test on the real pair, once", "OPS07"),
     ("T-D14", "one audit row per changed row in both modes, for ordinary edits of designs, pieces and categories", "API13"),
     ("T-D14", "one audit row per changed row in both modes, for rates, settings and customer edits", "API13b"),
+    ("T-D14", "one audit row per changed row in both modes, for the original weight edit", "API13c"),
     ("T-D14", "one audit row per changed row in both modes, for X8 and X9", "API16"),
     ("T-D14", "one audit row per changed row in both modes, for X6", "API19"),
     ("T-D14", "one audit row per changed row in both modes, for X1", "API20"),
@@ -127,6 +128,7 @@ TEST_CLAUSES = [
     ("T-D02", "rows of the derived reads, audit-log and health", "API12"),
     ("T-D02", "rows of the ordinary edits of designs, pieces and categories", "API13"),
     ("T-D02", "rows of the edits of rates, settings and customers", "API13b"),
+    ("T-D02", "the row of the owner-only original weight edit", "API13c"),
     ("T-D02", "rows of the photo calls", "API17"),
 ]
 
