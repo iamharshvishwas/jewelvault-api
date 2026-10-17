@@ -13,6 +13,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import type { FastifyInstance } from 'fastify';
 import type { Config } from '../config.js';
+import { JvError, errorBody } from '../errors.js';
 import { TOKEN_DOORS } from '../permissions/matrix.js';
 import { csrfHook } from './csrf.js';
 import { helmetOptions, responseHeaders } from './headers.js';
@@ -32,6 +33,14 @@ export function installSecurity(app: FastifyInstance, config: Pick<Config, 'allo
     route.handlerTimeout = handlerTimeoutFor(timers, methods[0], route.url);
     // a token door has a token of its own and no browser behind it: no CORS answer, whatever the origin (the admin door also refuses a call that carries an Origin header, U3)
     if (doorPrefixes.some((prefix) => route.url.startsWith(prefix))) route.config = { ...route.config, cors: false };
+  });
+
+  // A token door is not an API for a browser, so a PREFLIGHT to it is a 404 like any address that is not a route, with no CORS header: `cors: false` above only stops the plugin on the door's own
+  // routes, and a preflight is answered by the plugin's `OPTIONS *` route, which would give the website's headers to /admin/v1/*. This hook is queued before the plugins, so it runs first (U3, T-D27).
+  app.addHook('onRequest', async (request, reply) => {
+    if (request.method === 'OPTIONS' && doorPrefixes.some((prefix) => request.url.startsWith(prefix))) {
+      return reply.code(404).send(errorBody(new JvError('JV_NOT_FOUND', 'There is nothing at this address.'), request.id));
+    }
   });
 
   app.register(helmet, helmetOptions);

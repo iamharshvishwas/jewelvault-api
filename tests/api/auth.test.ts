@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../scripts/migrate.mjs';
@@ -343,13 +344,13 @@ describe('T-D25 login: the cookie, a new ticket every time, the old session ende
 // ------------------------------------------------------------------------------------------------ me, activity, logout, change-password
 
 describe('T-D25 me, logout and activity', () => {
-  it('me returns the user, the role as the database has it, the limits and pricing_sha256 (null until API18 fills it)', async () => {
+  it('me returns the user, the role as the database has it, the limits and pricing_sha256 (the SHA-256 of src/domain/pricing.ts, API18)', async () => {
     const u = await signIn('owner');
     const res = await inject('GET', '/v1/auth/me', { cookie: u.cookie });
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({
       user: { id: u.userId, email: u.email, full_name: expect.any(String), role: 'owner', must_change_password: false },
-      pricing_sha256: null,
+      pricing_sha256: createHash('sha256').update(readFileSync(new URL('../../src/domain/pricing.ts', import.meta.url))).digest('hex'),
       idle_timeout_s: limits.sessionIdleMs / 1000,
       absolute_expires_at: u.res.json().absolute_expires_at,
     });

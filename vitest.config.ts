@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { laneEnv, selectedLane } from './scripts/lane.mjs';
 
@@ -6,6 +7,8 @@ import { laneEnv, selectedLane } from './scripts/lane.mjs';
 const lane = selectedLane();
 
 export default defineConfig({
+  // C12, T-A14: the app's pricing unit tests (tests/pricing.test.ts, a copy of the app's tests/unit/pricing.test.ts) import the file as '@/lib/pricing'; here that name is the API's copy of the file
+  resolve: { alias: { '@/lib/pricing': fileURLToPath(new URL('./src/domain/pricing.ts', import.meta.url)) } },
   test: {
     include: ['tests/**/*.test.ts'],
     // T-D11: with JV_STATEMENT_LOG=<folder> the run writes down the statements of src/ and their plans (tests/api/statement-log.ts); without it the file does nothing

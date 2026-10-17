@@ -1,10 +1,14 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Connection } from 'mysql2/promise';
 import { appConn, dropDb, errorOf, ER, freshDb, rng } from './helpers';
 import { formatGrams, formatRupees, priceBill, PricingError, type PriceBillInput } from '../oracle/pricing';
+import { ExactPricingError, priceBill as exactPrice } from '../oracle/exact-decimal';
+import { PricingError as ApiPricingError, priceBill as apiPriceBill } from '../src/domain/pricing';
 
-// Spike (b): exact DECIMAL money in MariaDB against the BigInt oracle in oracle/pricing.ts (a snapshot of
-// jewelvault-app src/lib/pricing.ts at 416d17a). Rules R3 to R8 of the spec are written ONCE here in SQL.
+// Spike (b): exact DECIMAL money in MariaDB against the BigInt oracle in oracle/pricing.ts (a snapshot of the app's pricing.ts). Rules R3 to R8 of the spec are written here in SQL, in
+// src/domain/pricing.ts (the file the API runs and the screen previews with) and, since API18, a third time in oracle/exact-decimal.ts, written again from the spec and sharing no line with pricing.ts:
+// T-A14 is that 200 random inputs agree in all three. (The snapshot of oracle/pricing.ts is the same code as pricing.ts and so could only agree with itself; the other two engines are independent.)
 
 let db: string;
 let c: Connection;
@@ -240,5 +244,95 @@ describe('(b) DECIMAL money against the BigInt oracle', () => {
     expect(rows[0].ro).toBe('-0.40');
     expect(rows[0].half_up).toBe('1');
     expect(rows[0].neg_half).toBe('-1'); // away from zero for negatives (the rules only round values >= 0, R8)
+  });
+});
+
+// ------------------------------------------------------------------ T-A14 (API18): the API's pricing.ts against the two independent engines
+
+describe('T-A14 the API\'s pricing.ts equals the independent exact-decimal oracle and the SQL DECIMAL version on 200 random inputs (R12, C12)', () => {
+  it('the exact-decimal oracle is its own text: it imports nothing and shares no long line with pricing.ts', () => {
+    const oracle = readFileSync(new URL('../oracle/exact-decimal.ts', import.meta.url), 'utf8');
+    const pricing = readFileSync(new URL('../src/domain/pricing.ts', import.meta.url), 'utf8');
+    expect(oracle).not.toMatch(/^\s*import\s/m);
+    const shared = oracle.split('\n').map((l) => l.trim()).filter((l) => l.length >= 40 && !l.startsWith('//') && !l.startsWith('*') && pricing.includes(l));
+    expect(shared, 'oracle lines that also stand in pricing.ts').toEqual([]);
+  });
+
+  it('20,000 deliberate half-way cases (NW x rate ends in exactly half a paisa): pricing.ts and the exact-decimal oracle both round them up', () => {
+    const rand = rng(78);
+    let checked = 0;
+    while (checked < 20000) {
+      const mg = 1 + Math.floor(rand() * 900_000);
+      const rate = 1 + Math.floor(rand() * 2_000_000);
+      if ((mg * rate) % 1000 !== 500) continue;
+      const line = { material: 'Gold', sellingMethod: 'By Weight', customerNetWeightMg: mg, metalRatePaise: rate, labourRatePaise: rate } as const;
+      const input = { saleType: 'Retail', roundOffSetting: false, lines: [line] } as const;
+      const a = apiPriceBill(input).lines[0];
+      const e = exactPrice(input).lines[0];
+      expect(a.metalAmountPaise, `${mg} mg x ${rate}`).toBe((mg * rate - 500) / 1000 + 1); // the product is k + 0.5 paise: the larger neighbour
+      expect(a, `${mg} mg x ${rate}`).toEqual(e);
+      checked++;
+    }
+  });
+
+  it('200 random bills (some at the caps, some over them): pricing.ts and the exact-decimal oracle give the same figures or both refuse, and the accepted bills equal the SQL DECIMAL figures', async () => {
+    await c.query('DELETE FROM bill_lines');
+    await c.query('DELETE FROM bills');
+    const rand = rng(20261016);
+    let accepted = 0;
+    let refused = 0;
+    const loaded: { b: ReturnType<typeof randomBill>; discount: number; priced: ReturnType<typeof exactPrice> }[] = [];
+    for (let id = 1; id <= 200; id++) {
+      const b = randomBill(rand, id);
+      const base: PriceBillInput = { saleType: b.sale, lines: b.lines, additionalChargesPaise: b.additionalPaise, roundOffSetting: true };
+      const outcome = (fn: (i: PriceBillInput) => unknown, input: PriceBillInput) => {
+        try {
+          return { ok: true as const, value: fn(input) };
+        } catch (e) {
+          return { ok: false as const, code: (e as { code?: string }).code, isPricingError: e instanceof ExactPricingError || e instanceof ApiPricingError };
+        }
+      };
+      const first = outcome(apiPriceBill, base);
+      const second = outcome(exactPrice, base);
+      expect(first.ok, `bill ${id}: pricing.ts and the exact-decimal oracle must both accept or both refuse`).toBe(second.ok);
+      if (!first.ok || !second.ok) {
+        expect(first).toMatchObject({ code: 'JV_INVALID_INPUT', isPricingError: true });
+        refused++;
+        continue;
+      }
+      const subtotal = (second.value as ReturnType<typeof exactPrice>).subtotalPaise;
+      const discount = rand() < 0.4 ? Math.floor(rand() * (subtotal + b.additionalPaise)) : 0;
+      const full = { ...base, discountPaise: discount, roundOffSetting: rand() < 0.5 };
+      const api = apiPriceBill(full);
+      const oracle = exactPrice(full);
+      expect(api, `bill ${id}`).toEqual(oracle);
+      if (full.roundOffSetting) loaded.push({ b, discount, priced: oracle });
+      accepted++;
+    }
+    for (const { b, discount } of loaded) await loadBill(b, discount);
+
+    const [lineRows] = await c.query<any[]>(LINE_SQL);
+    const [billRows] = await c.query<any[]>(`
+      SELECT q.bill_id, q.subtotal, q.fine_due,
+             ROUND(q.subtotal - q.discount + q.additional, 0) AS grand,
+             ROUND(q.subtotal - q.discount + q.additional, 0) - (q.subtotal - q.discount + q.additional) AS round_off
+      FROM (${BILL_SQL}) q`);
+    const byId = new Map(loaded.map((l) => [l.b.id, l]));
+    for (const r of lineRows) {
+      const e = byId.get(Number(r.bill_id))!.priced.lines[Number(r.line_no) - 1];
+      expect(r.metal_amount, `bill ${r.bill_id} line ${r.line_no} metal`).toBe(formatRupees(e.metalAmountPaise));
+      expect(r.labour_amount, `bill ${r.bill_id} line ${r.line_no} labour`).toBe(formatRupees(e.labourAmountPaise));
+    }
+    for (const r of billRows) {
+      const e = byId.get(Number(r.bill_id))!.priced;
+      expect(r.subtotal, `bill ${r.bill_id} subtotal`).toBe(formatRupees(e.subtotalPaise));
+      expect(r.grand.replace(/\.0+$/, '') + '.00', `bill ${r.bill_id} grand`).toBe(formatRupees(e.grandTotalPaise));
+      expect(Number(r.round_off).toFixed(2), `bill ${r.bill_id} round_off`).toBe(formatRupees(e.roundOffPaise));
+      expect(Number(r.fine_due).toFixed(3), `bill ${r.bill_id} fine`).toBe(formatGrams(e.fineWeightDueMg));
+    }
+    console.log(`[T-A14] 200 random bills: ${accepted} accepted by pricing.ts and the exact-decimal oracle (equal), ${refused} refused by both over a cap; ${billRows.length} bills (with the round-off setting on) equal the SQL DECIMAL figures`);
+    expect(accepted + refused).toBe(200);
+    expect(billRows.length).toBe(loaded.length);
+    expect(loaded.length).toBeGreaterThan(50);
   });
 });

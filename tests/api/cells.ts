@@ -3,6 +3,7 @@ import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type { Connection } from 'mysql2/promise';
 import { buildApp } from '../../src/app';
 import { type Clock, createClock, formatTimestamp } from '../../src/clock';
+import type { Config } from '../../src/config';
 import { type DbPool, createDbPool } from '../../src/db/pool';
 import { limits } from '../../src/limits';
 import { type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName, type Role } from '../../src/permissions/matrix';
@@ -95,6 +96,8 @@ export interface WorldOptions {
   routes?: boolean;
   /** The API's clock. Default: fixed at T0, the instant the fixtures are made relative to. A test that moves time passes a clock over its own source, which starts at T0. */
   clock?: Clock;
+  /** Config values over `testConfig` (API09: the admin door exists only while `adminTokenHash` is set). */
+  config?: Partial<Config>;
 }
 
 /** The pool, but every statement it sends is seen by the spy. */
@@ -161,7 +164,7 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
   const spy = spyOn(realPool);
   const logs = logSink();
   const handled: string[] = [];
-  const app = buildApp({ config: testConfig({ logLevel: 'warn' }), db: spiedPool(realPool, spy), clock: options.clock ?? createClock(() => now), logStream: logs.stream, routes: options.routes ?? false });
+  const app = buildApp({ config: testConfig({ logLevel: 'warn', ...options.config }), db: spiedPool(realPool, spy), clock: options.clock ?? createClock(() => now), logStream: logs.stream, routes: options.routes ?? false });
   options.build?.(app, { handled });
   await app.ready();
   if (!app.startup?.ok) throw new Error(`the start-up check of the fixture database failed: ${JSON.stringify(app.startup?.problems)}`);

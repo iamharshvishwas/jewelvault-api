@@ -6,6 +6,7 @@
     "strict": true,
     "skipLibCheck": true,
     "types": ["node"],
+    "paths": { "@/lib/pricing": ["./src/domain/pricing.ts"] },
     "noEmit": true
   },
   "include": ["src", "tests", "oracle", "vitest.config.ts"]

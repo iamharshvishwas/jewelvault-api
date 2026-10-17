@@ -23,6 +23,12 @@ const originList = z
     return list ?? [];
   });
 
+// U3: the SHA-256 of the admin token, in hex (scripts/make-token.mjs prints it). The admin door exists only while this is set; it is optional, so an unset variable is a shut door and not a failed start.
+const tokenHash = z
+  .string()
+  .regex(/^[0-9a-fA-F]{64}$/)
+  .transform((value) => value.toLowerCase());
+
 const schema = z.object({
   DB_HOST: text,
   DB_PORT: portNumber,
@@ -30,6 +36,7 @@ const schema = z.object({
   DB_USER: text,
   DB_PASSWORD: text,
   ALLOWED_ORIGINS: originList,
+  JV_ADMIN_TOKEN_HASH: tokenHash.optional(),
   PORT: portNumber.optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).optional(),
 });
@@ -43,6 +50,8 @@ export interface Config {
   readonly logLevel: LogLevel;
   /** A12: the origins that may call the API from a browser, exactly as the browser writes them (ALLOWED_ORIGINS, comma separated). In production only the website's. */
   readonly allowedOrigins: readonly string[];
+  /** U3, O41: the SHA-256 of the admin token, 64 lower-case hex characters. Without it the admin door (/admin/v1/*) does not exist: remove the variable and the door is shut. */
+  readonly adminTokenHash?: string | undefined;
   readonly db: { readonly host: string; readonly port: number; readonly name: string; readonly user: string; readonly password: string };
 }
 
@@ -75,6 +84,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     port: v.PORT ?? 3000,
     logLevel: v.LOG_LEVEL ?? 'info',
     allowedOrigins: v.ALLOWED_ORIGINS,
+    adminTokenHash: v.JV_ADMIN_TOKEN_HASH,
     db: Object.freeze({ host: v.DB_HOST, port: v.DB_PORT, name: v.DB_NAME, user: v.DB_USER, password: v.DB_PASSWORD }),
   });
 }
