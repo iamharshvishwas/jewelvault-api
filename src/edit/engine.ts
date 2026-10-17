@@ -14,6 +14,9 @@
 // AN INSERT (POST, shape `fields`): the fields themselves; the id, both stamps and both person columns are the API's. 201 with the new row.
 // AN UPSERT (PUT, shape `fields`, the settings): the key is in the address, the body is the fields themselves and there is no stamp to compare (A4: the last write wins; the row is locked for the
 // length of the write): the row is read FOR UPDATE and made when it is not there (201), changed when its value differs (200), left alone when it does not (200, nothing written).
+// A PUT ON A PARENT'S ID (PUT, shape `fields`, API13c: the owner-only weight of a piece): the row is keyed by the id of the row it belongs to, so the address names it and the first write MAKES it;
+// afterwards it is corrected, and then the stale check of A5 applies: the body carries `expected_updated_at` beside the fields, as the exact text the screen holds, or none when it holds no row. A
+// call with no stamp meets a row that is there (another tab made it first) as a stale edit, and a stamp for a row that is not there is a mistake of the screen (422).
 // EXTRA PERSON COLUMNS. A table may name more columns than `created_by` and `updated_by` that the API sets from the session user on every insert and update (`EditTable.person`: the
 // `confirmed_by` of a daily rate, D4); no request may name them (STAMP_AND_PERSON_COLUMNS of the matrix).
 //
@@ -238,6 +241,51 @@ async function writeInsert(tx: Tx, auth: Auth, table: EditTable, id: string, val
   if (!after) throw new Error(`${table.table} ${id}: the row is gone after its own insert`);
   await auditChange(tx, { table: table.table, rowId: id, action: 'insert', before: null, after }); // L1 (b): the Node writer, only when JV_AUDIT_MODE=node
   return after;
+}
+
+/**
+ * What a put on a parent's id is told before it reads its own row: the open transaction and the id in the address. The rule locks the row this one belongs to and reads what the value is checked
+ * against (404 when that row is not there, so the foreign key is never asked a question it would answer with a 500), and gives back the check of the new values, which the engine runs after the
+ * stale check, as it runs the rules of an update.
+ */
+export type PutRule = (tx: Tx, id: string) => Promise<(values: Readonly<Record<string, unknown>>) => void>;
+
+/** The stamp a put carries beside the fields: the exact wire text, or null (or nothing) when the screen holds no row. */
+const putStamp = z.strictObject({ expected_updated_at: wire.timestamp.nullable().optional() });
+
+/**
+ * A put on a parent's id (see the header): `id` is in the address, `input` holds the fields of the table and, beside them, `expected_updated_at`. The row of the parent is locked first (PutRule),
+ * then this row FOR UPDATE: a row that is not there is made (`created: true`, a stamp is then refused); one that is there is compared with the stamp (409 JV_STALE with the row the sync read gives),
+ * then the rule, then the fields that really differ are written, and a call that changes nothing writes nothing and leaves the stamp. Both stamps and the person columns come from one reading of the
+ * API clock and the session, as for every edit. Two first writes at the same moment are serialised by the parent's lock: the second finds the row and is stale.
+ */
+export async function putRecord(app: FastifyInstance, request: FastifyRequest, auth: Auth, table: EditTable, id: string, input: Record<string, unknown>, rule?: PutRule): Promise<{ row: Row; created: boolean }> {
+  const action = table.update;
+  if (!action || table.insert !== action) throw new Error(`${table.table}: a put needs one matrix row for both the insert and the update`);
+  const role = auth.user.role;
+  assertMayCall(role, action);
+  const { expected_updated_at: sent, ...fields } = input;
+  const stamp = wire.parseInput(putStamp, sent === undefined ? {} : { expected_updated_at: sent }).expected_updated_at;
+  const expected = stamp === undefined || stamp === null ? null : timestampFromWire(stamp);
+  const values = checkFields(table, action, role, fields, '', insertFields(action, role));
+  if (!UUID_TEXT.test(id)) throw notFound(); // not an id: there is no such row, and the database is not asked
+
+  return withTx(contextOf(app, request, auth), async (tx) => {
+    const check = await rule?.(tx, id);
+    const current = await readRow(tx, table.table, id, true, keyOf(table));
+    const now = oneReading(app);
+    if (!current) {
+      if (expected !== null) throw invalid('expected_updated_at', 'must be left out: there is no stored row to compare it with');
+      check?.(values);
+      return { row: wireRow(table.table, role, await writeInsert(tx, auth, table, id, values, now())), created: true };
+    }
+    if (stampText(current.updated_at) !== expected) throw stale(table.table, role, current); // A5: nothing is changed, the screen reloads
+    const diff = changed(table, current, values);
+    if (Object.keys(diff).length === 0) return { row: wireRow(table.table, role, current), created: false }; // nothing to change: nothing is written, the stamp stays, and no rule is asked (D7: a rule runs when the value changes)
+    check?.(values);
+    const after = await writeUpdate(tx, auth, table, current, diff, expected, now());
+    return { row: wireRow(table.table, role, after), created: false };
+  });
 }
 
 /**
