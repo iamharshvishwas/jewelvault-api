@@ -9,9 +9,11 @@
 //   API07  /readyz (below)
 //   API09  the admin door and the job routes
 //   API11  the read side (the sync resources, the poll) ...
+//   API13  the ordinary edits (designs, pieces, categories, subcategories) ...
 import type { FastifyInstance } from 'fastify';
 import { registerAdminRoutes } from './admin/routes.js';
 import { registerAuthRoutes } from './auth/loginRoutes.js';
+import { registerEditRoutes } from './edit/routes.js';
 import { registerQuoteBill } from './money/x07QuoteBill.js';
 import { route } from './permissions/route.js';
 import { registerSyncRoutes } from './sync/routes.js';
@@ -21,6 +23,7 @@ export function registerRoutes(app: FastifyInstance): void {
   registerAuthRoutes(app);
   registerSyncRoutes(app);
   registerAdminRoutes(app); // API09: the admin door, only while JV_ADMIN_TOKEN_HASH is set
+  registerEditRoutes(app); // API13: the ordinary edits
   registerQuoteBill(app); // API18: X7 quote_bill
   // A14: /readyz says only whether the start-up check passed, {"ok":true} or {"ok":false} (503 while it has not): never why. The reason is in sys_error_log and the owner's dashboard line.
   route(app, { public: 'ready', handler: ({ app: a, reply }) => reply.code(a.startup?.ok === true ? 200 : 503).send({ ok: a.startup?.ok === true }) });

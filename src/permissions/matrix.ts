@@ -225,11 +225,15 @@ export const NEVER_WRITTEN_SETTINGS: readonly string[] = ['last_download', 'last
 /** A4, O25: a biller reads daily_totals for today and yesterday only. */
 export const BILLER_DAILY_TOTALS_DAYS = 2;
 
-/** Section 10: the field rules that belong to the matrix. Owner-only: cash_override_reason (Z1), original_net_weight (X8), and a business date other than today (Y8). */
+/**
+ * Section 10 and A5: the field rules that belong to the matrix. Owner-only: cash_override_reason (Z1), original_net_weight (X8), a business date other than today (Y8), and removing, reordering or
+ * replacing the photo ids of a design (A5, P3: the others may only add ids at the end).
+ */
 export const FIELD_RIGHTS = {
   cash_override_reason: O,
   original_net_weight: O,
   back_dates: O,
+  rewrite_photo_ids: O,
 } as const satisfies Record<string, readonly Role[]>;
 export type FieldRight = keyof typeof FIELD_RIGHTS;
 
@@ -364,3 +368,35 @@ export const WRITE_COLUMNS: Readonly<Record<EditAction, Columns>> = {
   'edit:sku_private.update': ownerOnly(['original_net_weight']),
   'edit:customers.update': { owner: [...CUSTOMER_CONTENT, 'archived_at'], biller: CUSTOMER_CONTENT },
 };
+
+// ------------------------------------------------------------------ what an edit does with a field it is sent
+
+/** S6, D22: the stamps and the person columns. The API makes them; no request may name one, so one that arrives is an unknown field (A5), not a forbidden one. */
+const STAMP_AND_PERSON_COLUMNS: readonly string[] = ['created_at', 'updated_at', 'created_by', 'updated_by', 'set_by', 'confirmed_by', 'voided_by', 'cancelled_by'];
+
+/** Every column the matrix knows of a table, each once: the ones some role reads and the ones no role reads (HIDDEN_COLUMNS). The test of the matrix requires these two to add up to the table. */
+export function columnsOfTable(table: string): readonly string[] {
+  const read = Object.hasOwn(READ_COLUMNS, table) ? Object.values(READ_COLUMNS[table as ReadResource]).flatMap((c) => c ?? []) : [];
+  const hidden = Object.hasOwn(HIDDEN_COLUMNS, table) ? Object.keys(HIDDEN_COLUMNS[table as keyof typeof HIDDEN_COLUMNS]) : [];
+  return [...new Set([...read, ...hidden])];
+}
+
+export type FieldVerdict = 'allowed' | 'forbidden' | 'unknown';
+
+/**
+ * A5: what an edit does with one field of its body.
+ *   allowed    the field is on the caller's list (WRITE_COLUMNS)
+ *   forbidden  the field is a column of the table (or on another role's list) that is not on the caller's list: JV_FORBIDDEN. Nothing is silently ignored: the whole call is refused. This is how
+ *              `skus.status` and `skus.archived_at` (only X9 changes them), `design_no`, `id` and the owner-only `material`, `purity` and `selling_method` of a staff caller are refused.
+ *   unknown    a name that is no column, and the stamps and person columns that no request may name (S6, D22): JV_INVALID_INPUT.
+ * A name that is not a role is allowed nothing. Only own keys count: `constructor` and `__proto__` are unknown names.
+ */
+export function writeFieldVerdict(action: EditAction, role: string, field: string): FieldVerdict {
+  const lists = WRITE_COLUMNS[action] as Columns;
+  if (isRole(role) && (lists[role] ?? []).includes(field)) return 'allowed';
+  if (STAMP_AND_PERSON_COLUMNS.includes(field)) return 'unknown';
+  const edit = MATRIX[action].edit;
+  if (!edit) return 'unknown';
+  const onSomeList = ROLES.some((r) => (lists[r] ?? []).includes(field));
+  return onSomeList || columnsOfTable(edit.table).includes(field) ? 'forbidden' : 'unknown';
+}

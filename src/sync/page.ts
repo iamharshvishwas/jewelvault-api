@@ -72,7 +72,8 @@ function columnsFor(r: SyncResource, role: string): readonly string[] {
   return columns;
 }
 
-function toWire(r: SyncResource, columns: readonly string[], raw: Record<string, unknown>): Record<string, unknown> {
+/** A row of the database to the row the wire carries, cut to `columns`. Also how the edit routes (src/edit) answer, so that a row they return is the row the sync read would give. */
+export function toWire(r: SyncResource, columns: readonly string[], raw: Record<string, unknown>): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   for (const c of columns) row[c] = raw[c] === undefined ? null : raw[c];
   for (const c of r.json) if (typeof row[c] === 'string') row[c] = JSON.parse(row[c] as string);

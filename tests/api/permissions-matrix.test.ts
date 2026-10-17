@@ -145,8 +145,8 @@ describe('T-D02 the matrix file says what A4 and section 10 say', () => {
     expect(mayCall('owner', 'fn:no_such_function' as Action)).toBe(false);
   });
 
-  it('the field rules of section 10 are owner-only: cash_override_reason (Z1), original_net_weight (X8) and a date other than today (Y8)', () => {
-    expect(Object.keys(FIELD_RIGHTS).sort()).toEqual(['back_dates', 'cash_override_reason', 'original_net_weight']);
+  it('the field rules of section 10 and A5 are owner-only: cash_override_reason (Z1), original_net_weight (X8), a date other than today (Y8) and removing, reordering or replacing the photo ids of a design (A5, P3)', () => {
+    expect(Object.keys(FIELD_RIGHTS).sort()).toEqual(['back_dates', 'cash_override_reason', 'original_net_weight', 'rewrite_photo_ids']);
     for (const field of Object.keys(FIELD_RIGHTS) as (keyof typeof FIELD_RIGHTS)[]) {
       expect(mayUseField('owner', field), field).toBe(true);
       expect(mayUseField('biller', field), field).toBe(false);
