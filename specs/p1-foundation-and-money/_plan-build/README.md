@@ -7,7 +7,7 @@ Run `python3 _plan-build/build_plan.py` (Python 3.9 or newer, standard library o
 - `plan_web.py`    the front end (jewelvault-app) tasks.
 - `plan_ops.py`    reviews, Harsh's and Siddhi's tasks, Hostinger operations, the import, acceptance and go-live.
 - `plan_checks.py` the agent lanes, the exempt spec IDs, the clauses that several tasks complete, the documented ignores.
-- `build_plan.py`  reads the spec from git (`git show fcf2ba6:specs/p1-foundation-and-money/spec.md`), checks, schedules, writes the two files.
+- `build_plan.py`  reads the spec from git (`git show eec220e:specs/p1-foundation-and-money/spec.md`), checks, schedules, writes the two files.
 - `render.py`      the text of plan.md and tasks.md.
 
 With no flag (or `--build`) the script checks and then WRITES plan.md and tasks.md. Every other flag is read-only: `--check` (checks only), `--sched` (print the schedule), `--float` (float of the people tasks), `--show-ignores`. With `NOIGN=1` the

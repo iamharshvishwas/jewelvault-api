@@ -161,7 +161,7 @@ T("PH06b", "PH", "WITH-HARSH: security and accounts for go-live (two-step login,
 
 T("PH07", "PH", "WITH-HARSH: the decisions he may veto (every open item with a default)",
   who="WITH-HARSH", lead=(0, 3), deps=["PH01"],
-  reqs=["O8", "O17", "O18", "O19", "O22", "O32", "O36", "O39", "O41", "O43", "O44", "O51", "O52", "O54", "O55", "O56"], tests=[],
+  reqs=["O8", "O17", "O18", "O19", "O22", "O32", "O36", "O39", "O41", "O43", "O44", "O51", "O52", "O54", "O55", "O56", "O57"], tests=[],
   soft_before=["API08", "API09", "API17", "API20", "API24", "API35", "WEB12"],
   do="Needed from Harsh: either 'defaults stand' or a different answer for each of these, in one reply: O8 opening balances as ordinary "
      "rows; O17 old Credit payments not carried over; O18 all bills in memory in M1; O19 database tests on the local Docker MariaDB "
@@ -171,7 +171,7 @@ T("PH07", "PH", "WITH-HARSH: the decisions he may veto (every open item with a d
      "his own; O41 the admin door shut after the first owner and no route changes a role; O43 the staging app stays after "
      "go-live; O44 go on Hostinger, the proof being a hard gate (a priced VPS comparison if it fails); O51 no DELETE at all; O52 "
      "a walk-in silver settlement names its bill; O54 the weekly pull to his Mac (yes, and it is his duty); O55 the login "
-     "throttle of A13 as written; O56 the photo caps (60 unattached photos or 100 MB). Latest day: before the task that "
+     "throttle of A13 as written; O56 the photo caps (60 unattached photos or 100 MB); O57 the login-crowd risk, already accepted by Harsh on 17 Oct (nothing more to ask). Latest day: before the task that "
      "uses each one (the earliest are O22 and O52, before API20 and API24).",
   done="The ledger shows 'defaults stand' or the changed answer for each item, with the date.", rollback=RBN)
 
