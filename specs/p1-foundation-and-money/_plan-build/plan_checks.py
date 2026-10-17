@@ -11,7 +11,7 @@ AGENT_ORDER = {
           "WEB09", "WEB10", "WEB11", "WEB12", "WEB12b", "WEB16", "WEB13", "WEB17", "WEB15"],
     "C": ["RV0", "API04", "API05", "API09", "API07", "API11", "API13", "API13b", "API13c", "API18", "API19", "API08", "API17",
           "API12", "API24", "API27", "API28", "API32", "API33", "API33b", "API31", "API34", "WEB14", "IMP01",
-          "RV1", "RV3"],
+          "RV1", "RV1b", "RV1c", "RV3"],
 }
 
 # Work done by the orchestrator together with Harsh or Siddhi (hPanel, the shop, the rehearsal): not agents, but each is

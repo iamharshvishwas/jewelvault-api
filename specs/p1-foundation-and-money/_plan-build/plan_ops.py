@@ -20,6 +20,7 @@ T("RV1", "RV", "Implementation review 1: access and security (fresh agent) - gat
   agent="C", repo="api", lo=0.5, hi=1.0, grp="review",
   deps=["API05", "API07", "API08", "API09", "API10", "API11", "API12", "API13", "API13b", "WEB02", "WEB14"],
   reqs=[], tests=[], gate="G-A",
+  note="DONE by a separate session (rv1-review) on 17 Oct 2026: `impl-review-1.md` (in jewelvault-api-design/impl-review-1): Critical 0, High 0, Medium 3, Low 6; 95 deliberate breaks, 91 caught, 3 caught by no test (N08 ticket randomness, N23 login race guard, A18 build-check variable list; N26 is an equivalent break). Gate G-A therefore waits for RV1b and RV1c (small tests and fixes) and a confirmation by the reviewer. RV1-1 (a crowd of strangers and the meaning of 'clear the counters') is a decision for Harsh and Siddhi and for the wording of A13 and U3: not built.",
   do="A fresh agent reads the diff against spec sections 3, 4.1, 5 and 6.2 and runs: the generated cell tests, the static "
      "checks, the secrets scan; tries to read the original weight as a biller and staff by every route including function "
      "results; tries sessions (fixation, expiry, deactivation), CSRF without the header and with a wrong Origin, the admin "
@@ -27,6 +28,24 @@ T("RV1", "RV", "Implementation review 1: access and security (fresh agent) - gat
      "customer-role read, the CSRF layer, the idle limit) and each must fail a test. Writes `impl-review-1.md`.",
   files=[], done="`impl-review-1.md` has no open Critical or High finding; every deliberate breakage failed a test; the local advisor-free "
                  "checks of A7 are green.", rollback=RBR)
+
+T("RV1b", "RV", "Fixes from implementation review 1, API side (RV1-3, RV1-4, RV1-5, RV1-6, RV1-7) and the three breaks re-run",
+  agent="C", repo="api", lo=0.3, hi=0.8, grp="review", deps=["RV1"], reqs=[], tests=[], gate="G-A",
+  uses=["U1", "U4", "U11", "U12", "D24", "A13", "A14", "U3"],
+  ptests=["PT-RV1b the net catches what the review broke: a session ticket made of 4 random bytes and 28 zero bytes fails a test (N08); a login whose password changed while it was being verified is refused (N23)"],
+  do="From `impl-review-1.md` (findings and the reviewer's scripts in `attacks/`): RV1-3 a test that `newTicket()` is random (2,000 calls all different, every one of the 32 byte positions takes more than 100 different values, `randomBytes` called with 32); RV1-4 a test that holds the password verification open, changes the password in between and requires the login to be refused (the stand-in of `password.test.ts` can hold a verification); RV1-5 look the user up by an exact compare of the lower-cased e-mail (`COLLATE utf8mb4_bin`; the admin door stores lower case) so that an accent or a zero-width space is simply an unknown e-mail, with a test for both; RV1-6 an address with a broken percent sign (`GET /%zz`, `POST /v1/auth/login%zz`) is answered in the S8 body with `request_id` and the A14 headers (a Fastify frameworkErrors/bad-URL handler), added to T-D28; RV1-7 with an untrusted address the admin door checks the token first and counts only wrong tokens (the hourly budget), never a right token against the 10 a minute. Then re-run the reviewer's breaks N08 and N23 with her scripts (`attacks/mut.mjs`, read-only, in /Users/harshvishwas/Desktop/Harsh Vishwas/Client/jewelvault-api-design/impl-review-1/attacks) and show that each now fails a test. RV1-1 is NOT built (a decision for Harsh and Siddhi).",
+  files=[],
+  done="`npm test -- -t PT-RV1b` passes; the breaks N08 and N23 each fail at least one test (the run is attached to the report); the six new checks pass; `npm run verify` green.",
+  rollback=RBR)
+
+T("RV1c", "RV", "Fixes from implementation review 1, website side (RV1-8: the build check pins its variable list and its raw-HTML names)",
+  agent="C", repo="app", lo=0.2, hi=0.5, grp="review", deps=["RV1", "WEB14", "RV1b"], reqs=[], tests=[], gate="G-A",
+  uses=["H3", "H4"],
+  ptests=["PT-RV1c the build check cannot lose its pin: a second public variable name added to the allowed list fails a test (A18)"],
+  do="From `impl-review-1.md` RV1-8: (a) a test that `ALLOWED_PUBLIC_ENV` of `scripts/check-build.mjs` equals exactly `['NEXT_PUBLIC_API_URL']` (read the real file first: if the three tolerated names live in a separate list, pin that list too, and WEB15 empties it); (b) add `outerHTML`, `insertAdjacentHTML`, `document.write` and `document.writeln` to the raw-HTML names and allow `src/lib/exportUtils.ts` by name with a comment (every value there passes through `escapeHtml`), or change the print window to build DOM nodes. Re-run the reviewer's break A18 (`attacks/mutations-app.mjs`) and show it now fails a test. The formula guard of RV1-9 is WEB12b's.",
+  files=[],
+  done="`npm test -- -t PT-RV1c` passes; the break A18 fails a test; `npm run check:build` still passes on the real build.",
+  rollback=RBR)
 
 T("RV2", "RV", "Implementation review 2: the money core with a mutation check (fresh agent) - gate G-M",
   agent="A", repo="api", lo=1.0, hi=2.0, grp="review",
@@ -53,7 +72,7 @@ T("RV3", "RV", "Implementation review 3: jobs, backups and restore (fresh agent)
 
 T("RV4", "RV", "Implementation review 4: end to end on staging (fresh agent) - gate G-E",
   agent="A", repo="api", lo=0.5, hi=1.0, grp="review",
-  deps=["WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "OPS04", "RV1", "RV2", "RV3"],
+  deps=["WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "OPS04", "RV1", "RV1b", "RV1c", "RV2", "RV3"],
   reqs=[], tests=[], gate="G-E",
   do="A fresh agent runs a hand billing day on the staging pair: create a customer, a bill (with the worked example), a part "
      "payment, a fine settlement, a cancel, a re-issue, a void, a refund, an opening balance; reads the nightly check and the "
@@ -329,7 +348,7 @@ T("OPS04", "OPS", "Staging real-network checks: 10-second hydrate, cold start, t
      "with `curl -I` on the staging host; the whole Playwright suite against staging with fake data; a two-browser poll test across "
      "the real network.",
   files=[], done="A log with the measured hydrate time, the cold-start time and the three-browser result; T-E10 passes; a miss on the "
-                 "10 seconds is a finding (O48), not a silent change of the budget.",
+                 "10 seconds is a finding (O48), not a silent change of the budget. **RV1-2: `vercel.json` carries `Content-Security-Policy-Report-Only`, which blocks nothing; when the staging run shows no violation in the browser console in Chrome and in Safari, the header is renamed to `Content-Security-Policy` (the build check accepts both names) and T-D12 is run again on the staging host; the result is in the log.**",
   rollback="Staging only; nothing to roll back.")
 
 T("OPS05", "OPS", "Backup drills on the real plan: folder checks, restore drill 1, balances from the zip, the pull",
@@ -370,7 +389,7 @@ T("OPS06", "OPS", "The two-page runbook, deploy and rollback sheet, break-glass 
   rollback=RBN)
 
 T("OPS07", "OPS", "Production: app, database, domain, cron jobs, first owner, the real pair, restore drill 2",
-  agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS06", "RV1", "RV2", "RV3", "PH06b", "PH04", "OPS04", "IMP02"],
+  agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS06", "RV1", "RV1b", "RV1c", "RV2", "RV3", "PH06b", "PH04", "OPS04", "IMP02"],
   reqs=[], tests=[], extends=["T-D12", "T-E10"],
   do="With Harsh at hPanel, in a closing-time window: the production Node app (branch `main`) and database with exactly the ten "
      "boxes; the domain connected first, then the environment variables typed by Harsh (never in chat; `JV_BACKUP_DIR` and the cron commands only after the domain is connected); migrations through Remote MySQL, then Remote MySQL OFF; the "
@@ -464,7 +483,7 @@ T("QA04", "QA", "Go or no-go checklist - gate G-GO",
      "works; the owner's first Download everything is done; both key holders proved they can decrypt; the Hostinger plan renewed "
      "with auto-renew on and the reminder set (O46); the domain: two-step login on the Hostinger account that holds it, who pays the yearly renewal (default Siddhi, price stated), a reminder 30 days before its renewal date, and the break-glass sheet says it sits in Harsh's account until hand-over; Siddhi told about the backups (O45); two-step login on every account (B6); "
      "devices checked (H6); the nightly check green for the last 3 nights on staging; both cron jobs listed; no `DELETE`/`DROP` "
-     "right on (the dashboard line is not amber); `NEXT_PUBLIC_PREVIEW_MODE` removed (WEB15, PH08); Remote MySQL off; the "
+     "right on (the dashboard line is not amber); `NEXT_PUBLIC_PREVIEW_MODE` removed (WEB15, PH08); the website header is `Content-Security-Policy` (enforcing), no longer `Content-Security-Policy-Report-Only`, and T-D12 was re-run on production (RV1-2); Remote MySQL off; the "
      "paper book will be kept in parallel; the date is not between 29 Oct and 11 Nov; **the legal and tax line: data-request item 1 (how she bills today, GST registration, who issues "
      "her GST invoices) is answered and recorded, and either estimate-only billing is confirmed safe or her CA has seen a printed estimate (O15): this can move the date and is outside "
      "the agents' control.**",

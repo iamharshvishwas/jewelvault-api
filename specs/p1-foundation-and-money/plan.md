@@ -6,7 +6,7 @@ Maps to: `PLAN.md` phases P1 (foundation) and P2 (money), the data side of P3-T4
 
 ## 0. In one page
 
-- **108 tasks** (7 done, 101 to do): 65 for the three agents (58.9 plan-days), 19 run by the orchestrator with Harsh or Siddhi (Hostinger, import, acceptance, go-live), 17 are people's tasks (Harsh, Siddhi, her CA). Every one of the 242 spec requirement and open-item IDs is on exactly one task (4 exempt, with reasons) and every one of the 123 tests is introduced by exactly one task (appendix).
+- **110 tasks** (7 done, 103 to do): 67 for the three agents (58.9 plan-days), 19 run by the orchestrator with Harsh or Siddhi (Hostinger, import, acceptance, go-live), 17 are people's tasks (Harsh, Siddhi, her CA). Every one of the 242 spec requirement and open-item IDs is on exactly one task (4 exempt, with reasons) and every one of the 123 tests is introduced by exactly one task (appendix).
 - **No date is promised.** First live day (never between Thu 29 Oct and Wed 11 Nov: Harsh's own freeze, PLAN.md 3.1 rule 4): best **Thu 12 Nov** to **Mon 16 Nov**; most likely **Sat 21 Nov** to **Mon 23 Nov**; worst **Tue 01 Dec** to **Tue 08 Dec** (section 7). The old 'before Dhanteras' dates (31 Oct, 2 Nov) are not offered: they need every best factor and break the freeze.
 - **What the dates depend on:** the speed of the money, browser and Hostinger tasks (never measured: tripwires TW1 to TW-ops, section 9), Hostinger passing the rest of the proof (`OPS01` Safari and Firefox on the real names, `OPS02a`, `OPS02w`, `OPS02`), the first GitHub deploy (`OPS03a`), Harsh's hands at hPanel and GitHub Desktop (one queue, section 6), and the inputs of people that sit close to the path: Harsh's go, Siddhi's full stock list and balances, her business answers, and her presence for the rehearsal, the acceptance and the training, which cannot happen between 3 and 11 Nov (section 8). The domain is no longer waited for: it is Siddhi's (her name and her money), registered in Harsh's own Hostinger account on 17 Oct.
 - **The longest chain** runs through the money core (agent A) and the rest of the API (agent C), then staging, the backup drills, the three reviews, the regression, the acceptance by her two testers, the training, the go or no-go and the cut-over (section 6).
@@ -109,6 +109,8 @@ The spec defines 123 tests (section 15). A test is **introduced** in the one tas
 | WEB15 | Remove the Supabase pieces and preview mode; leave one clean app | - | - | PT-W15 |
 | WEB16 | The stale-rate guard on the screen (PLAN.md P3-T2, the part ... | - | - | PT-W16 |
 | WEB17 | Rate card by purity (PLAN.md P3-T2, the part that is cut first) | - | - | PT-W17 |
+| RV1b | Fixes from implementation review 1, API side (RV1-3, RV1-4, ... | - | - | PT-RV1b |
+| RV1c | Fixes from implementation review 1, website side (RV1-8: the ... | - | - | PT-RV1c |
 | OPS03 | First staging deploy: migrations, cron jobs, GitHub Actions, ... | - | T-R04 | - |
 | OPS04 | Staging real-network checks: 10-second hydrate, cold start, ... | T-E10 | T-F03, T-D12 | - |
 | OPS05 | Backup drills on the real plan: folder checks, restore drill 1, ... | T-R01 | T-R02, T-R05, T-R06, T-E09 | - |
@@ -119,7 +121,7 @@ The spec defines 123 tests (section 15). A test is **introduced** in the one tas
 
 ## 4. Tasks
 
-The full text of each task is in `tasks.md`; this is the list. **The unit.** A *plan-day* is the planning unit of `PLAN.md`: the work an implementer is expected to finish in one focused day, tests and commit included. It is not elapsed time and it is untested for everything in this plan except pure database and pure TypeScript work (section 5). Days are estimated from the spec lines a task owns, plus or minus 30 percent; no implementer task is over 1.5 and the generator fails above that. **108 tasks**: 7 done, 101 to do (65 for agents, 19 run by the orchestrator with Harsh or Siddhi, 17 are people's tasks), **58.9 plan-days** of work for agents (23 tasks are over 1.0, the largest is 1.5), of which the Node API 39.1, the front end 17.8, the database alignment and the audit triggers 0.0, the import converter 1.2 and the regression 0.8; reviews, Hostinger work, acceptance and training are given as explicit elapsed time, not plan-days.
+The full text of each task is in `tasks.md`; this is the list. **The unit.** A *plan-day* is the planning unit of `PLAN.md`: the work an implementer is expected to finish in one focused day, tests and commit included. It is not elapsed time and it is untested for everything in this plan except pure database and pure TypeScript work (section 5). Days are estimated from the spec lines a task owns, plus or minus 30 percent; no implementer task is over 1.5 and the generator fails above that. **110 tasks**: 7 done, 103 to do (67 for agents, 19 run by the orchestrator with Harsh or Siddhi, 17 are people's tasks), **58.9 plan-days** of work for agents (23 tasks are over 1.0, the largest is 1.5), of which the Node API 39.1, the front end 17.8, the database alignment and the audit triggers 0.0, the import converter 1.2 and the regression 0.8; reviews, Hostinger work, acceptance and training are given as explicit elapsed time, not plan-days.
 
 | Task | Who | Title | Depends on | Plan-days | Elapsed working days (best to worst) |
 |---|---|---|---|---|---|
@@ -191,9 +193,11 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A *
 | WEB17 | B | Rate card by purity (PLAN.md P3-T2, the part that is cut first) | WEB16 | 0.4 | 0.10 to 0.28 |
 | RV0 | C | Plan review: two fresh agents read this plan and its generator, then the fixes | - | - | 0.50 to 1.50 |
 | RV1 | C | Implementation review 1: access and security (fresh agent) - gate G-A | API05, API07, API08, API09, API10, API11, API12, API13, API13b, WEB02, WEB14 | - | 0.50 to 1.00 |
+| RV1b | C | Fixes from implementation review 1, API side (RV1-3, RV1-4, RV1-5, RV1-6, RV1-7) and the three breaks re-run | RV1 | - | 0.30 to 0.80 |
+| RV1c | C | Fixes from implementation review 1, website side (RV1-8: the build check pins its variable list and its ... | RV1, WEB14, RV1b | - | 0.20 to 0.50 |
 | RV2 | A | Implementation review 2: the money core with a mutation check (fresh agent) - gate G-M | API29, API30, API31 | - | 1.00 to 2.00 |
 | RV3 | C | Implementation review 3: jobs, backups and restore (fresh agent) - gate G-B | API33, API33b, API34, API35, API36, OPS05 | - | 0.50 to 1.00 |
-| RV4 | A | Implementation review 4: end to end on staging (fresh agent) - gate G-E | WEB12b, WEB13, WEB14, WEB15, WEB16, OPS04, RV1, RV2, RV3 | - | 0.50 to 1.00 |
+| RV4 | A | Implementation review 4: end to end on staging (fresh agent) - gate G-E | WEB12b, WEB13, WEB14, WEB15, WEB16, OPS04, RV1, RV1b, RV1c, RV2, RV3 | - | 0.50 to 1.00 |
 | PH01 | WITH-HARSH | WITH-HARSH: read the plan, give the go, choose the date plan | RV0 | - | 0.00 to 2.00 |
 | PH02 | WITH-HARSH | WITH-HARSH: private GitHub repository for the API, pushed by Harsh, Hostinger's GitHub app connected | PH01 | - | 1.00 to 3.00 |
 | PH03 | WITH-HARSH | WITH-HARSH: remove the failed Hostinger test app and find the unlisted test cron job (keep the two named ... | PH01 | - | 1.00 to 4.00 |
@@ -221,7 +225,7 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A *
 | OPS04 | O | Staging real-network checks: 10-second hydrate, cold start, three browsers, headers | OPS03, WEB06, WEB12b, WEB13, WEB14, WEB15, WEB16, PH04 | - | 1.00 to 2.00 |
 | OPS05 | O | Backup drills on the real plan: folder checks, restore drill 1, balances from the zip, the pull | OPS04, API36, API35, WEB12b, API09, PH06a | - | 1.00 to 2.00 |
 | OPS06 | O | The two-page runbook, deploy and rollback sheet, break-glass sheet, morning check routine | OPS05, OPS03 | - | 0.50 to 1.50 |
-| OPS07 | O | Production: app, database, domain, cron jobs, first owner, the real pair, restore drill 2 | OPS06, RV1, RV2, RV3, PH06b, PH04, OPS04, IMP02 | - | 1.00 to 2.00 |
+| OPS07 | O | Production: app, database, domain, cron jobs, first owner, the real pair, restore drill 2 | OPS06, RV1, RV1b, RV1c, RV2, RV3, PH06b, PH04, OPS04, IMP02 | - | 1.00 to 2.00 |
 | IMP01 | C | Converter from Siddhi's sheet (and the old browser export) to an import pack | PS01, PS02, MB04 | 1.2 | 0.14 to 0.48 |
 | IMP02 | O | Staging rehearsal of the import with her real data and the reconciliation | IMP01, PS03, OPS03, OPS04 | - | 1.00 to 3.00 |
 | IMP03 | O | Production import on the cut-over eve and Siddhi's signature | IMP02, OPS07, QA04, PS03 | - | 0.50 to 1.00 |
@@ -253,7 +257,7 @@ The full text of each task is in `tasks.md`; this is the list. **The unit.** A *
 | Money functions, locks, two-session tests, jobs | 22 | 21.6 | 0.30 to 0.90 | 6.5 to 19.4 |
 | Front end and browser tests | 18 | 17.0 | 0.25 to 0.70 | 4.2 to 11.9 |
 | Hostinger, import, acceptance, drills (with Harsh or Siddhi) | 19 | - | explicit per task | 15.4 to 33.8 |
-| Fresh-agent reviews | 5 | - | explicit per task | 3.0 to 6.5 |
+| Fresh-agent reviews | 7 | - | explicit per task | 3.5 to 7.8 |
 | Waiting for people (Harsh, Siddhi, her CA): lead times, mostly in parallel | 17 | - | lead times per task | 28.0 to 102.0 (not additive) |
 
 The sums are not the schedule: three agents work side by side, and most waiting on people happens in parallel. The schedule is in section 7.
@@ -262,7 +266,7 @@ The sums are not the schedule: three agents work side by side, and most waiting 
 
 - **Agent A (money core)** (busy 6.0 to 16.6 working days): API01 > API02 > API03 > API14 > API15 > API16 > API20 > API21 > API22 > API23 > API25 > API26 > API29 > API30 > RV2 > API35 > API36 > RV4 > QA01
 - **Agent B (front end)** (busy 4.5 to 12.6 working days): API06 > API10 > WEB00 > WEB01 > WEB02 > WEB03 > WEB04 > WEB05 > WEB07 > WEB06 > WEB08 > WEB09 > WEB10 > WEB11 > WEB12 > WEB12b > WEB16 > WEB13 > WEB17 > WEB15
-- **Agent C (rest of the API, side tasks, reviews)** (busy 5.7 to 16.8 working days): RV0 > API04 > API05 > API09 > API07 > API11 > API13 > API13b > API13c > API18 > API19 > API08 > API17 > API12 > API24 > API27 > API28 > API32 > API33 > API33b > API31 > API34 > WEB14 > IMP01 > RV1 > RV3
+- **Agent C (rest of the API, side tasks, reviews)** (busy 6.2 to 18.1 working days): RV0 > API04 > API05 > API09 > API07 > API11 > API13 > API13b > API13c > API18 > API19 > API08 > API17 > API12 > API24 > API27 > API28 > API32 > API33 > API33b > API31 > API34 > WEB14 > IMP01 > RV1 > RV1b > RV1c > RV3
 - **Orchestrator with Harsh or Siddhi (lane O), one queue in this order:** OPS01 > OPS02a > OPS03a > OPS02 > OPS03 > OPS04 > OPS05 > OPS06 > IMP02 > QA02 > QA03 > OPS07 > QA04 > IMP03 > QA05; `OPS02w`, `OPS08` and `QA06` are time passing and take no queue time (acceptance and training run on staging, so they come before the production setup)
 - **Pulled forward (revision F, 17 Oct):** `API36` (the restore and pull tool) and `WEB14` (hosting headers and the build check) were given, on Harsh's instruction, to a separate session and are done: `API36` is merged into `main` of `jewelvault-api` (`94876f4`), `WEB14` is on the branch `api-web` of `jewelvault-app` (`aca0f4a`) and stays there (Harsh's branch rule). Their listed dependencies are not hard: `API36` needs only the database half's libraries (its tests make the dump with the export writer of `MB03`; the check against the real dump of `API34` is part of `OPS05`), and `WEB14` needs nothing from `WEB02` (the checks that do are marked pending). The schedule below still lists them in lanes A and C, because the generator has no 'done' mark for new work; both lanes are that much shorter in reality.
 - **People:** PH01, PH02, PH03, PH04, PH05, PH05b, PH06a, PH06b, PH07, PH08, PS01, PS02, PS03, PS04, PS05, PS06, PS07
