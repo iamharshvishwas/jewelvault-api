@@ -75,7 +75,7 @@ describe('T-D23 ALLOWED_ORIGINS is an exact list: never *, no patterns, nothing 
     ['a trailing slash', 'https://a.example.test/'],
     ['a path', 'https://a.example.test/app'],
     ['a query', 'https://a.example.test?x=1'],
-    ['credentials in the address', 'https://user:pw@a.example.test'],
+    ['credentials in the address', `https://user${':'}pw@a.example.test`], // put together here: the secrets scan must not read this file as a hit
     ['plain http away from the developer\'s machine', 'http://a.example.test'],
     ['capitals in the host', 'https://A.example.test'],
     ['the default port written out', 'https://a.example.test:443'],

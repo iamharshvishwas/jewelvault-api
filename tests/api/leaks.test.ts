@@ -479,7 +479,7 @@ describe('T-D28 the handler timers answer 503 JV_BUSY after the work has stopped
           expect((await app.inject({ method: 'POST', url: PUBLIC_ROUTES.login.path, headers: csrfHeaders(), payload: {} })).statusCode).toBe(200); // and inside the login's 300
           expect((await app.inject({ method: 'POST', url: TICK_PATH })).statusCode).toBe(200); // 450 ms is inside the tick's 500
         },
-        { timers },
+        { timers, routes: false }, // the application's own routes are left out: this test registers a login route of its own
       );
     });
 

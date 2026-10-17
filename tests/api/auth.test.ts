@@ -11,7 +11,7 @@ import { MATRIX } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, microsOfDbTimestamp } from '../../src/permissions/session';
 import { T0, type World, concreteUrl, makeWorld, registerStubs } from './cells';
-import { secret, testConfig } from './support';
+import { csrfHeaders, secret, testConfig } from './support';
 
 // API05: the session routes and the login. T-D13, T-D25 (HTTP half), T-D26, T-D06 (HTTP half), T-D15, and the clauses of T-D14 (one event row for a login, a logout and a change-password, no secret in it)
 // and T-D02 (the rows of the session calls; the generated test walks them, tests/matrix.generated.test.ts). The password rules and the hash strings are tests/api/password.test.ts.
@@ -57,7 +57,7 @@ let PASSWORD: string;
 let HASH: string;
 
 const inject = (method: 'GET' | 'POST' | 'PATCH' | 'PUT', url: string, o: { payload?: unknown; cookie?: string; headers?: Record<string, string>; app?: World['app'] } = {}) =>
-  (o.app ?? world.app).inject({ method, url, payload: o.payload as object | undefined, headers: { ...(o.cookie ? { cookie: o.cookie } : {}), ...o.headers } });
+  (o.app ?? world.app).inject({ method, url, payload: o.payload as object | undefined, headers: { ...(method === 'GET' ? {} : csrfHeaders()), ...(o.cookie ? { cookie: o.cookie } : {}), ...o.headers } });
 
 const loginWith = (email: string, password: string, o: { cookie?: string; headers?: Record<string, string>; app?: World['app'] } = {}) => inject('POST', '/v1/auth/login', { payload: { email, password }, ...o });
 

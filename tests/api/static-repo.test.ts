@@ -196,9 +196,9 @@ describe('T-D29 the API refuses to start when an environment variable is missing
     dist = buildDist();
   }, 120_000);
 
-  const REQUIRED = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'] as const;
+  const REQUIRED = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'ALLOWED_ORIGINS'] as const;
   const envOf = (values: Record<string, string>) => ({ PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', ...values });
-  const good = () => ({ DB_HOST: '127.0.0.1', DB_PORT: '1', DB_NAME: 'jv_none', DB_USER: 'jv_none', DB_PASSWORD: secret('pw') });
+  const good = () => ({ DB_HOST: '127.0.0.1', DB_PORT: '1', DB_NAME: 'jv_none', DB_USER: 'jv_none', DB_PASSWORD: secret('pw'), ALLOWED_ORIGINS: 'https://app.example.test' });
 
   it.each(REQUIRED)('%s missing: exit code 1 before any port is opened, the message names the variable and holds no value', (name) => {
     const values: Record<string, string> = { ...good(), PORT: '0' };
@@ -213,7 +213,7 @@ describe('T-D29 the API refuses to start when an environment variable is missing
     expect(blank.stderr).toContain(`${name} is missing`);
   }, 90_000);
 
-  it('control: with all five variables the same entry file starts and listens (it would be a test of nothing if the refusal came from somewhere else)', async () => {
+  it('control: with all six variables the same entry file starts and listens (it would be a test of nothing if the refusal came from somewhere else)', async () => {
     const port = await freePort();
     const child = spawn(process.execPath, [join(dist, 'server.js')], { env: envOf({ ...good(), PORT: String(port) }), stdio: 'ignore' });
     try {
