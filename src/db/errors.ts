@@ -1,16 +1,13 @@
-// Plain classes for what the connection layer can refuse. Their HTTP mapping (JV_BUSY 503 with Retry-After) is API03's.
+// What the connection layer can refuse. It is the one JV_BUSY error of src/errors.ts (503 with Retry-After: 1, the S8 body); the pool throws it before any statement has run.
+// The message is the client's (it says the service is busy); the reason is for the log and the tests.
+import { BusyError, type BusyReason } from '../errors.js';
 
-export type BusyReason = 'queue_full' | 'wait_timeout' | 'connect_refused' | 'connection_lost' | 'closing';
+export type { BusyReason };
 
 /** JV_BUSY (S8): the pool could not give a connection. Nothing had run when this was thrown. */
-export class DbBusyError extends Error {
-  readonly code = 'JV_BUSY';
-  readonly reason: BusyReason;
-  /** Always true here: the call failed before its first statement. (A connection dropped during COMMIT is another case, API03.) */
-  readonly nothingStarted = true;
-  constructor(reason: BusyReason, options?: { cause?: unknown }) {
-    super(`the database pool is busy: ${reason}`, options);
+export class DbBusyError extends BusyError {
+  constructor(reason: Extract<BusyReason, 'queue_full' | 'wait_timeout' | 'connect_refused' | 'connection_lost' | 'closing'>, options?: { cause?: unknown }) {
+    super(reason, { cause: options?.cause, nothingStarted: true });
     this.name = 'DbBusyError';
-    this.reason = reason;
   }
 }

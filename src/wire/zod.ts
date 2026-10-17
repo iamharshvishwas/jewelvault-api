@@ -11,20 +11,20 @@
 // A schema returns the text it was given, unchanged. Converting it to paise or milligrams is the job of pricing.ts (parseRupees, parseGrams).
 
 import { z } from 'zod';
+import { JvError } from '../errors.js';
 import { limits } from '../limits.js';
 import { UUID_TEXT, isBusinessDate, isWireTimestamp } from './format.js';
 
 /** The caller sent something the API refuses: S8's JV_INVALID_INPUT, HTTP 422. `field` names the input (`items[2].metal_rate`); the message never repeats the value. */
-export class InvalidInputError extends Error {
-  readonly code = 'JV_INVALID_INPUT' as const;
-  readonly status = 422 as const;
+export class InvalidInputError extends JvError {
+  declare readonly code: 'JV_INVALID_INPUT';
+  declare readonly status: 422;
   readonly field: string;
-  readonly details: { readonly field: string };
+  declare readonly details: { readonly field: string };
   constructor(field: string, reason: string) {
-    super(`${field} ${reason}`);
+    super('JV_INVALID_INPUT', `${field} ${reason}`, { details: Object.freeze({ field }) });
     this.name = 'InvalidInputError';
     this.field = field;
-    this.details = Object.freeze({ field });
   }
 }
 

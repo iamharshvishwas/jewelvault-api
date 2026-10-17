@@ -2,6 +2,7 @@
 import { buildApp } from './app.js';
 import { ConfigError, loadConfig } from './config.js';
 import { createDbPool } from './db/pool.js';
+import { installShutdown } from './shutdown.js';
 
 let config;
 try {
@@ -16,6 +17,8 @@ try {
 
 // S11: one pool of 8; the start-up check runs when the app becomes ready, before listen() accepts a request. A failed check keeps the API up and answers 503 JV_UNAVAILABLE to all but /healthz.
 const app = buildApp({ config, db: createDbPool(config.db) });
+// H7: on SIGTERM stop accepting calls, let running transactions finish (at most 10 s) and close the pool.
+installShutdown(app);
 try {
   await app.listen({ port: config.port, host: '0.0.0.0' });
 } catch (error) {

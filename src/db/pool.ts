@@ -13,6 +13,7 @@
 import net from 'node:net';
 import mysql, { type PoolConnection, type RowDataPacket } from 'mysql2/promise';
 import type { Config } from '../config.js';
+import { isConnectionLost } from '../errors.js';
 import { DbBusyError } from './errors.js';
 import { type Pacer, createPacer } from './pacer.js';
 
@@ -125,15 +126,6 @@ export interface DbPool {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const defaultConnect = (socket: net.Socket, port: number, host: string) => void socket.connect(port, host);
-
-const LOST_CODES = new Set(['PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'EPIPE', 'ETIMEDOUT']);
-const LOST_ERRNOS = new Set([1927 /* connection killed */, 1053 /* server shutdown */, 2006 /* server has gone away */, 2013 /* lost connection during query */]);
-
-/** The connection died under the statement (the server closed it, or it was killed): the statement did not run. */
-function isConnectionLost(e: unknown): boolean {
-  const err = e as { fatal?: boolean; code?: string; errno?: number } | null;
-  return err?.fatal === true || LOST_CODES.has(String(err?.code)) || LOST_ERRNOS.has(Number(err?.errno));
-}
 
 /** Hostinger's refusal of a burst of new connections. */
 const isRefused = (e: unknown) => (e as { code?: string } | null)?.code === 'EPERM';
