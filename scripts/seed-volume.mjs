@@ -356,9 +356,11 @@ async function connect(target) {
   const options = { charset: 'utf8mb4', connectTimeout: 15000, decimalNumbers: false, supportBigNumbers: true, bigNumberStrings: true, dateStrings: true, multipleStatements: false };
   let settings;
   if (target.kind === 'lane') {
-    const info = await laneInfo(target.lane);
+    // the sandbox namespace of the lane tool (JV_LANE_NAMESPACE, JV_LANE_PORT_BASE) is honoured, so a sandbox run never writes into the real lane of the same name
+    const namespace = process.env.JV_LANE_NAMESPACE ?? '';
+    const info = await laneInfo(target.lane, { namespace, portBase: Number(process.env.JV_LANE_PORT_BASE ?? 33310) });
     if (!info || !info.running) {
-      console.error(`lane ${target.lane} is not up: npm run db:lane -- up ${target.lane}`);
+      console.error(`lane ${target.lane} is not up (container jv-mariadb-${namespace ? `${namespace}-` : ''}${target.lane}): npm run db:lane -- up ${target.lane}`);
       process.exit(2);
     }
     settings = { host: info.host, port: info.port, user: info.appUser, password: info.appPassword, database: info.database };

@@ -230,6 +230,17 @@ describe('T-F03 seed-volume: what it refuses, and the command line', () => {
     expect(pkg.scripts['seed:volume']).toBe('node scripts/seed-volume.mjs');
   });
 
+  it('a sandbox namespace (JV_LANE_NAMESPACE, JV_LANE_PORT_BASE) is honoured as the lane tool honours it: the command looks for jv-mariadb-<namespace>-<lane> and never falls back to the real lane of that name', async () => {
+    // lane main with a namespace nobody uses: exit 2 and the message names the sandbox container, whether or not the real lane main is up
+    const env = { ...process.env, JV_LANE_NAMESPACE: 'nosuchns', JV_LANE_PORT_BASE: '33990' };
+    const r = await run(process.execPath, ['scripts/seed-volume.mjs', 'main', '--customers', '40', '--designs', '8', '--pieces', '30', '--bills', '50'], { cwd: REPO, env }).then(
+      () => ({ code: 0, out: '' }),
+      (e) => ({ code: e.code as number, out: `${e.stdout}${e.stderr}` }),
+    );
+    expect(r.code).toBe(2);
+    expect(r.out).toContain('jv-mariadb-nosuchns-main');
+  });
+
   it('as a command with the connection in the environment: fills a small shop, exits 0; the second run exits 1 and says why; a usage error exits 2; the password is never printed', async () => {
     const fresh = await (await import('../helpers')).scratchDatabase('seedcli', { schema: true });
     const u = await fresh.connect();
