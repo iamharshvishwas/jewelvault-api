@@ -13,6 +13,8 @@ const { idempotent, idempotencyKey, markReplay } = await load('db/idempotency.js
 const { takeNumber } = await load('db/numbers.js');
 const { newId } = await load('db/ids.js');
 const { installShutdown, SHUTDOWN_GRACE_MS } = await load('shutdown.js');
+const { createRoute } = await load('permissions/route.js');
+const { z } = await import('zod');
 
 const config = loadConfig(process.env);
 const pool = createDbPool(config.db);
@@ -21,7 +23,8 @@ const actor = { id: '11111111-1111-4111-8111-111111111111', role: 'biller' };
 
 // POST /toy/create?customer=<uuid>&ms=<n> with an Idempotency-Key header and a JSON body: claim, lock the customer, take a number, write a row (and by the trigger its audit row), hold for ms, store the
 // result, commit. A repeat of a key that committed returns the stored result with Idempotent-Replay: true and writes nothing.
-app.post('/toy/create', async (request, reply) => {
+// every route goes through the wrapper (A1); this one is a public route of a table made for the test, so no session is looked up and the permission matrix is not touched
+createRoute({ matrix: {}, publicRoutes: { create: { method: 'POST', path: '/toy/create' } }, tokenDoors: {} })(app, { public: 'create', body: z.unknown(), handler: async ({ request, reply }) => {
   const { customer, ms } = request.query;
   const key = idempotencyKey(request.headers);
   const out = await withTx(txContextFor(pool, request, actor), (tx) =>
@@ -37,7 +40,7 @@ app.post('/toy/create', async (request, reply) => {
   markReplay(reply, out.replayed);
   reply.code(201);
   return out.value;
-});
+} });
 
 installShutdown(app, { graceMs: Number(process.env.JV_GRACE_MS || SHUTDOWN_GRACE_MS) });
 await app.listen({ port: config.port, host: '0.0.0.0' });

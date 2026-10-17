@@ -10,7 +10,7 @@ import { createDbPool, type DbPool } from '../../src/db/pool';
 import { txContext, txContextFor, withTx, type TxContext } from '../../src/db/tx';
 import { JvError } from '../../src/errors';
 import { errorOf, sleep } from '../helpers';
-import { REPO, buildDist, canConnect, freePort, logSink, testConfig } from './support';
+import { REPO, buildDist, canConnect, freePort, logSink, testConfig, toyRoutes } from './support';
 import { NOTHING, connectionLost, leftovers, spyOn, txWorld, type TxWorld } from './tx-support';
 
 // PT-N1 (L5): the claim machinery, with a toy creating function that has the shape of the real ones: the claim is its first statement, then the customer row, the number, a row, and the result stored in
@@ -408,7 +408,7 @@ describe('PT-N1 over HTTP: the replay says Idempotent-Replay: true with the same
     const pool = open();
     const app = buildApp({ config: testConfig(), db: pool, logStream: logSink().stream });
     apps.push(app);
-    app.post('/toy/create', async (request, reply) => {
+    toyRoutes(app).post('/toy/create', async (request, reply) => {
       const key = idempotencyKey(request.headers);
       const actor = request.headers['x-test-actor'] === 'other' ? other : biller;
       const out = await withTx(txContextFor(pool, request, actor), (tx) =>
