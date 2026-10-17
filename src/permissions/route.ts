@@ -8,6 +8,7 @@
 //   1. the session: the cookie's ticket to a `sessions` row and then the `users` row; no ticket, an ended or expired session, a user who is not active: 401 (D2, session.ts)
 //   2. the must-change-password gate: a user who must still change the password may call only the rows marked `mustChange` (U11): 403 JV_PASSWORD_CHANGE_REQUIRED
 //   3. the matrix row: a role that is not on the row: 403 JV_FORBIDDEN
+//      then, for a call that got through and is not polling (U4): `last_seen_at` moves, in a statement of its own in autocommit (touchSession)
 //   4. the body, with the route's strict Zod schema (a route without one takes no body): 422 JV_INVALID_INPUT
 //   5. the handler, which is given `auth` (the user and the role as the read of step 1 found them), the parsed `body`, the request and the reply
 // Steps 1 to 3 run in Fastify's onRequest, before the body is read: a caller who is refused is not told whether the body parses either.
@@ -35,7 +36,7 @@ import {
   type TokenDoorName,
   mayCall,
 } from './matrix.js';
-import { type Auth, lookupSession } from './session.js';
+import { type Auth, countsAsActivity, lookupSession, touchSession } from './session.js';
 
 export type { Auth } from './session.js';
 
@@ -157,6 +158,7 @@ function sessionHook(app: FastifyInstance, info: RouteInfo) {
     const auth = await lookupSession(app, request); // 1. D2
     if (auth.user.mustChangePassword && !info.mustChange) throw new JvError('JV_PASSWORD_CHANGE_REQUIRED', 'Change your password to continue.'); // 2. U11
     if (!info.roles.includes(auth.user.role)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.'); // 3. A4
+    if (countsAsActivity(info)) await touchSession(app, request, auth.session.id); // U4: last_seen_at, its own autocommit statement, before the handler and so before any claim of a money call
     request.auth = auth;
   };
 }

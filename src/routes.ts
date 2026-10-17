@@ -10,10 +10,12 @@
 //   API09  the admin door and the job routes
 //   API11  the read side (the sync resources, the poll) ...
 import type { FastifyInstance } from 'fastify';
+import { registerAuthRoutes } from './auth/loginRoutes.js';
 import { route } from './permissions/route.js';
 
 export function registerRoutes(app: FastifyInstance): void {
   // /healthz is registered by buildApp() itself, because the start-up gate (S11) names it.
+  registerAuthRoutes(app);
   // A14: /readyz says only whether the start-up check passed, {"ok":true} or {"ok":false} (503 while it has not): never why. The reason is in sys_error_log and the owner's dashboard line.
   route(app, { public: 'ready', handler: ({ app: a, reply }) => reply.code(a.startup?.ok === true ? 200 : 503).send({ ok: a.startup?.ok === true }) });
 }

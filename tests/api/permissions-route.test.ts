@@ -301,15 +301,16 @@ describe('T-D02 (D2, A2, A6, A10) the order of work: session, then the must-chan
     expect(me.json()).toMatchObject({ role: 'staff', must_change_password: true });
   });
 
-  it('the session is looked up in sessions, then users, and nothing is written (D2): two reads, in that order', async () => {
+  it('the session is looked up in sessions, then users: two reads, in that order; the one write is the session\'s own last_seen_at (U4), after them', async () => {
     reset();
     const res = await world.call('biller', 'GET', '/v1/auth/me');
     expect(res.statusCode).toBe(200);
     const sent = statements();
-    expect(sent).toHaveLength(2);
+    expect(sent).toHaveLength(3);
     expect(sent[0]).toMatch(/^SELECT[\s\S]*\bFROM sessions\b/i);
     expect(sent[1]).toMatch(/^SELECT[\s\S]*\bFROM users\b/i);
-    expect(sent.join('\n')).not.toMatch(/\b(INSERT|UPDATE)\b/i);
+    expect(sent[2]).toMatch(/^UPDATE sessions SET last_seen_at = \?/i); // U4: every call but a poll moves it, in its own statement
+    expect(sent.slice(0, 2).join('\n')).not.toMatch(/\b(INSERT|UPDATE)\b/i); // the lookup itself writes nothing (D2)
     expect(sent.join('\n')).not.toMatch(/SELECT\s+\*/i); // a read names its columns (A4)
     expect(sent.join('\n')).not.toMatch(/password_hash/i); // the hash is never read
   });
@@ -327,17 +328,30 @@ describe('T-D02 (D2, A2, A6, A10) the order of work: session, then the must-chan
   });
 
   it.each([
-    { name: 'an ended session', caller: 'ended', code: 'JV_UNAUTHENTICATED', reads: 1 },
-    { name: 'a session past its absolute lifetime', caller: 'expired', code: 'JV_SESSION_EXPIRED', reads: 1 },
-    { name: 'a session idle for more than 12 hours', caller: 'idle', code: 'JV_SESSION_EXPIRED', reads: 1 },
-    { name: 'a user who is not active', caller: 'inactive', code: 'JV_UNAUTHENTICATED', reads: 2 },
-  ] as { name: string; caller: CallerName; code: string; reads: number }[])('$name is 401 $code after $reads read(s), and nothing is written (D2, A10)', async ({ caller, code, reads }) => {
+    { name: 'an ended session', caller: 'ended', code: 'JV_UNAUTHENTICATED', reads: 1, ends: false },
+    // U4: a session past either lifetime is ENDED on the call that finds it (revoked_at, the row stays): its one write, and the call after that finds it ended and writes nothing
+    { name: 'a session past its absolute lifetime', caller: 'expired', code: 'JV_SESSION_EXPIRED', reads: 1, ends: true },
+    { name: 'a session idle for more than 12 hours', caller: 'idle', code: 'JV_SESSION_EXPIRED', reads: 1, ends: true },
+    { name: 'a user who is not active', caller: 'inactive', code: 'JV_UNAUTHENTICATED', reads: 2, ends: false },
+  ] as { name: string; caller: CallerName; code: string; reads: number; ends: boolean }[])('$name is 401 $code after $reads read(s), and nothing is written but the ending of a session that is over (D2, A10, U4)', async ({ caller, code, reads, ends }) => {
     reset();
     const res = await world.call(caller, 'GET', '/v1/auth/me');
     expect(res.statusCode).toBe(401);
     expect(body(res).error.code).toBe(code);
-    expect(statements()).toHaveLength(reads);
-    expect(statements().join('\n')).not.toMatch(/\b(INSERT|UPDATE)\b/i);
+    expect(statements()).toHaveLength(reads + (ends ? 1 : 0));
+    expect(statements().join('\n')).not.toMatch(/\bINSERT\b/i);
+    const writes = statements().filter((s) => /\bUPDATE\b/i.test(s));
+    if (ends) {
+      expect(writes).toEqual(['UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL']); // nothing else: the session, by its id, only if it is not ended yet
+      // the session is ended now, the answer stays the same, and the next call writes nothing
+      reset();
+      const again = await world.call(caller, 'GET', '/v1/auth/me');
+      expect(body(again).error.code).toBe(code);
+      expect(statements()).toHaveLength(reads);
+      await world.restore(caller);
+    } else {
+      expect(writes).toEqual([]);
+    }
   });
 
   it('the cookie carries only the ticket: the role, the active flag and the answer come from users on every call, so a change takes effect at the next call (A2, A10)', async () => {

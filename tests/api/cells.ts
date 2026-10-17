@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type { Connection } from 'mysql2/promise';
 import { buildApp } from '../../src/app';
-import { createClock, formatTimestamp } from '../../src/clock';
+import { type Clock, createClock, formatTimestamp } from '../../src/clock';
 import { type DbPool, createDbPool } from '../../src/db/pool';
 import { limits } from '../../src/limits';
 import { type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName, type Role } from '../../src/permissions/matrix';
@@ -49,13 +49,20 @@ const ts = (micros: bigint) => formatTimestamp(micros);
 
 interface Fixture {
   userId: string;
+  sessionId: string;
   ticket: string;
+  /** the session row as the fixture made it: restore() puts it back after a call that changed it (a logout, the ending of an expired session) */
+  initial: { revokedAt: string | null; lastSeenAt: string };
 }
 
 export interface UserSpec {
   role: Role;
   active?: boolean;
   mustChange?: boolean;
+  /** the login name (default: a made-up address) */
+  email?: string;
+  /** what `users.password_hash` holds (default: a made-up value that no password matches) */
+  passwordHash?: string;
   session?: { createdAgo?: bigint; lastSeenAgo?: bigint; expiresIn?: bigint; revoked?: boolean };
 }
 
@@ -71,8 +78,10 @@ export interface World {
   logs: ReturnType<typeof logSink>;
   /** the cookie header of a caller, or undefined */
   cookieOf(caller: CallerName): string | undefined;
-  /** A new user with a live session (the spec says how it differs), for a test that changes the user or the session. Returns the user id, the session id and the cookie header. */
-  addUser(spec: UserSpec): Promise<{ userId: string; sessionId: string; cookie: string }>;
+  /** A new user with a live session (the spec says how it differs), for a test that changes the user or the session. Returns the user id, the e-mail, the session id and the cookie header. */
+  addUser(spec: UserSpec): Promise<{ userId: string; email: string; sessionId: string; cookie: string }>;
+  /** Puts the fixture caller's session row back as the fixture made it (a call may have ended or moved it): the cells of T-D02 are independent of each other. */
+  restore(caller: CallerName): Promise<void>;
   call(caller: CallerName, method: string, url: string, init?: { payload?: unknown; headers?: Record<string, string> }): Promise<LightMyRequestResponse>;
   close(): Promise<void>;
 }
@@ -84,6 +93,8 @@ export interface WorldOptions {
   label?: string;
   /** true: the application's own routes (src/routes.ts) are in the app; false (the default): only the wrapper, /healthz and what `build` registers. */
   routes?: boolean;
+  /** The API's clock. Default: fixed at T0, the instant the fixtures are made relative to. A test that moves time passes a clock over its own source, which starts at T0. */
+  clock?: Clock;
 }
 
 /** The pool, but every statement it sends is seen by the spy. */
@@ -105,33 +116,35 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
 
   async function insertUser(label: string, spec: UserSpec) {
     const userId = randomUUID();
+    const email = spec.email ?? `${label}-${randomUUID().slice(0, 8)}@example.test`;
     await sql.query('INSERT INTO users (id, email, full_name, role, active, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)', [
       userId,
-      `${label}-${randomUUID().slice(0, 8)}@example.test`,
+      email,
       `Fixture ${label}`,
       spec.role,
       spec.active === false ? 0 : 1,
-      secret('not-a-hash'),
+      spec.passwordHash ?? secret('not-a-hash'),
       spec.mustChange ? 1 : 0,
     ]);
     const ticket = newTicket();
     const sessionId = randomUUID();
     const s = spec.session ?? {};
+    const initial = { revokedAt: s.revoked ? ts(now - HOUR / 2n) : null, lastSeenAt: ts(now - (s.lastSeenAgo ?? 60_000_000n)) };
     await sql.query('INSERT INTO sessions (id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
       sessionId,
       userId,
       hashTicket(ticket),
       ts(now - (s.createdAgo ?? HOUR)),
-      ts(now - (s.lastSeenAgo ?? 60_000_000n)),
+      initial.lastSeenAt,
       ts(now + (s.expiresIn ?? 14n * 24n * HOUR)),
-      s.revoked ? ts(now - HOUR / 2n) : null,
+      initial.revokedAt,
       'fixture',
     ]);
-    return { userId, sessionId, ticket };
+    return { userId, email, sessionId, ticket, initial };
   }
   async function add(caller: Exclude<CallerName, 'anon'>, spec: UserSpec) {
-    const { userId, ticket } = await insertUser(caller, spec);
-    fixtures[caller] = { userId, ticket };
+    const { userId, sessionId, ticket, initial } = await insertUser(caller, spec);
+    fixtures[caller] = { userId, sessionId, ticket, initial };
   }
 
   await add('owner', { role: 'owner' });
@@ -148,7 +161,7 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
   const spy = spyOn(realPool);
   const logs = logSink();
   const handled: string[] = [];
-  const app = buildApp({ config: testConfig({ logLevel: 'warn' }), db: spiedPool(realPool, spy), clock: createClock(() => now), logStream: logs.stream, routes: options.routes ?? false });
+  const app = buildApp({ config: testConfig({ logLevel: 'warn' }), db: spiedPool(realPool, spy), clock: options.clock ?? createClock(() => now), logStream: logs.stream, routes: options.routes ?? false });
   options.build?.(app, { handled });
   await app.ready();
   if (!app.startup?.ok) throw new Error(`the start-up check of the fixture database failed: ${JSON.stringify(app.startup?.problems)}`);
@@ -164,7 +177,12 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
     cookieOf: (caller) => (caller === 'anon' ? undefined : `${SESSION_COOKIE}=${fixtures[caller].ticket}`),
     async addUser(spec) {
       const u = await insertUser('extra', spec);
-      return { userId: u.userId, sessionId: u.sessionId, cookie: `${SESSION_COOKIE}=${u.ticket}` };
+      return { userId: u.userId, email: u.email, sessionId: u.sessionId, cookie: `${SESSION_COOKIE}=${u.ticket}` };
+    },
+    async restore(caller) {
+      if (caller === 'anon') return;
+      const f = fixtures[caller];
+      await sql.query('UPDATE sessions SET revoked_at = ?, last_seen_at = ? WHERE id = ?', [f.initial.revokedAt, f.initial.lastSeenAt, f.sessionId]);
     },
     call(caller, method, url, init = {}) {
       const cookie = world.cookieOf(caller);
@@ -230,6 +248,8 @@ const CODE = { password_change: 'JV_PASSWORD_CHANGE_REQUIRED', forbidden: 'JV_FO
 
 /** Statements that read the session and the user, and the checkout's own SET SESSION: all a refused caller may cause (D2, A10: nothing else is read or written). */
 const isSessionRead = (sql: string) => /^SELECT\b[\s\S]*\bFROM\s+(sessions|users)\b/i.test(sql.trim()) || /^SET SESSION\b/i.test(sql.trim());
+/** U4: the one write a refused caller may cause, and only a caller whose session is over its lifetime: the session is marked ended (revoked_at; the row stays, S7). */
+const isEndMark = (sql: string) => /^UPDATE\s+sessions\s+SET\s+revoked_at\s*=\s*\?\s+WHERE\s+id\s*=\s*\?\s+AND\s+revoked_at\s+IS\s+NULL$/i.test(sql.trim());
 
 /** What is checked about an answer that ends a call before the handler: the S8 body, and that only the session and the user were read. */
 function refusalProblems(world: World, res: Answer, expected: Exclude<Expected, { kind: 'allowed' }>, sentBefore: number): string[] {
@@ -243,7 +263,8 @@ function refusalProblems(world: World, res: Answer, expected: Exclude<Expected, 
     if (e.code !== code) problems.push(`code ${e.code}, the matrix says ${code}`);
     if (!UUID.test(e.request_id)) problems.push('request_id is not a UUID');
   }
-  const stray = world.spy.sqls().slice(sentBefore).filter((s) => !isSessionRead(s));
+  const mayEndSession = expected.kind === 'unauthorized' && expected.code === 'JV_SESSION_EXPIRED';
+  const stray = world.spy.sqls().slice(sentBefore).filter((s) => !isSessionRead(s) && !(mayEndSession && isEndMark(s)));
   if (stray.length > 0) problems.push(`a refused caller caused a statement other than the session and user reads: ${stray[0].slice(0, 60)}`);
   return problems;
 }
@@ -269,6 +290,7 @@ export async function checkCell(world: World, route: CellRoute, caller: CallerNa
   const handledBefore = world.handled.length;
   const res = await world.call(caller, route.method, concreteUrl(route.path), route.payload === undefined ? {} : { payload: route.payload });
   const problems: string[] = [];
+  await world.restore(caller); // a call may have ended or moved the session (a logout does): the next cell starts from the fixture
   if (expected.kind === 'allowed') {
     if (res.statusCode === 401 || res.statusCode === 403) problems.push(`status ${res.statusCode} ${errorOf(res)?.code ?? ''}, the matrix lets ${caller} in`);
   } else {
