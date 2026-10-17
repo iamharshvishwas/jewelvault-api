@@ -228,6 +228,20 @@ function placeInOrder<T>(list: T[], item: T, key: (x: T) => readonly [string, st
 }
 
 /**
+ * The one place that writes allocation rows: 100 rows to a statement, then the audit row of each (L1 (b); a no-op in mode triggers, whose triggers write their own). The rebalance uses it, and so
+ * do the money functions that allocate a receipt of their own before the rebalance (X2 record_payment; X3, and the payment rows of X1, later). The caller holds the customer lock, has checked that
+ * each receipt and bill is the customer's (the composite keys of D14 refuse anything else), and touches the bills and the customer itself (D23: touchForReceiptWrite).
+ */
+export async function insertAllocations(tx: Tx, rows: readonly AllocationRow[]): Promise<void> {
+  for (let from = 0; from < rows.length; from += ROWS_PER_STATEMENT) {
+    const part = rows.slice(from, from + ROWS_PER_STATEMENT);
+    const params: Param[] = part.flatMap((a) => [a.id, a.receipt_id, a.bill_id, a.customer_id, a.amount, a.fine_grams, a.created_at, a.updated_at]);
+    await tx.run(`INSERT INTO receipt_allocations (id, receipt_id, bill_id, customer_id, amount, fine_grams, created_at, updated_at) VALUES ${part.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`, params);
+  }
+  for (const row of rows) await auditChange(tx, { table: 'receipt_allocations', action: 'insert', before: null, after: { ...row } });
+}
+
+/**
  * Y6 inside a money function, after its own writes: allocates the customer's advance from `state` (and from what the call made, `newBills`, `newReceipts`), inserts the allocations, audits them and
  * touches what they changed. Returns the rows as the table holds them and the totals applied. A call that applies nothing sends nothing.
  */
@@ -272,12 +286,7 @@ export async function rebalance(tx: Tx, o: RebalanceOptions): Promise<RebalanceR
   if (plan.allocations.length === 0) return none();
 
   const rows: AllocationRow[] = plan.allocations.map((a) => ({ ...a, customer_id: o.customerId, released_at: null, created_at: o.at, updated_at: o.at }));
-  for (let from = 0; from < rows.length; from += ROWS_PER_STATEMENT) {
-    const part = rows.slice(from, from + ROWS_PER_STATEMENT);
-    const params: Param[] = part.flatMap((a) => [a.id, a.receipt_id, a.bill_id, a.customer_id, a.amount, a.fine_grams, a.created_at, a.updated_at]);
-    await tx.run(`INSERT INTO receipt_allocations (id, receipt_id, bill_id, customer_id, amount, fine_grams, created_at, updated_at) VALUES ${part.map(() => '(?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}`, params);
-  }
-  for (const row of rows) await auditChange(tx, { table: 'receipt_allocations', action: 'insert', before: null, after: { ...row } });
+  await insertAllocations(tx, rows);
   // D23: the bills that received money or silver and the customer carry the call's stamp; a bill the call inserted already does
   await touchForReceiptWrite(tx, { customerId: o.customerId, billIds: rows.map((a) => a.bill_id).filter((id) => !fresh.has(id)), at: o.at });
   return { allocations: rows, applied: plan.applied, fine_applied: plan.fine_applied };

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../scripts/migrate.mjs';
+import { registerAuthRoutes } from '../../src/auth/loginRoutes';
 import { passwords } from '../../src/auth/password';
 import { buildApp } from '../../src/app';
 import { createClock } from '../../src/clock';
@@ -11,6 +12,7 @@ import { limits } from '../../src/limits';
 import { MATRIX } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, microsOfDbTimestamp } from '../../src/permissions/session';
+import { registerSyncRoutes } from '../../src/sync/routes';
 import { T0, type World, concreteUrl, makeWorld, registerStubs } from './cells';
 import { csrfHeaders, secret, testConfig } from './support';
 
@@ -686,9 +688,11 @@ describe('T-D26 sessions: 12 hours idle, 14 days absolute, polling does not exte
   beforeAll(async () => {
     w = await makeWorld({
       label: 'sess',
-      routes: true,
+      routes: false, // the toy below stands behind a row of the matrix (fn:record_payment, which API22 built for real), so the application's own routes are registered one group at a time
       clock: createClock(() => time.micros),
       build: (app, state) => {
+        registerAuthRoutes(app);
+        registerSyncRoutes(app);
         // a toy money call: it opens its own transaction after the wrapper has done the session's work
         route(app, {
           action: 'fn:record_payment',
