@@ -7,21 +7,23 @@
 //   answer   201 {bill, items, receipts, allocations, warnings, advance_applied}: `bill` and `items` are the rows in the wire format of the sync read of the caller's role (so the cache applies them as
 //            it applies a polled row), `warnings` holds PAN_MISSING, RATE_MISSING and RATE_STALE (unique, sorted). A repeat of the key answers the same body and status with `Idempotent-Replay: true`.
 //
-// WHAT IS NOT HERE YET (the plan's next tasks call into this function at the points marked (e), (i) and (j) below): the payment rows and their receipts and allocations (API22), the overpayment and
-// cash rules (API22, API23), the walk-in's PAN refusal of Z2 (API23), and the rebalance of Y6 that applies an advance the customer holds (API21). Until then the function accepts an EMPTY payment list: a
-// non-empty one is refused (JV_NOT_ALLOWED) rather than saved without its money, and `advance_applied` is "0.00". The Credit mode does not exist (D13, Y2): it is refused with the other words that are not
-// one of the five modes.
+// WHAT IS NOT HERE YET (the plan's next tasks call into this function at the points marked (e) and (i) below): the payment rows and their receipts and allocations (API22), the overpayment and cash
+// rules (API22, API23), the walk-in's PAN refusal of Z2 (API23). Until then the function accepts an EMPTY payment list: a non-empty one is refused (JV_NOT_ALLOWED) rather than saved without its
+// money. The Credit mode does not exist (D13, Y2): it is refused with the other words that are not one of the five modes. The rebalance of Y6 (j) is built (API21, src/domain/rebalance.ts): an advance
+// the customer holds is applied to their oldest pending bills, the new bill among them, and `advance_applied` says how much of it went to THIS bill.
 //
 // ORDER OF WORK (X1 and X0). Before the transaction: one reading of the API clock (`day`: the business date for Y8 and for a bill_date left out, and the year of the number series, S5), the prefix of the bill
 // numbers (settings.estimate, NODE-DESIGN 5.5), and the counter row of the series (ensureSeries: a series made inside a transaction can deadlock, spike F3). Then, in one withTx:
 //   1. the claim of the key (L5) and the role check (X0 items 1 and 2: a refusal rolls the claim back, so the key stays unused), then the stored answer if the key is a repeat;
 //   2. the customer row FOR UPDATE (X0 item 3), then the validation of what needs no more reading (Y8, each piece once, the confirm list, the payments), then "the customer exists and is not archived";
-//   3. the state of the customer, read once (X0 item 8, `create_bill.after_read` of the test build: the hook is a wrapper of the test build, not a line of this file);
+//   3. the state of the customer, read once (X0 item 8, `create_bill.after_read` of the test build: the hook is a wrapper of the test build, not a line of this file); the rebalance (j) allocates
+//      from it and reads nothing again;
 //   4. the pieces by ONE statement, `... WHERE id IN (...) ORDER BY id FOR UPDATE` (X0 item 5), R10 (JV_PIECE_UNAVAILABLE naming the pieces), the plain reads of the designs, the daily rates and the settings,
 //      the bill priced from the LOCKED rows and the rates sent (R1 to R8, R14) by buildQuote, the one function quote_bill also uses, with the bill's pricing version (R13);
 //   5. the number counter, LAST (X0 item 6), after every check;
 //   6. the writes, all stamped from one reading of the API clock taken after the locks (C4: no row is stamped long before its commit): the bill, its lines with the snapshot and the list prices, the
-//      conditional UPDATE of the pieces to Sold checked against the number of lines (K2, X1 (h): defence in depth), the touch of the customer (D23), the audit rows of mechanism (b) (L1);
+//      conditional UPDATE of the pieces to Sold checked against the number of lines (K2, X1 (h): defence in depth), the touch of the customer (D23), the audit rows of mechanism (b) (L1), and
+//      last the rebalance (j: Y6, the advance goes to the oldest pending bills; its allocations and touches carry the same stamp), so that the audit log reads in the order of the writes in both mechanisms;
 //   7. the result is stored in the claim row, in the same transaction.
 // A failure anywhere rolls everything back, the claim and the counter included: no piece is Sold and no number is used.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -36,6 +38,7 @@ import type { Param } from '../db/stmt.js';
 import { touchForBillWrite } from '../db/touch.js';
 import { type Tx, txContextFor, withRead, withTx } from '../db/tx.js';
 import { CURRENT_PRICING_VERSION, parseRupees } from '../domain/pricing.js';
+import { fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
 import { type Row, invalid, readRow, wireRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { BusyError, JvError, unavailableError } from '../errors.js';
@@ -102,10 +105,10 @@ export interface CreateBillResult {
   items: Row[];
   /** the money receipts of the explicit payments (API22) */
   receipts: Row[];
-  /** their allocations and those of the advance applied (API22, API21) */
+  /** the allocations the call made: those of the explicit payments (API22) and those of the rebalance (the advance applied to the oldest pending bills, this bill among them) */
   allocations: Row[];
   warnings: string[];
-  /** money from an advance the customer held, applied to this bill by the rebalance (API21) */
+  /** money from an advance the customer held that the rebalance applied to THIS bill ("Advance adjusted", O23), money text; "0.00" when there was none */
   advance_applied: string;
 }
 
@@ -286,10 +289,6 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     }
     await touchForBillWrite(tx, { customerId: customer.id, at }); // D23: the customer's figures changed
 
-    // (i) API22: one `money` receipt and one allocation per payment row, dated the bill date.
-    // (j) API21: rebalance the customer (Y6), which applies any advance the customer holds, from `state`.
-    void state;
-
     // the rows as the tables hold them: the audit rows of mechanism (b) (the triggers of (a) write their own) and the answer
     const billRow = await readRow(tx, 'bills', billId, false);
     if (!billRow) throw new Error('the bill is gone after its own insert');
@@ -301,13 +300,27 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
       for (const old of before) await auditChange(tx, { table: 'skus', action: 'update', before: old as AuditedRow, after: after.get(String(old.id)) as AuditedRow });
     }
 
+    // (i) API22: one `money` receipt and one allocation per payment row, dated the bill date. API22 sets `paidNow` to the sum of those allocations (paise) and adds their rows to the answer: the new bill
+    // is handed to the rebalance with what is STILL pending on it, or an advance would be applied to money the bill already has.
+    const paidNow = 0n;
+    // (j) Y6: rebalance the customer, which applies any advance the customer holds, from `state` (read before the bill existed, so the bill is handed over: it is placed among the pending bills by
+    // its date and its stamp). The walk-in is never rebalanced (K5).
+    const rebalanced = await rebalance(tx, {
+      customerId: customer.id,
+      walkin: Number(customer.is_walkin) === 1,
+      state,
+      at,
+      newBills: [{ id: billId, bill_date: billDate, created_at: at, pending: fromUnits(toUnits(quote.totals.grand_total, 2) - paidNow, 2), fine_pending: quote.totals.fine_weight_due }],
+    });
+    const adjusted = rebalanced.allocations.filter((a) => a.bill_id === billId).reduce((sum, a) => sum + toUnits(a.amount, 2), 0n);
+
     const value: CreateBillResult = {
       bill: wireRow('bills', role, billRow),
       items: lineRows.map((r) => wireRow('bill_items', role, r)),
       receipts: [],
-      allocations: [],
+      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', role, { ...a })),
       warnings: [...warnings].sort(),
-      advance_applied: '0.00',
+      advance_applied: fromUnits(adjusted, 2),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

@@ -101,8 +101,8 @@ export const postQuote = (w: EditWorld, caller: CallerName, payload: unknown): P
 export interface BillResult {
   bill: Record<string, any>;
   items: Record<string, any>[];
-  receipts: unknown[];
-  allocations: unknown[];
+  receipts: Record<string, any>[];
+  allocations: Record<string, any>[];
   warnings: string[];
   advance_applied: string;
 }
