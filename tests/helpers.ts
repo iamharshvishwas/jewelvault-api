@@ -1,4 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import mysql, { type Connection, type ConnectionOptions } from 'mysql2/promise';
+import { createTenBoxUser } from '../scripts/lane.mjs';
+import { migrate } from '../scripts/migrate.mjs';
+import { createPacer, pacedConnect } from '../scripts/pacing.mjs';
 
 export const HOST = '127.0.0.1';
 export const PORT = Number(process.env.JV_DB_PORT ?? 33307);
@@ -62,6 +66,83 @@ export function laneConfig() {
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// S11: tools and tests that open many connections pace themselves to at most 10 NEW connections in any 1.2 seconds, with the database half's own pacer (scripts/pacing.mjs).
+// One pacer for the whole test process; the helpers below (the lane's root, a scratch database and its user) open their connections through it.
+export const testPacer = createPacer();
+export const paced = <T>(connect: () => Promise<T>): Promise<T> => pacedConnect(testPacer, connect);
+
+/** The lane server's root connection, paced. Close it yourself. */
+export const laneRoot = (): Promise<Connection> => paced(() => rootConn());
+
+/** The connection settings of a database as the API's pool takes them (Config['db']). */
+export interface DbSettings {
+  host: string;
+  port: number;
+  name: string;
+  user: string;
+  password: string;
+}
+
+/** The lane's own database and its ten-box user, as the API's pool takes them. */
+export function laneDbSettings(): DbSettings {
+  const l = laneConfig();
+  return { host: l.host, port: l.port, name: l.database, user: l.user, password: l.password };
+}
+
+/** A throw-away database on the lane server with its own ten-box user of A3 (and its own made-up password): a test may drop a table in it or grant that user more without touching the lane database. */
+export interface Scratch {
+  readonly database: string;
+  readonly user: string;
+  /** Config['db'] for createDbPool and the server. */
+  readonly db: DbSettings;
+  /** A paced plain connection as the scratch user (the server's own session settings, nothing of the API's). */
+  connect(extra?: ConnectionOptions): Promise<Connection>;
+  /** A paced root connection to the lane server. */
+  root(): Promise<Connection>;
+  /** Drops the database and the user (as root). Safe to call twice. */
+  drop(): Promise<void>;
+}
+
+/** schema: apply db/migrations (no seeds, no triggers) as the scratch user, so the database holds every table. `lane reset` drops every jv_* database and user too, should a test die before drop(). */
+export async function scratchDatabase(label: string, opts: { schema?: boolean } = {}): Promise<Scratch> {
+  if (!/^[a-z0-9]{1,12}$/.test(label)) throw new Error('scratchDatabase: the label is 1 to 12 lower-case letters or digits');
+  const lane = laneConfig();
+  const id = `jv_${label}_${randomBytes(4).toString('hex')}`;
+  const password = randomBytes(18).toString('base64url');
+  const root = await laneRoot();
+  try {
+    await root.query(`CREATE DATABASE \`${id}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+    await createTenBoxUser(root, { database: id, user: id, password });
+  } finally {
+    await root.end();
+  }
+  const scratch: Scratch = {
+    database: id,
+    user: id,
+    db: { host: lane.host, port: lane.port, name: id, user: id, password },
+    connect: (extra = {}) => paced(() => mysql.createConnection({ ...baseOptions, ...extra, host: lane.host, port: lane.port, user: id, password, database: id })),
+    root: laneRoot,
+    async drop() {
+      const r = await laneRoot();
+      try {
+        await r.query(`DROP DATABASE IF EXISTS \`${id}\``);
+        await r.query("DROP USER IF EXISTS ?@'%'", [id]);
+      } finally {
+        await r.end();
+      }
+    },
+  };
+  if (opts.schema) {
+    const u = await scratch.connect();
+    try {
+      await migrate(u, { seeds: false, optional: false });
+    } finally {
+      await u.end();
+    }
+  }
+  return scratch;
+}
 
 export interface DbError extends Error {
   code?: string;
