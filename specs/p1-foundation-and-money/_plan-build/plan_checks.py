@@ -5,7 +5,7 @@
 #   A: jewelvault-api-wt/a, branch api-a      B: jewelvault-api-wt/b (api-b) and jewelvault-app-wt/b (api-web)      C: jewelvault-api-wt/c (api-c) and jewelvault-app-wt/c (api-web-c, for WEB14)
 # The orchestrator (the main session) merges, sets nothing else, and runs the "O" tasks with Harsh; those are not agents.
 AGENT_ORDER = {
-    "A": ["API01", "MB07", "API02", "API03", "API14", "API15", "API16", "API20", "API21", "API22", "API23", "API25",
+    "A": ["API01", "API02", "API03", "API14", "API15", "API16", "API20", "API21", "API22", "API23", "API25",
           "API26", "API29", "API30", "RV2", "API35", "API36", "RV4", "QA01"],
     "B": ["API06", "API10", "WEB00", "WEB01", "WEB02", "WEB03", "WEB04", "WEB05", "WEB07", "WEB06", "WEB08",
           "WEB09", "WEB10", "WEB11", "WEB12", "WEB12b", "WEB16", "WEB13", "WEB17", "WEB15"],
@@ -16,7 +16,7 @@ AGENT_ORDER = {
 
 # Work done by the orchestrator together with Harsh or Siddhi (hPanel, the shop, the rehearsal): not agents, but each is
 # serialised by its dependencies. Everything with `who` set and no `agent` is a person's task.
-ORCH_LANE = ["OPS01", "OPS02a", "OPS02w", "OPS03a", "OPS02", "OPS03", "OPS08", "OPS04", "OPS05", "OPS06", "OPS07", "IMP02", "IMP03", "QA02", "QA03", "QA04",
+ORCH_LANE = ["MB07", "OPS01", "OPS02a", "OPS02w", "OPS03a", "OPS02", "OPS03", "OPS08", "OPS04", "OPS05", "OPS06", "OPS07", "IMP02", "IMP03", "QA02", "QA03", "QA04",
              "QA05", "QA06"]
 
 # The orchestrator and Harsh are one resource: these tasks need Harsh's hands (hPanel, GitHub Desktop, the shop) and are served one at a time in
