@@ -344,6 +344,25 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
     expect(JSON.parse(typeof stored === 'string' ? stored : JSON.stringify(stored))).toMatchObject({ file: 'daily/2026-10-16.enc', sha256: sha });
   });
 
+  it('record-pull takes --file and --sha256 from the pull tool (and accepts --at and --by) and asks only for what is missing; a bad flag is the usage text', async () => {
+    const sha = randomBytes(32).toString('hex');
+    const given = await run(['record-pull', '--file', 'daily/2026-10-17.enc', '--sha256', sha, '--at', '2026-10-17T10:00:00.000Z', '--by', 'harsh']);
+    expect(given.code, given.err).toBe(0);
+    expect(given.asked).not.toContain('file');
+    expect(given.asked).not.toContain('sha256');
+    const stored = (await world.sql.query<any[]>("SELECT value FROM settings WHERE setting_key = 'last_pulled'"))[0][0].value;
+    expect(JSON.parse(typeof stored === 'string' ? stored : JSON.stringify(stored))).toMatchObject({ file: 'daily/2026-10-17.enc', sha256: sha });
+    const half = await run(['record-pull', '--file', 'daily/2026-10-18.enc'], { answers: { sha256: sha } });
+    expect(half.code, half.err).toBe(0);
+    expect(half.asked).toContain('sha256');
+    expect(half.asked).not.toContain('file');
+    for (const argv of [['record-pull', '--file'], ['record-pull', '--nope', 'x'], ['record-pull', '--file', 'a', '--file', 'b'], ['record-pull', 'extra'], ['list', '--file', 'x']]) {
+      const r = await run(argv);
+      expect(r.code, argv.join(' ')).toBe(1);
+      expect(r.asked, argv.join(' ')).toEqual([]);
+    }
+  });
+
   it('a wrong token: prints that the token was refused (never the door\'s detail), exits 1, and changes nothing', async () => {
     const e = email('cli-nobody');
     const r = await run(['add-user'], { token: randomBytes(32).toString('base64url'), answers: { email: e, name: 'Nobody', role: 'staff' } });

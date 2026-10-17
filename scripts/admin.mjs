@@ -9,7 +9,8 @@
 //   activate        asks for the e-mail.
 //   list            prints the users.
 //   clear-counters  clears the login counters, so that a shop a stranger has locked out can sign in at once (A13).
-//   record-pull     asks for the backup file and its SHA-256 and records that Harsh pulled it (O54).
+//   record-pull     asks for the backup file and its SHA-256 and records that Harsh pulled it (O54). The pull tool (scripts/restore-cli.mjs) hands over what it already knows as
+//                   `--file F --sha256 H` (and `--at T --by N`, which the door does not need: it stamps the time and the actor itself); what is not given is asked for.
 //
 // THE TOKEN is typed, without echo, and kept in memory for the length of the command: it is read from no file and no variable of the environment, and written to none. (Make one with `npm run make-token`.)
 // THE ADDRESS of the API is the variable JV_API_URL (not a secret; for example the production address), or it is asked for. The token is never sent over plain http, except to this computer.
@@ -24,6 +25,18 @@ export const COMMANDS = ['add-user', 'reset', 'role', 'deactivate', 'activate', 
 
 class CliError extends Error {}
 
+/** The words after `record-pull`: --file and --sha256 are used, --at and --by are accepted (the pull tool sends them) and ignored. null when they are not pairs of a known name and a value. */
+function pullFlags(rest) {
+  const out = {};
+  for (let i = 0; i < rest.length; i += 2) {
+    const name = rest[i];
+    const value = rest[i + 1];
+    if (!['--file', '--sha256', '--at', '--by'].includes(name) || value === undefined || value.startsWith('--') || Object.hasOwn(out, name.slice(2))) return null;
+    out[name.slice(2)] = value;
+  }
+  return out;
+}
+
 const USAGE = `Usage: npm run admin -- <command>
   add-user        make a user (also the first owner); prints the temporary password once
   reset           give a user a new temporary password and end all their sessions
@@ -32,7 +45,7 @@ const USAGE = `Usage: npm run admin -- <command>
   activate        let a user in again
   list            show the users
   clear-counters  clear the login counters
-  record-pull     record that you pulled a backup
+  record-pull     record that you pulled a backup  (optional: --file F --sha256 H)
 `;
 
 // ------------------------------------------------------------------ talking to the door
@@ -165,9 +178,9 @@ const HANDLERS = {
     return [`Cleared ${plural(cleared, 'login counter')}. A login that was refused can try again now.`];
   },
 
-  async 'record-pull'(call, io) {
-    const file = (await io.ask('file')).trim();
-    const sha256 = (await io.ask('sha256')).trim().toLowerCase();
+  async 'record-pull'(call, io, flags) {
+    const file = (flags.file ?? (await io.ask('file'))).trim();
+    const sha256 = (flags.sha256 ?? (await io.ask('sha256'))).trim().toLowerCase();
     const done = await call('POST', '/admin/v1/backup-pulls', { file, sha256 });
     return [`Recorded: you pulled ${file} at ${done.at}.`];
   },
@@ -181,7 +194,8 @@ const HANDLERS = {
  */
 export async function runAdmin(argv, io) {
   const [command, ...rest] = argv;
-  if (!command || rest.length > 0 || !Object.hasOwn(HANDLERS, command)) {
+  const flags = command === 'record-pull' ? pullFlags(rest) : rest.length === 0 ? {} : null;
+  if (!command || flags === null || !Object.hasOwn(HANDLERS, command)) {
     io.err(USAGE);
     return 1;
   }
@@ -190,7 +204,7 @@ export async function runAdmin(argv, io) {
     if (token === '') throw new CliError('No token was typed.');
     const configured = (io.env.JV_API_URL ?? '').trim();
     const base = baseOf(configured !== '' ? configured : await io.ask('api'));
-    const lines = await HANDLERS[command](makeApi(base, token, io.fetch), io);
+    const lines = await HANDLERS[command](makeApi(base, token, io.fetch), io, flags);
     io.out(`${lines.join('\n')}\n`);
     return 0;
   } catch (e) {
