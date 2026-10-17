@@ -164,7 +164,7 @@ w = O.append
 
 w("# Plan: P1 foundation and money (JewelVault on Node.js + MariaDB 11.8 at Hostinger, front end on Vercel)")
 w("")
-w(f"Status: **DRAFT 1, revision C (17 Oct 2026)**, written on {today}, revised on Sat 17 Oct for what arrived after it (the database session's commits `379ef68`, `a2a720b`, `a5790d8`, `694b435`, the API-00c results of 16 and 17 Oct, the purchase of the domain) and again for the three plan reviews of 17 Oct (section 15); against `spec.md` draft 5.2 (commit `7920e6c`, {len(lines) - (1 if lines and lines[-1] == '' else 0)} lines, "
+w(f"Status: **DRAFT 1, revision D (17 Oct 2026)**, written on {today}, revised on Sat 17 Oct for what arrived after it (the database session's commits `379ef68`, `a2a720b`, `a5790d8`, `694b435`, the API-00c results of 16 and 17 Oct, the registration of the domain) and again for the three plan reviews of 17 Oct (section 15); against `spec.md` draft 5.2 (commit `7920e6c`, {len(lines) - (1 if lines and lines[-1] == '' else 0)} lines, "
   f"{len(spec_ids)} requirement and open-item IDs, {len(spec_tests)} tests; reviewed three times, no Critical). It replaces "
   "the plan for the Supabase stack (`jewelvault-app/specs/p1-foundation-and-money/plan.md`, 52 tasks, 10 done and now frozen; "
   "only `FE01`, the integer pricing code, survives). Reviewed three times by fresh agents (`RV0` and a re-read of the changed lines, section 15); the "
@@ -187,7 +187,7 @@ w(f"- **No date is promised.** First live day (never between Thu 29 Oct and Wed 
   "The old 'before Dhanteras' dates (31 Oct, 2 Nov) are not offered: they need every best factor and break the freeze.")
 w("- **What the dates depend on:** the speed of the money, browser and Hostinger tasks (never measured: tripwires TW1 to TW-ops, section 9), Hostinger passing the rest of the proof (`OPS01` Safari and Firefox on the real names, `OPS02a`, `OPS02w`, `OPS02`), "
   "the first GitHub deploy (`OPS03a`), Harsh's hands at hPanel and GitHub Desktop (one queue, section 6), and the inputs of people that sit close to the path: Harsh's go, "
-  "Siddhi's full stock list and balances, her business answers, and her presence for the rehearsal, the acceptance and the training, which cannot happen between 3 and 11 Nov (section 8). The domain is no longer waited for: Harsh bought it on 17 Oct.")
+  "Siddhi's full stock list and balances, her business answers, and her presence for the rehearsal, the acceptance and the training, which cannot happen between 3 and 11 Nov (section 8). The domain is no longer waited for: it is Siddhi's (her name and her money), registered in Harsh's own Hostinger account on 17 Oct.")
 w("- **The longest chain** runs through the money core (agent A) and the rest of the API (agent C), then staging, the backup drills, the three reviews, the regression, the acceptance by her two testers, the training, the go or no-go and the cut-over (section 6).")
 w("- **No change between Thu 29 Oct and Wed 11 Nov**; Siddhi is away from her tests and training 3 to 11 Nov; the paper bill book stays for ten days after go-live; the cut line and the never-cut list are in section 10.")
 w("")
@@ -415,7 +415,7 @@ w("The first five tasks (`API01` to `API05`) are mostly pure work and prove litt
   "tasks between lanes (the static lanes are a guess) before telling Harsh the new range.")
 w("- **TW2, second measurement: `API31`** (random sequences, three seeds, the matrix) and `RV2`'s mutation findings. A High finding that needs a redesign "
   "of a lock or of the rebalance moves the worst case by about 2 working days each time and is reported at once.")
-w("- **TW3, `OPS01`** (Safari and Firefox on the real names, and the real pair): the domain is bought and two staging names work in Chrome (17 Oct). What can still trip is the `__Host-` "
+w("- **TW3, `OPS01`** (Safari and Firefox on the real names, and the real pair): the domain is registered (Siddhi's, in Harsh's account) and two staging names work in Chrome (17 Oct). What can still trip is the `__Host-` "
   "SameSite=Strict cookie in Safari or Firefox, Safari's 7-day cap, or the website name pointing at Vercel breaking the same-site rule. STOP and re-plan the name pair or put the API behind the "
   "website's own origin by a Vercel rewrite (spec A12); a no-go on the host goes to Harsh (O44: a priced VPS comparison before any money is spent).")
 w("- **TW4, Siddhi's data:** if the sample sheet (`PS02`) is not in hand by its latest day in section 8, `IMP01` slips; if the full list "
@@ -428,8 +428,8 @@ w("- **TW5, `OPS02` and `OPS03a`:** the dump script as a Custom cron job and `GE
 w("")
 w("## 10. Budget and cut line")
 w("")
-w("Budget: the days of section 7, nothing is bought by this plan except what Harsh decides (Harsh bought "
-  "`jaishrigoldpalace.com` himself on 17 Oct, its yearly price is his to write into the go or no-go list; a Hostinger renewal, price and term to be stated by him; a VPS only if the proof fails). If a gate is late, "
+w("Budget: the days of section 7, nothing is bought by this plan except what Harsh decides (`jaishrigoldpalace.com` "
+  "is Siddhi's, her name and her money, registered in Harsh's Hostinger account on 17 Oct; Harsh writes its yearly price into the go or no-go list and Siddhi pays the renewal by default; a Hostinger renewal, price and term to be stated by him; a VPS only if the proof fails). If a gate is late, "
   "cut in this order, one item at a time, and tell Harsh each time. Prices are days saved on the finish of the last code gate (`RV4`):")
 w("")
 w(md_table(cut_rows, ["#", "Cut", "Best case (working days saved)", "Worst case (working days saved)"]))
@@ -481,7 +481,7 @@ w("")
 w(md_table([
     ["The unit is wrong for money, browser and Hostinger work (never measured)", "Three cases, not one date; TW1 and TW2 say which case it is; the worst case is in section 7."],
     ["Siddhi's data, the domain, her testers or her CA arrive late (the path is people-bound in the best case)", "Leads and latest days in section 8; one message asks for everything at once; the staging rehearsal runs on a first complete version; go-live slides day by day and Harsh tells her."],
-    ["The `__Host-` cookie fails in Safari or Firefox on the real names, or the narrowed ten-box user breaks something the all-boxes proof did not (the domain itself is bought and works in Chrome)", "OPS01 and OPS02 are early and a gate; fallbacks: another name pair, a Vercel rewrite of the API, a priced VPS (O44)."],
+    ["The `__Host-` cookie fails in Safari or Firefox on the real names, or the narrowed ten-box user breaks something the all-boxes proof did not (the domain itself is registered and works in Chrome)", "OPS01 and OPS02 are early and a gate; fallbacks: another name pair, a Vercel rewrite of the API, a priced VPS (O44)."],
     ["The first GitHub deploy has never been tried (only zip uploads), and it sits late in the chain", "`OPS03a` is a walking-skeleton deploy as soon as the repository and the staging app exist, so a surprise appears in the first week; tripwire TW-ops."],
     ["The new-connection budget (about 20 a second) is shared by every process of the plan's database user: the app, the dump script and the other apps (API-00c, 16 Oct)", "One pool of 8, the dump's own pool of one, every tool paced to 10 in 1.2 s; the proof apps are removed (PH05b); OPS02 and OPS03 measure the budget with the app and the dump running together; a refused connection is retried once then `JV_BUSY`."],
     ["The dump cannot run as a Custom cron Node script (CPU or process kill), or `GET_LOCK` is not allowed", "OPS02 tests it with a stub first; fallback: the same export run from Harsh's Mac through Remote MySQL; if both fail, a smaller dump or another place to run it (spec I8 (B))."],
@@ -503,14 +503,14 @@ w("")
 w("**Decisions only Harsh can make** (each with a default, so nothing blocks; the first four change the dates):")
 w("")
 w("1. The go on this plan (given on 17 Oct) and the date plan: the earliest first live day is Thu 12 Nov and the likely one a week or two later; anything inside 29 Oct to 11 Nov overrules his own PLAN.md 3.1 rule 4, in his words. Recommended: tell Siddhi 'not before 12 Nov, most likely the week of 17 to 23 Nov'.")
-w("2. The domain: bought by him on 17 Oct (`jaishrigoldpalace.com`). What is left is who owns what at hand-over (the registrant and the hosting stay in one account until both move together), the yearly price, and Vercel's DNS record for the website name.")
+w("2. The domain `jaishrigoldpalace.com` is Siddhi's (her name and her money) and is registered in his own Hostinger account (17 Oct), where it stays until hand-over. What is left is the hand-over (the registrant moves to an account in Siddhi's name after go-live, with her say; the hosting stays with the registrant until both can move together), who pays the yearly renewal (default: Siddhi; he states the price), and Vercel's DNS record for the website name.")
 w("3. Sending Siddhi the eight-item data request in one message today, and the dates of her two testers and of the training (not 3 to 11 Nov).")
 w("4. Whether the printed estimate and the stale-rate guard (`WEB13`, `WEB16`; PLAN.md P3-T1 and P3-T2, outside the spec) stay on the go-live path (recommended: yes) and the rate card by purity (`WEB17`) is the first cut.")
 w("5. The weekly pull (O54, a duty of his), the key custody (O40), telling Siddhi that backups sit in one account (O45), the Hostinger renewal with auto-renew and its price (O46), the domain's yearly renewal.")
 w("6. The vetoable defaults of `PH07` (per-line rounding O22, Reports in M1 O32, the walk-in silver settlement O52, the login throttle O55, the photo caps O56 and others).")
 w("7. How many hours a day he can give on the days that need his hands (hPanel, GitHub Desktop pushes), who supports the system after day 30 and at what price (PLAN.md decision 8), and whether to pay for a small VPS comparison if the proof fails (O44).")
 w("8. Which branch of `jewelvault-app` he pushes before go-live: only the work branch `api-web` (default), never `main`, so that the live demo on Vercel does not change until `PH08`; and whether the preview-mode screens (sample data, no API) may stay visible on that branch until `WEB15` (default: yes).")
-w("9. A new fact against a spec line: the domain is bought (O38 still says the default is a domain in Siddhi's name; NODE-DESIGN DEC-1 and `API-00C-RESULTS.md` section 5 record it). The plan does not edit the spec; the next spec revision should amend O38.")
+w("9. A new fact against a spec line: the domain is Siddhi's, registered in Harsh's account until hand-over (O38's default, a domain in Siddhi's name, is true for the name and the money but not for the registrant; NODE-DESIGN DEC-1 and `API-00C-RESULTS.md` section 5 record the registration). The spec session makes a tiny wording amendment to O38 (IDs unchanged); the plan edits no spec.")
 w("10. A ruling on the spec: T-R01 says each key holder proves that her copy decrypts at drill 1. Siddhi is away 3 to 11 Nov and drill 1 comes before her training, so Harsh's own copy is proved at drill 1 (`OPS05`) and hers at the training (`QA03`), still before go-live. Default: yes.")
 w("")
 w("**The lines the writer is least sure of:** (1) the speed factors of the money, web and ops groups (judgement from one measurement of pure work); (2) the lead "
@@ -523,7 +523,7 @@ w("## 15. How this draft answers the plan review")
 w("")
 agent_pd = sum(t["pd"] for t in TASKS if t["status"] == "TODO" and t["agent"])
 w("Two fresh agents read the plan on 17 Oct 2026 (`plan-review.md`: traceability and task correctness, 17 findings, 0 Critical, 4 High; `plan-review-2.md`: schedule, risk, people and "
-  "Hostinger, 18 findings, 0 Critical, 5 High). Both said **pass with fixes**. The first two are answered in revision B (`61cbb9b`), the third (a re-read of only the changed lines, `plan-review-3.md`: 15 findings, 1 High, 9 Medium, 5 Low) in this revision C. "
+  "Hostinger, 18 findings, 0 Critical, 5 High). Both said **pass with fixes**. The first two are answered in revision B (`61cbb9b`), the third (a re-read of only the changed lines, `plan-review-3.md`: 15 findings, 1 High, 9 Medium, 5 Low) in revision C; revision D corrects one fact about the domain (below). "
   "The writer did not review its own plan (Playbook 4).")
 w("")
 ans = [
@@ -544,6 +544,7 @@ ans = [
     ["PR15 (Low)", "Done. 567 schema tests, 25 tables, 87 CHECKs, 18 foreign keys, 1,205 lines, `s21` in `MB06`'s files, `DB09a` and `45a444e` in `WEB15`; `ALTER` is in the grep of `API03` (A7); `withRead` is in `API03` and `tx.trail` with `LockOrderViolation` in `API15`."],
     ["PR16 (Low)", "Done. Only a run with no flag (or `--build`) writes; dead ignores were removed and now fail the run; an ignore reason may name only a task that owns a clause of that test (this found and fixed 12 loose reasons, and T-C01, T-C03, T-F08 got their clauses)."],
     ["PR17 (Low)", "Done. The old-browser-export reader in `IMP01` is built only if `PS01` says data was entered there."],
+    ["Domain ownership (Harsh's words, 17 Oct)", "Corrected in revision D. `jaishrigoldpalace.com` is Siddhi's domain, her name and her money; it is registered in Harsh's own Hostinger account and stays there until hand-over. The earlier text said Harsh bought it himself; every such sentence in sections 0, 8, 10, 13, 14 and in `PH04`, `PH06b`, `OPS01`, `OPS04` is fixed. `PH04` keeps the hand-over (after go-live the registrant moves to an account in Siddhi's name). `PH06b`, `QA04` and the break-glass sheet (`OPS06`) get the lines: two-step login on the Hostinger account that holds the domain, who pays the yearly renewal (default Siddhi, price stated by Harsh), a reminder 30 days before the renewal date, and a note that the domain sits in Harsh's account until hand-over. Dates and tasks do not change."],
     ["PR3-1 (High)", "Done. `src/auth/limiter.ts` is built in `API09` (the admin door is the first route that needs it) and imported by `API08`, `API17` and `API33`; `API08` now depends on `API09`."],
     ["PR3-2, PR3-3", "Done. `PH01` offers one date plan (not before Thu 12 Nov; the early date would overrule Harsh's own rule and is not offered); `PH08` merges `api-web` into `main` of `jewelvault-app` and pushes before the Vercel variables are changed, and says how to roll back."],
     ["PR3-4, PR3-5, PR3-6", "Done. `OPS02` uses the proof kit's stub script, stub endpoint and stub workflow, and the real tick, dump cron job and workflow are `OPS03`; `OPS01` names its test page (one HTML file on `api-web`, shown by a Vercel preview); `PH02` also pushes a `staging` branch."],
@@ -552,7 +553,7 @@ ans = [
     ["PR3-9", "Done. `QA02` and `QA03` come before `OPS07` in the queue (acceptance and training run on staging, not on production), and the scheduler no longer holds lane O in a strict order: it takes the ready task that can start first, so `OPS07` uses the days Siddhi is away. The end of the best range (Mon 16 Nov, Sundays off) is real: `QA02` does not fit in the half day before her absence, so it starts Thu 12 Nov."],
     ["PR3-10", "Done. Re-priced: `API03` +0.2, `API05` +0.1, `API09` +0.3, `API11` +0.2 (the seeder, taken from `API12` which is back to 1.0), `API15` +0.2, `API17` +0.2, `API30` +0.2, `API31` +0.2. Plan-days and dates are recomputed in sections 0, 4 and 7."],
     ["PR3-11 to PR3-15", "Done. Wrong pointers and stale names fixed (`API30`, `API13b`, `API33b`, `OPS01`, `OPS02`, `OPS04`, `OPS07`, `PH07`, section 13); the header date is fixed (`core.GENERATED`); section 6 prints the queue; `--sched` prints the Sundays-worked column from the Sundays-worked run; `RV2` comes before `API35` and `API36` in lane A; `RV1` waits for `API13b`; `IMP01` waits for `PS01`; `PH05b` waits for `PH03`; `TW-web` has an action when it trips."],
-    ["PR2-1 to PR2-18", "Answered (domain bought; Siddhi's absence 3 to 11 Nov in the scheduler; 31 Oct and 2 Nov not offered; TW1a, TW1, TW-web and TW-ops in minutes per plan-day; `OPS02a` and `OPS03a` earlier; `PH06a`/`PH06b`; lane O as one queue; the 255-character numbers; certificate, hand-over and renewal risks; the import correction loop; the legal line in `QA04`; drill 2 with real data and Harsh performing the first restore steps; `WEB16`/`WEB17`; the credential path; `PH03`; the additive-only release-week rule and `OPS08` high of 5.0; section 14). **Ruled, not changed:** PR2-7, the static lanes: they stay a stated guess; the orchestrator re-assigns after TW1a or TW1."],
+    ["PR2-1 to PR2-18", "Answered (domain registered in Harsh's account for Siddhi; Siddhi's absence 3 to 11 Nov in the scheduler; 31 Oct and 2 Nov not offered; TW1a, TW1, TW-web and TW-ops in minutes per plan-day; `OPS02a` and `OPS03a` earlier; `PH06a`/`PH06b`; lane O as one queue; the 255-character numbers; certificate, hand-over and renewal risks; the import correction loop; the legal line in `QA04`; drill 2 with real data and Harsh performing the first restore steps; `WEB16`/`WEB17`; the credential path; `PH03`; the additive-only release-week rule and `OPS08` high of 5.0; section 14). **Ruled, not changed:** PR2-7, the static lanes: they stay a stated guess; the orchestrator re-assigns after TW1a or TW1."],
 ]
 w(md_table(ans, ["Finding", "Answer"]))
 w("")
