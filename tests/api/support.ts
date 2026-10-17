@@ -27,7 +27,7 @@ export const csrfHeaders = (origin: string = TEST_ORIGIN): Record<string, string
 
 /** A config for tests that never open a database (API01 has no pool yet). */
 export function testConfig(overrides: Partial<Config> = {}): Config {
-  return { port: 0, logLevel: 'info', allowedOrigins: [TEST_ORIGIN], db: { host: '127.0.0.1', port: 3306, name: 'jv_test', user: 'jv_test', password: secret('db') }, ...overrides };
+  return { port: 0, logLevel: 'info', allowedOrigins: [TEST_ORIGIN], auditMode: 'triggers', db: { host: '127.0.0.1', port: 3306, name: 'jv_test', user: 'jv_test', password: secret('db') }, ...overrides };
 }
 
 /** A log destination that keeps every line, parsed. */
