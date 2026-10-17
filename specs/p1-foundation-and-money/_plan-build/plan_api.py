@@ -101,23 +101,17 @@ T("MB05", "MB", "DONE: the database half aligned to spec 5.2 (correlated reads, 
        "on 16 Oct 2026. T-F11 and I12 are the spec lines this work proves.",
   rollback="Already committed.")
 
-T("MB07", "MB", "ALIGN check: close the 18.13 E checklist against the repository before the API relies on it",
-  agent="A", grp="pure", pd=0.2, deps=["API01"],
+T("MB07", "MB", "ALIGN check (done by the database session): close the 18.13 E checklist against the repository before the API relies on it",
+  repo="api", grp="ops", lo=0.1, hi=0.5, deps=[], who="DB-SESSION",
   reqs=[], tests=[],
-  do="A fresh `git log` and `git status` of `jewelvault-api` read against 18.13 E item by item and against the names this plan relies on. At "
-     "12:30 on 17 Oct all seven items are committed: (1) V1 and the state reads, (2) the health figures, (3) the export sink and folder rules, (4) the docs, "
-     "(5) the admin statements, (6) the login counters and the function that closes finished login-failure hours (`scripts/login-counters.mjs`: `loginSlot`, "
-     "`addressKey`, `countAttempt`, `recordFailure`, `closeFinishedHour`; `tests/schema/s22-login-counters.test.ts`, commit `694b435`), and (7) the audit triggers "
-     "(MB05 `379ef68`, `a2a720b`, MB06 `a5790d8`). If the database session has committed more by the time the API work starts, this task ticks it; if "
-     "it has changed a function signature that this plan names (`writeDailyExport`, `createExportWriter`, `unpackExport`, `prune`, `recordBackupRun`, "
-     "`readRecordedExport`, `withJobLock`, `readHealth`, `clearLoginCounters`, `recordPull`, `logError`, `insertPhotoGuarded`, `rebalanceCustomer`, "
-     "`runInvariants`, `generateAuditTriggersSql`, `loginSlot`, `addressKey`, `countAttempt`, `recordFailure`, `closeFinishedHour`), it edits the names in the tasks that use them. "
-     "It edits no file in `db/`. It runs after API01 because it needs a lane database.",
+  note="On Harsh's instruction of 17 Oct (relayed by his coordinating session) this check is done by the database session, which owns `db/`, not by a lane. It uses its own container `jv-mariadb-spike` on port 33307, never a lane's. The tasks that wait for it (API08, API11, API12, API33b, API34, API35) wait for the orchestrator's verification of its commit.",
+  do="The database session reads the 18.13 E checklist of the spec item by item against the repository and against the names this plan relies on (`writeDailyExport`, `createExportWriter`, `unpackExport`, `prune`, `recordBackupRun`, `readRecordedExport`, `withJobLock`, `readHealth`, `clearLoginCounters`, "
+     "`recordPull`, `logError`, `insertPhotoGuarded`, `rebalanceCustomer`, `runInvariants`, `generateAuditTriggersSql`, `loginSlot`, `addressKey`, `countAttempt`, `recordFailure`, `closeFinishedHour`); at 12:30 on 17 Oct all seven items were committed "
+     "(MB05 `379ef68`, `a2a720b`, MB06 `a5790d8`, and the login counters with the function that closes finished login-failure hours in `694b435`: `scripts/login-counters.mjs`, `tests/schema/s22-login-counters.test.ts`). Any item or name that is missing it fixes, test first, in `db/` or `scripts/`; "
+     "if it has changed a function signature that this plan names, it says so in its handoff so that the orchestrator edits the names in the tasks that use them. It appends a `## MB07` section to `docs/handoffs.md` and commits locally on `main`, own paths only.",
   files=[],
-  done="`git log --oneline` of `jewelvault-api` is attached to the task report with each checklist item marked committed or assigned; the schema suite "
-       "(`tests/schema`) is green against a lane database (`npm run db:lane -- up a`) on the commit the API work starts from. **Never `npm run db:up`:** it removes and "
-       "recreates the container `jv-mariadb-spike` on port 33307, which the database session uses.",
-  rollback="Nothing to roll back (a check).")
+  done="The database session's commit (or its statement that nothing is missing) is on `main`; the orchestrator has re-run `tests/schema` against a lane database (`npm run db:lane -- up <lane>`; never `npm run db:up`, which belongs to the database session) and read the `## MB07` handoff lines; every name in the list above exists in `scripts/`. Only then is MB07 counted done.",
+  rollback="Nothing to roll back (a check; a fix it commits is an ordinary local commit).")
 
 T("MB06", "MB", "DONE: generated audit triggers (L1 a), exclude list, import audit mode, job locks per database",
   status="DONE", grp="pure", commit="a5790d8 (16 Oct 15:35) (jewelvault-api); 549 schema tests at that commit (567 since 694b435 on 17 Oct), s20 has 16",
