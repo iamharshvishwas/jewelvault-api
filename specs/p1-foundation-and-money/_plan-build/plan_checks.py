@@ -6,7 +6,7 @@
 # The orchestrator (the main session) merges, sets nothing else, and runs the "O" tasks with Harsh; those are not agents.
 AGENT_ORDER = {
     "A": ["API01", "MB07", "API02", "API03", "API14", "API15", "API16", "API20", "API21", "API22", "API23", "API25",
-          "API26", "API29", "API30", "API35", "API36", "RV2", "RV4", "QA01"],
+          "API26", "API29", "API30", "RV2", "API35", "API36", "RV4", "QA01"],
     "B": ["API06", "API10", "WEB00", "WEB01", "WEB02", "WEB03", "WEB04", "WEB05", "WEB07", "WEB06", "WEB08",
           "WEB09", "WEB10", "WEB11", "WEB12", "WEB12b", "WEB16", "WEB13", "WEB17", "WEB15"],
     "C": ["RV0", "API04", "API05", "API09", "API07", "API11", "API13", "API13b", "API18", "API19", "API08", "API17",
@@ -21,7 +21,7 @@ ORCH_LANE = ["OPS01", "OPS02a", "OPS02w", "OPS03a", "OPS02", "OPS03", "OPS08", "
 
 # The orchestrator and Harsh are one resource: these tasks need Harsh's hands (hPanel, GitHub Desktop, the shop) and are served one at a time in
 # this order by the scheduler (OPS08 and QA06 are time passing and are not in the queue).
-ORCH_ORDER = ["OPS01", "OPS02a", "OPS03a", "OPS02", "OPS03", "OPS04", "OPS05", "OPS06", "IMP02", "OPS07", "QA02", "QA03", "QA04",
+ORCH_ORDER = ["OPS01", "OPS02a", "OPS03a", "OPS02", "OPS03", "OPS04", "OPS05", "OPS06", "IMP02", "QA02", "QA03", "OPS07", "QA04",
               "IMP03", "QA05"]
 
 EXEMPT = {
@@ -49,7 +49,7 @@ TEST_CLAUSES = [
     ("T-D03", "no CSV export for a biller holds the original weight", "WEB12b"),
     ("T-D04", "a biller reads daily_totals for today and yesterday only", "API12"),
     ("T-D12", "the headers answer on the staging host", "OPS04"),
-    ("T-D12", "the headers answer on the real website host and Siddhi's domain (once, before go-live)", "OPS07"),
+    ("T-D12", "the headers answer on the real website host and the real domain (once, before go-live)", "OPS07"),
     ("T-E10", "the same three-browser test on the real pair, once", "OPS07"),
     ("T-D14", "one audit row per changed row in both modes, for ordinary edits of designs, pieces and categories", "API13"),
     ("T-D14", "one audit row per changed row in both modes, for rates, settings and customer edits", "API13b"),
