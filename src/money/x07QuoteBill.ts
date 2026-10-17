@@ -28,6 +28,7 @@
 // can be billed (R10: a Sold or Reserved piece is priced like any other): that is the job of the lock in X1.
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { BILL_PREFIX_PATTERN } from '../db/numbers.js';
 import type { DbPool } from '../db/pool.js';
 import { type Reader, txContextFor, withRead } from '../db/tx.js';
 import {
@@ -313,8 +314,8 @@ export function checkBillDate(sent: string | null | undefined, today: string, ro
   return date;
 }
 
-/** R8: `settings.estimate.roundOff`. A value that is not true or false is a fault of the data, never of the caller. */
-function roundOffOf(row: { value: unknown } | undefined): boolean {
+/** The value of the `estimate` setting as an object, whether the driver parsed the JSON or not; anything else is a fault of the data, never of the caller. */
+function estimateObject(row: { value: unknown } | undefined): { roundOff?: unknown; prefix?: unknown } {
   let value: unknown = row?.value;
   if (typeof value === 'string') {
     try {
@@ -323,23 +324,46 @@ function roundOffOf(row: { value: unknown } | undefined): boolean {
       value = undefined;
     }
   }
-  const flag = value !== null && typeof value === 'object' ? (value as { roundOff?: unknown }).roundOff : undefined;
+  return value !== null && typeof value === 'object' ? (value as { roundOff?: unknown; prefix?: unknown }) : {};
+}
+
+/** R8: `settings.estimate.roundOff`. A value that is not true or false is a fault of the data, never of the caller. */
+function roundOffOf(row: { value: unknown } | undefined): boolean {
+  const flag = estimateObject(row).roundOff;
   if (typeof flag !== 'boolean') throw new Error('settings.estimate.roundOff is missing or is not true or false');
   return flag;
 }
 
-/** The plain SELECTs of X7: the pieces, the setting and the latest daily rate of each material and purity of a By Weight piece. */
-export async function readQuoteRows(r: Reader, items: readonly QuoteItem[], billDate: string): Promise<{ pieces: Map<string, PieceRow>; rates: Map<string, RateRow | null>; roundOff: boolean }> {
-  const found = await r.rows<PieceRow>(PIECES_SQL(items.length), items.map((i) => i.sku_id));
-  const pieces = new Map(found.map((p) => [p.id, p]));
+/**
+ * `settings.estimate` for create_bill (X1): the round-off flag (R8) and the prefix of the bill numbers (L4). X1 reads it twice, once before its transaction (the bill series is worked out from the
+ * prefix, and its counter row must exist before the transaction, L3) and once inside it, and answers JV_BUSY if the prefix changed in between. Both are faults of the data when they are not as the
+ * settings screen promises (the prefix of BILL_PREFIX_PATTERN, a true or false roundOff).
+ */
+export async function readEstimate(r: Reader): Promise<{ roundOff: boolean; prefix: string }> {
+  const [setting] = await r.rows<{ value: unknown }>(SETTING_SQL);
+  const prefix = estimateObject(setting).prefix;
+  if (typeof prefix !== 'string' || !BILL_PREFIX_PATTERN.test(prefix)) throw new Error('settings.estimate.prefix is missing or is not a bill prefix');
+  return { roundOff: roundOffOf(setting), prefix };
+}
+
+/** The latest daily rate dated not after the bill date of each material and purity of a By Weight piece (R2), by plain SELECTs. */
+export async function readRates(r: Reader, pieces: Iterable<Pick<PieceRow, 'material' | 'purity' | 'selling_method'>>, billDate: string): Promise<Map<string, RateRow | null>> {
   const rates = new Map<string, RateRow | null>();
-  for (const p of pieces.values()) {
+  for (const p of pieces) {
     if (p.selling_method !== 'By Weight') continue;
     const key = rateKey(p.material, p.purity);
     if (rates.has(key)) continue;
     const [row] = await r.rows<RateRow>(RATE_SQL, [p.material, p.purity, billDate]);
     rates.set(key, row ?? null);
   }
+  return rates;
+}
+
+/** The plain SELECTs of X7: the pieces, the setting and the latest daily rate of each material and purity of a By Weight piece. */
+export async function readQuoteRows(r: Reader, items: readonly QuoteItem[], billDate: string): Promise<{ pieces: Map<string, PieceRow>; rates: Map<string, RateRow | null>; roundOff: boolean }> {
+  const found = await r.rows<PieceRow>(PIECES_SQL(items.length), items.map((i) => i.sku_id));
+  const pieces = new Map(found.map((p) => [p.id, p]));
+  const rates = await readRates(r, pieces.values(), billDate);
   const [setting] = await r.rows<{ value: unknown }>(SETTING_SQL);
   return { pieces, rates, roundOff: roundOffOf(setting) };
 }
