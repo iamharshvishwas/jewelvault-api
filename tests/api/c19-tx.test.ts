@@ -6,7 +6,7 @@ import { StatementRefusedError } from '../../src/db/stmt';
 import { TX_LIMITS, txContext, txContextFor, withRead, withTx, type Tx, type TxContext } from '../../src/db/tx';
 import { BUSINESS_KEYS, BusyError, INTERNAL_KEYS, JvError } from '../../src/errors';
 import { errorOf, sleep } from '../helpers';
-import { logSink, testConfig, toyRoutes } from './support';
+import { csrfHeaders, logSink, testConfig, toyRoutes } from './support';
 import { NOTHING, RIGHT, WRONG, connectionLost, dbError, innodbDeadlocks, leftovers, spyOn, toyIdempotent, toyWrite, txWorld, type Step, type TxWorld } from './tx-support';
 
 // T-C19 (S12, S8, X0): transactions. Every test runs a toy service function (tests/api/tx-support.ts) with the shape of a writing function on a scratch database that has the real schema and
@@ -574,7 +574,7 @@ describe('T-C19 the pool under load: every wait ends in JV_BUSY, never in the ha
     const t0 = performance.now();
     const answers = await Promise.all(
       Array.from({ length: 40 }, async () => {
-        const res = await app.inject({ method: 'POST', url: '/toy/pay' });
+        const res = await app.inject({ method: 'POST', url: '/toy/pay', headers: csrfHeaders() });
         return { status: res.statusCode, retryAfter: res.headers['retry-after'], body: JSON.parse(res.body), ms: performance.now() - t0 };
       }),
     );
@@ -600,7 +600,7 @@ describe('T-C19 the pool under load: every wait ends in JV_BUSY, never in the ha
     expect(await leftovers(world)).toEqual(NOTHING);
 
     // and once the row is free again the same endpoint works
-    const after = await app.inject({ method: 'POST', url: '/toy/pay' });
+    const after = await app.inject({ method: 'POST', url: '/toy/pay', headers: csrfHeaders() });
     expect(after.statusCode).toBe(200);
     expect(await leftovers(world)).toEqual({ categories: 1, audit: 1, claims: 1, counter: 1 });
   }, 60_000);

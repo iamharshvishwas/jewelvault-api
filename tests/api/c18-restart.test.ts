@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { SHUTDOWN_GRACE_MS } from '../../src/shutdown';
 import { errorOf, sleep } from '../helpers';
-import { REPO, buildDist, canConnect, freePort } from './support';
+import { REPO, TEST_ORIGIN, buildDist, canConnect, csrfHeaders, freePort } from './support';
 import { NOTHING, leftovers, txWorld, type TxWorld } from './tx-support';
 
 // T-C18 (H7, S11, L5), the part that belongs to API03: restart safety. A process stopped with SIGTERM while a service function holds its locks finishes it or rolls it back, and nothing
@@ -56,6 +56,7 @@ async function start(entry: { fixture: true; graceMs?: number } | { fixture: fal
       DB_NAME: db.name,
       DB_USER: db.user,
       DB_PASSWORD: db.password,
+      ALLOWED_ORIGINS: TEST_ORIGIN,
       PORT: String(port),
       LOG_LEVEL: 'info',
     },
@@ -82,7 +83,7 @@ async function start(entry: { fixture: true; graceMs?: number } | { fixture: fal
 }
 
 const hold = (c: Child, p: { key?: string; ms: number; customer?: string }) => `${c.base}/toy/hold?key=${p.key ?? randomUUID()}&customer=${p.customer ?? world.customers[0]}&ms=${p.ms}`;
-const post = (url: string) => fetch(url, { method: 'POST' });
+const post = (url: string) => fetch(url, { method: 'POST', headers: csrfHeaders() });
 const connectionsOfUser = async () => Number(((await world.root.query<any[]>('SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE USER = ?', [world.scratch.user]))[0] as any[])[0].n);
 async function eventually<T>(read: () => Promise<T>, ok: (v: T) => boolean, ms = 5000): Promise<T> {
   const until = Date.now() + ms;

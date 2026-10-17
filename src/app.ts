@@ -8,6 +8,9 @@ import { createLogger } from './logging.js';
 import { installPermissions, route } from './permissions/route.js';
 import { type PreflightResult, runPreflight } from './preflight.js';
 import { registerRoutes } from './routes.js';
+import { type ErrorLog, createErrorLog, errorLogEntry, startupEntries } from './security/errorLog.js';
+import { installSecurity } from './security/index.js';
+import { type RequestTimers, defaultTimers, requestLimits } from './security/requestLimits.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -18,6 +21,8 @@ declare module 'fastify' {
     db: DbPool | null;
     /** The result of the start-up check; null until it has run, and always null without a pool. */
     startup: PreflightResult | null;
+    /** D25, A14: where the unexpected errors are kept (sys_error_log, at most 20 rows a minute for each code). record() returns at once; idle() waits for what was handed over. */
+    errorLog: ErrorLog;
   }
   interface FastifyRequest {
     /** When the request arrived, on the monotonic clock (performance.now()): the 12-second deadline of S12 counts from here, the wait for a pool connection included. */
@@ -42,6 +47,11 @@ export interface BuildAppOptions {
    * register routes of its own (a toy route, a stub for every row of the matrix) without meeting the real ones. server.ts never passes it.
    */
   routes?: boolean;
+  /**
+   * A seam for tests: shorter timers than the spec's (A14: 30 s to receive a request, 25 s for a call, 30 s for the login, 50 s for the job tick), so that a test of a timer need not wait that long.
+   * server.ts never passes it.
+   */
+  timers?: Partial<RequestTimers>;
 }
 
 /** S11: the one thing a client is told when the start-up check failed. The reason is in the log only. The S8 body: error code, message and details, and the request id. */
@@ -55,11 +65,12 @@ function logAnswer(request: FastifyRequest, answer: JvError, original: unknown) 
   else if (answer.code === 'JV_UNAVAILABLE') request.log.warn({ request_id: request.id, code: answer.code, cause }, 'answered JV_UNAVAILABLE');
 }
 
-const isHealthz = (request: FastifyRequest) => (request.method === 'GET' || request.method === 'HEAD') && request.url.split('?')[0] === '/healthz';
+/** The two routes that answer while the start-up check has not passed: /healthz (the process is up) and /readyz (it says whether the check passed). Neither says why. */
+const isHealthCheck = (request: FastifyRequest) => (request.method === 'GET' || request.method === 'HEAD') && ['/healthz', '/readyz'].includes(request.url.split('?')[0]);
 
 function logStartup(log: FastifyBaseLogger, r: PreflightResult) {
   if (r.ok) log.info({ version: r.version, amber: r.amber }, 'start-up check passed');
-  else log.error({ problems: r.problems }, 'start-up check failed: every request except /healthz now answers 503 JV_UNAVAILABLE');
+  else log.error({ problems: r.problems }, 'start-up check failed: every request except /healthz and /readyz now answers 503 JV_UNAVAILABLE');
   if (r.amber) log.warn({ rights: r.outsideTenBoxes }, 'the database user holds a Delete or Drop right (S7): the owner\'s dashboard line is amber (I12)');
   if (r.outsideTenBoxes.length > 0) log.warn({ rights: r.outsideTenBoxes }, 'the database user holds rights outside the ten boxes of A3');
 }
@@ -67,14 +78,26 @@ function logStartup(log: FastifyBaseLogger, r: PreflightResult) {
 /** The Fastify application, not yet listening. inject() works on it; server.ts listens. */
 export function buildApp(options: BuildAppOptions): FastifyInstance {
   const { config } = options;
+  const timers: RequestTimers = { ...defaultTimers(), ...options.timers };
   // the request id is a UUID: it goes to audit_log.request_id (a UUID column) through @jv_request, and back to the client in the error body
-  const app = Fastify({ loggerInstance: createLogger(config.logLevel, options.logStream), genReqId: () => randomUUID() });
+  const app = Fastify({
+    loggerInstance: createLogger(config.logLevel, options.logStream),
+    genReqId: () => randomUUID(),
+    // A14: a body is at most 1 MiB (the photo upload has its own, src/security), receiving a request may take 30 s, a call 25 s (the login and the job tick have their own).
+    // Node enforces requestTimeout only when headersTimeout is not longer than it (its default is 60 s: measured, a 30 s requestTimeout then cuts nothing), so the headers get the same 30 s; and it
+    // looks for requests that have run out of time every 30 s unless told otherwise, so it is told to look every second.
+    bodyLimit: requestLimits.bodyBytes,
+    requestTimeout: timers.requestMs,
+    handlerTimeout: timers.handlerMs,
+    http: { headersTimeout: timers.requestMs, connectionsCheckingInterval: Math.min(1000, timers.requestMs) },
+  });
   // A1: from here on every route must come through route() (src/permissions/route.ts), and a path that is not a route answers 404 (A11)
   installPermissions(app);
   app.decorate('config', config);
   app.decorate('clock', options.clock ?? systemClock);
   app.decorate('db', options.db ?? null);
   app.decorate('startup', null);
+  app.decorate('errorLog', createErrorLog(options.db ?? null, app.log));
   app.decorateRequest('arrivedAt', 0);
   // the first hook of every request: the deadline of S12 starts here
   app.addHook('onRequest', async (request) => {
@@ -94,6 +117,13 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.setErrorHandler((error, request, reply) => {
     const answer = classifyError(error);
     logAnswer(request, answer, error);
+    // D25: an unexpected error is kept in sys_error_log beyond the log window; the row is written after the answer is on its way (it never waits for it) and holds no customer data
+    try {
+      const entry = errorLogEntry(request, answer, error);
+      if (entry) app.errorLog.record(entry, new Date(Number(app.clock.read().micros / 1000n)));
+    } catch (e) {
+      request.log.warn({ cause: describeCause(e) }, 'error log: an entry could not be made'); // the answer must go out whatever happens here
+    }
     if (answer.retryAfter !== undefined) reply.header('Retry-After', String(answer.retryAfter));
     return reply.code(answer.status).send(errorBody(answer, request.id));
   });
@@ -105,16 +135,23 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     app.addHook('onReady', async () => {
       app.startup = await runPreflight(db);
       logStartup(app.log, app.startup);
+      // A14: the reason goes to sys_error_log (and so to the owner's dashboard line) and to nobody else; /healthz and /readyz say only whether
+      const at = new Date(Number(app.clock.read().micros / 1000n));
+      for (const startupEntry of startupEntries(app.startup)) app.errorLog.record(startupEntry, at);
     });
-    // S11: a failed check keeps the API up and answers 503 JV_UNAVAILABLE to everything except /healthz; until the check has run, nothing is served either.
+    // S11: a failed check keeps the API up and answers 503 JV_UNAVAILABLE to everything except /healthz and /readyz; until the check has run, nothing is served either.
     app.addHook('onRequest', async (request, reply) => {
-      if (app.startup?.ok || isHealthz(request)) return;
+      if (app.startup?.ok || isHealthCheck(request)) return;
       return reply.code(503).send(unavailableBody(request));
     });
     app.addHook('onClose', async () => {
+      await app.errorLog.idle(); // what is queued is written before the pool is closed
       await db.end();
     });
   }
+
+  // A12, A14: CORS, the CSRF layers, the security headers, the body limits and the timers. Before the first route is registered: it hooks the registration of every route.
+  installSecurity(app, config, timers);
 
   route(app, { public: 'health', handler: async () => ({ ok: true }) });
   if (options.routes !== false) registerRoutes(app);

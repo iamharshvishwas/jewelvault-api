@@ -252,6 +252,15 @@ export function installRouteGuard(app: FastifyInstance, allowed: readonly { meth
   });
 }
 
+/**
+ * What kind of route is answering this request: 'matrix' (a session route), 'public' or 'token' (a door with a token of its own), or undefined for a route that did not come through route() (the
+ * plugin routes of FRAMEWORK_ROUTES) and for a request no route answers (the 404). The CSRF layer (src/security/csrf.ts) asks, because a token door has no cookie to forge.
+ */
+export function routeKindOf(request: FastifyRequest): RouteInfo['kind'] | undefined {
+  const info = (request.routeOptions?.config as unknown as Record<symbol, RouteInfo | undefined> | undefined)?.[MARK];
+  return info?.kind;
+}
+
 /** Everything that route() and the guard need from the application: the route table, the slot for `request.auth`, the guard, and the answer for a path that is not in the matrix (A11). */
 export function installPermissions(app: FastifyInstance): void {
   app.decorate('routeTable', []);

@@ -209,8 +209,10 @@ export const TOKEN_DOORS: Readonly<Record<TokenDoorName, TokenDoor>> = {
   job: { prefix: '/internal/jobs/', why: 'the job tick and the jobs health route (I8, 7.3): a job token' },
 };
 
-/** Routes a plugin registers for itself that cannot go through route() (a CORS preflight, say). Exact method and address, with the reason. Empty: nothing is exempt. */
-export const FRAMEWORK_ROUTES: readonly { readonly method: string; readonly url: string; readonly why: string }[] = [];
+/** Routes a plugin registers for itself that cannot go through route() (a CORS preflight, say). Exact method and address, with the reason. Nothing else is exempt. */
+export const FRAMEWORK_ROUTES: readonly { readonly method: string; readonly url: string; readonly why: string }[] = [
+  { method: 'OPTIONS', url: '*', why: '@fastify/cors (API07, A12) answers a preflight in its own hook, ahead of every other hook, and needs this route only so that Fastify accepts the OPTIONS request; it reads no session and answers nothing else' },
+];
 
 // ------------------------------------------------------------------ the rules of a row that are not columns
 

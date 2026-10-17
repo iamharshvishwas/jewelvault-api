@@ -24,6 +24,8 @@
     "db:import": "node scripts/import-cli.mjs"
   },
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/helmet": "^13.1.1",
     "fastify": "^5.12.7",
     "mysql2": "^3.24.6",
     "pino": "^10.4.0",

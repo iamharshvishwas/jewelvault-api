@@ -16,7 +16,7 @@ const { buildApp } = await load('app.js');
 const { describeRoutes, unroutedActions, unroutedPublic } = await load('permissions/route.js');
 const { MATRIX, PUBLIC_ROUTES } = await load('permissions/matrix.js');
 
-const config = { port: 0, logLevel: 'silent', db: { host: '127.0.0.1', port: 3306, name: 'check', user: 'check', password: 'not-used' } };
+const config = { port: 0, logLevel: 'silent', allowedOrigins: ['https://check.example.test'], db: { host: '127.0.0.1', port: 3306, name: 'check', user: 'check', password: 'not-used' } };
 let app;
 try {
   app = buildApp({ config });

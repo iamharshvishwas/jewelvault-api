@@ -6,7 +6,7 @@ import { limits } from '../../src/limits';
 import { WireFormatError, formatBusinessDate, formatMoney, formatMoneyFromPaise, formatRow, formatUuid, formatWeight, formatWeightFromMilligrams, timestampFromWire, timestampToWire } from '../../src/wire/format';
 import * as wire from '../../src/wire/zod';
 import { parseGrams, parseRupees } from '../../oracle/pricing';
-import { logSink, testConfig, toyRoutes } from './support';
+import { csrfHeaders, logSink, testConfig, toyRoutes } from './support';
 
 // T-A09 (generic part) and T-F09: the wire formats of S3, S4 and S5. The per-function inputs are tested by the tasks that build the functions.
 // The oracle (a read-only snapshot of the screen's pricing.ts) is imported only to show what the loose parsers of the shared file accept.
@@ -359,7 +359,7 @@ describe('T-F09 wire formats (S3, S5, A5): strings in, strings out', () => {
     const post = async (payload: string) => {
       const app = toyApp();
       try {
-        return await app.inject({ method: 'POST', url: '/toy', headers: { 'content-type': 'application/json' }, payload });
+        return await app.inject({ method: 'POST', url: '/toy', headers: { ...csrfHeaders(), 'content-type': 'application/json' }, payload });
       } finally {
         await app.close();
       }

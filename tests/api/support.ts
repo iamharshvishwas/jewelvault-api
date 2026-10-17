@@ -16,9 +16,18 @@ export const REPO = fileURLToPath(new URL('../../', import.meta.url));
 /** A secret made up at run time: no test holds a password in its source. */
 export const secret = (label = 'x') => `${label}-${randomBytes(12).toString('hex')}`;
 
+/** The origin of the website in the tests (A12): the one entry of ALLOWED_ORIGINS of `testConfig()`. */
+export const TEST_ORIGIN = 'https://app.example.test';
+
+/**
+ * What every state-changing call of the website carries (A12): `X-JV-Client: web` and the Origin of an allowed origin. Without them the CSRF layer answers 403 JV_CSRF (API07), so a test that
+ * posts, patches or puts through `inject()` adds these (the matrix walk of cells.ts does it for every call that is not a GET).
+ */
+export const csrfHeaders = (origin: string = TEST_ORIGIN): Record<string, string> => ({ 'x-jv-client': 'web', origin });
+
 /** A config for tests that never open a database (API01 has no pool yet). */
 export function testConfig(overrides: Partial<Config> = {}): Config {
-  return { port: 0, logLevel: 'info', db: { host: '127.0.0.1', port: 3306, name: 'jv_test', user: 'jv_test', password: secret('db') }, ...overrides };
+  return { port: 0, logLevel: 'info', allowedOrigins: [TEST_ORIGIN], db: { host: '127.0.0.1', port: 3306, name: 'jv_test', user: 'jv_test', password: secret('db') }, ...overrides };
 }
 
 /** A log destination that keeps every line, parsed. */
@@ -47,7 +56,12 @@ export function toyRoutes(app: FastifyInstance) {
     const name = `toy-${app.routeTable.length}`;
     createRoute({ matrix: {}, publicRoutes: { [name]: { method, path } }, tokenDoors: {} })(app, { public: name, body: z.unknown(), handler: ({ request, reply }) => handler(request, reply) });
   };
-  return { get: (path: string, h: ToyHandler) => add('GET', path, h), post: (path: string, h: ToyHandler) => add('POST', path, h) };
+  return {
+    get: (path: string, h: ToyHandler) => add('GET', path, h),
+    post: (path: string, h: ToyHandler) => add('POST', path, h),
+    put: (path: string, h: ToyHandler) => add('PUT', path, h),
+    patch: (path: string, h: ToyHandler) => add('PATCH', path, h),
+  };
 }
 
 /** A TCP port nobody listens on right now. */

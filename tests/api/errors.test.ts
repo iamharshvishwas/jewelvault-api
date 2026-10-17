@@ -5,7 +5,7 @@ import { DbBusyError } from '../../src/db/errors';
 import { createDbPool, type DbPool } from '../../src/db/pool';
 import { BUSINESS_KEYS, BusyError, JV_STATUS, JvError, classifyError, describeCause, errorBody } from '../../src/errors';
 import { InvalidInputError } from '../../src/wire/zod';
-import { freePort, logSink, testConfig, toyRoutes } from './support';
+import { csrfHeaders, freePort, logSink, testConfig, toyRoutes } from './support';
 import { dbError } from './tx-support';
 
 // S8 (the codes and what each database error becomes), T-C19 (the map), and the T-F08 clause of API03: the 503 JV_UNAVAILABLE and JV_BUSY answers carry the S8 body.
@@ -315,7 +315,7 @@ describe('T-F08 (clause of API03): the 503 JV_UNAVAILABLE and JV_BUSY answers ca
 
   it('a body that is not JSON is JV_INVALID_INPUT in the S8 body, not Fastify\'s own shape', async () => {
     const { app } = toy();
-    const res = await app.inject({ method: 'POST', url: '/toy/body', headers: { 'content-type': 'application/json' }, payload: '{not json' });
+    const res = await app.inject({ method: 'POST', url: '/toy/body', headers: { ...csrfHeaders(), 'content-type': 'application/json' }, payload: '{not json' });
     expect(res.statusCode).toBe(422);
     expectS8(res, 'JV_INVALID_INPUT');
   });

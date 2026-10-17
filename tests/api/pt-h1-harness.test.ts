@@ -8,7 +8,7 @@ import { createClock } from '../../src/clock';
 import { TEN_BOXES, laneDown, laneInfo, laneUp } from '../../scripts/lane.mjs';
 import { auditTriggersInstalled } from '../../scripts/audit-triggers.mjs';
 import { migrate } from '../../scripts/migrate.mjs';
-import { buildDist, canConnect, freePort, logSink, secret, testConfig } from './support';
+import { TEST_ORIGIN, buildDist, canConnect, freePort, logSink, secret, testConfig } from './support';
 
 // PT-H1, the plan test of API01: a lane database starts, migrates as the ten-box user (A3) and is removed;
 // the injected clock never repeats an instant (S5); the server refuses to start without DB_PASSWORD (U10, S1); GET /healthz answers through inject().
@@ -156,7 +156,7 @@ describe('PT-H1 harness smoke', () => {
       dist = buildDist();
     }, 120_000);
     const env = (port: number, drop: string[] = []) => {
-      const e: Record<string, string> = { DB_HOST: '127.0.0.1', DB_PORT: '3306', DB_NAME: 'jv_test', DB_USER: 'jv_test', DB_PASSWORD: secret('db'), PORT: String(port) };
+      const e: Record<string, string> = { DB_HOST: '127.0.0.1', DB_PORT: '3306', DB_NAME: 'jv_test', DB_USER: 'jv_test', DB_PASSWORD: secret('db'), ALLOWED_ORIGINS: TEST_ORIGIN, PORT: String(port) };
       for (const k of drop) delete e[k];
       return e;
     };

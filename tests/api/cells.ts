@@ -9,7 +9,7 @@ import { type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName, ty
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, hashTicket, newTicket } from '../../src/permissions/session';
 import { type Scratch, scratchDatabase } from '../helpers';
-import { logSink, secret, testConfig } from './support';
+import { csrfHeaders, logSink, secret, testConfig } from './support';
 import { type Spy, spyOn } from './tx-support';
 
 // Shared by T-D02 (tests/matrix.generated.test.ts and tests/api/permissions-*.test.ts): the callers of A4, a database holding one fixture of them, and the CELL: one row of the matrix, one
@@ -168,7 +168,9 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
     },
     call(caller, method, url, init = {}) {
       const cookie = world.cookieOf(caller);
-      return app.inject({ method: method as 'GET', url, headers: { ...(cookie ? { cookie } : {}), ...init.headers }, payload: init.payload as string | object | undefined });
+      // a call that changes state carries the two headers of the CSRF layers (A12, API07) like the website's does; a test of those layers sends its own calls with app.inject
+      const csrf = method === 'GET' || method === 'HEAD' ? {} : csrfHeaders();
+      return app.inject({ method: method as 'GET', url, headers: { ...csrf, ...(cookie ? { cookie } : {}), ...init.headers }, payload: init.payload as string | object | undefined });
     },
     async close() {
       await app.close().catch(() => undefined);

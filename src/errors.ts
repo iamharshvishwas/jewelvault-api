@@ -206,20 +206,33 @@ export function classifyError(e: unknown): JvError {
 }
 
 /**
+ * A14, a second line of defence: the SHAPE of a mobile number, a PAN, a GST number or an e-mail address inside a text that is about to be logged or stored in the error log is replaced. The first
+ * line is that no code puts a customer's value into a message; this catches the one that does (`new Error(\`no customer ${mobile}\`)`). An Indian mobile number is ten digits starting 6 to 9, with
+ * or without +91, 91 or 0 in front and a space or dash in the middle.
+ */
+const SHAPES: readonly (readonly [RegExp, string])[] = [
+  [/\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b/g, '<gst>'],
+  [/\b[A-Z]{5}\d{4}[A-Z]\b/g, '<pan>'],
+  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/g, '<email>'],
+  [/(?<![\w.])(?:(?:\+?91|0)[\s-]?)?[6-9]\d{4}[\s-]?\d{5}(?!\w)/g, '<mobile>'],
+];
+export const scrubShapes = (text: string): string => SHAPES.reduce((t, [re, to]) => t.replace(re, to), text);
+
+/**
  * What the log may say about an error that was not answered to the client as it is. A14: the logs never hold a mobile, PAN or GST number, and a database message can repeat the value it refused
- * ("Duplicate entry '9876543210' for key ..."), so the quoted value is replaced and the name of the key stays.
+ * ("Duplicate entry '9876543210' for key ..."), so the quoted value is replaced and the name of the key stays; and what looks like a mobile, PAN, GST number or e-mail address is cut out of the rest.
  */
 export function describeCause(e: unknown): Record<string, unknown> {
   const r = raw(e);
   const text = String(r.sqlMessage ?? r.message ?? '');
   // the quoted VALUE of "Duplicate entry '...'" and "Incorrect ... value: '...'" goes; names of keys, tables and columns stay, they are what the person reading the log needs
-  const message = text.replace(/(Duplicate entry|value:)\s*'((?:[^'\\]|\\.)*)'/g, "$1 '?'");
+  const message = scrubShapes(text.replace(/(Duplicate entry|value:)\s*'((?:[^'\\]|\\.)*)'/g, "$1 '?'"));
   const out: Record<string, unknown> = { name: e instanceof Error ? e.name : typeof e, message };
   if (r.code !== undefined) out.code = r.code;
   if (r.errno !== undefined) out.errno = r.errno;
   const state = (e as { sqlState?: string } | null)?.sqlState;
   if (state !== undefined) out.sqlState = state;
-  if (e instanceof Error && r.errno === undefined && e.stack) out.stack = e.stack; // a bug in the code: the stack is for the log (never for the client, A14)
+  if (e instanceof Error && r.errno === undefined && e.stack) out.stack = scrubShapes(e.stack); // a bug in the code: the stack is for the log (never for the client, A14)
   return out;
 }
 

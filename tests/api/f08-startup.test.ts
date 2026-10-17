@@ -10,7 +10,7 @@ import { readHealth } from '../../scripts/health.mjs';
 import { TEN_BOXES as HARNESS_TEN_BOXES } from '../../scripts/lane.mjs';
 import { listMigrations, splitStatements } from '../../scripts/migrate.mjs';
 import { type Scratch, laneDbSettings, laneRoot, scratchDatabase } from '../helpers';
-import { buildDist, canConnect, freePort, logSink, testConfig } from './support';
+import { TEST_ORIGIN, buildDist, canConnect, freePort, logSink, testConfig } from './support';
 
 // T-F08, the start-up half (S11): the check that runs before the API accepts a request. Failure keeps the API up and answers 503 JV_UNAVAILABLE to everything but /healthz;
 // the reason goes to the log only. A Delete or Drop right that is on is reported (the dashboard line turns amber, I12), not fatal.
@@ -333,7 +333,7 @@ describe('T-F08 the entry point (dist/server.js) runs the start-up check before 
     const port = await freePort();
     const out: string[] = [];
     const child = spawn(process.execPath, [join(dist, 'server.js')], {
-      env: { PATH: process.env.PATH ?? '', DB_HOST: db.host, DB_PORT: String(db.port), DB_NAME: db.name, DB_USER: db.user, DB_PASSWORD: db.password, PORT: String(port), LOG_LEVEL: 'info' },
+      env: { PATH: process.env.PATH ?? '', DB_HOST: db.host, DB_PORT: String(db.port), DB_NAME: db.name, DB_USER: db.user, DB_PASSWORD: db.password, ALLOWED_ORIGINS: TEST_ORIGIN, PORT: String(port), LOG_LEVEL: 'info' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     children.push(child);

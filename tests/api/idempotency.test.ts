@@ -10,7 +10,7 @@ import { createDbPool, type DbPool } from '../../src/db/pool';
 import { txContext, txContextFor, withTx, type TxContext } from '../../src/db/tx';
 import { JvError } from '../../src/errors';
 import { errorOf, sleep } from '../helpers';
-import { REPO, buildDist, canConnect, freePort, logSink, testConfig, toyRoutes } from './support';
+import { REPO, TEST_ORIGIN, buildDist, canConnect, csrfHeaders, freePort, logSink, testConfig, toyRoutes } from './support';
 import { NOTHING, connectionLost, leftovers, spyOn, txWorld, type TxWorld } from './tx-support';
 
 // PT-N1 (L5): the claim machinery, with a toy creating function that has the shape of the real ones: the claim is its first statement, then the customer row, the number, a row, and the result stored in
@@ -427,7 +427,7 @@ describe('PT-N1 over HTTP: the replay says Idempotent-Replay: true with the same
     return app;
   }
   const post = (app: Awaited<ReturnType<typeof server>>, key: string | undefined, body: unknown, headers: Record<string, string> = {}) =>
-    app.inject({ method: 'POST', url: '/toy/create', payload: body as object, headers: { ...(key ? { 'idempotency-key': key } : {}), ...headers } });
+    app.inject({ method: 'POST', url: '/toy/create', payload: body as object, headers: { ...csrfHeaders(), ...(key ? { 'idempotency-key': key } : {}), ...headers } });
 
   it('the first answer is 201 with no replay header; the twin is 201 with Idempotent-Replay: true and the same body', async () => {
     const app = await server();
@@ -526,7 +526,7 @@ describe('T-C18 / PT-N1 the same Idempotency-Key retried after the restart saves
     const d = world.scratch.db;
     const out: string[] = [];
     const proc = spawn(process.execPath, [join(REPO, 'tests', 'api', 'fixtures', 'idem-server.mjs')], {
-      env: { PATH: process.env.PATH ?? '', JV_DIST: dist, DB_HOST: d.host, DB_PORT: String(d.port), DB_NAME: d.name, DB_USER: d.user, DB_PASSWORD: d.password, PORT: String(port), LOG_LEVEL: 'info' },
+      env: { PATH: process.env.PATH ?? '', JV_DIST: dist, DB_HOST: d.host, DB_PORT: String(d.port), DB_NAME: d.name, DB_USER: d.user, DB_PASSWORD: d.password, ALLOWED_ORIGINS: TEST_ORIGIN, PORT: String(port), LOG_LEVEL: 'info' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     children.push(proc);
@@ -549,7 +549,7 @@ describe('T-C18 / PT-N1 the same Idempotency-Key retried after the restart saves
     return { proc, base: `http://127.0.0.1:${port}`, waitFor, exit };
   }
   const create1 = (c: Child, key: string, ms = 0, body: object = { name: 'ring' }) =>
-    fetch(`${c.base}/toy/create?customer=${world.customers[0]}&ms=${ms}`, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body) });
+    fetch(`${c.base}/toy/create?customer=${world.customers[0]}&ms=${ms}`, { method: 'POST', headers: { ...csrfHeaders(), 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body) });
 
   it('a call that finished, the process stopped with SIGTERM and started again: the retry with the same key gets the stored result (Idempotent-Replay: true) and nothing is saved twice; a new key runs', async () => {
     const key = randomUUID();

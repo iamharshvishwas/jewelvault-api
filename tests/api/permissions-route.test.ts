@@ -12,7 +12,7 @@ import { RouteDeclarationError, createRoute, describeRoutes, installRouteGuard, 
 import { SESSION_COOKIE } from '../../src/permissions/session';
 import * as wire from '../../src/wire/zod';
 import { CALLERS, type CallerName, type World, makeWorld, registerStubs } from './cells';
-import { REPO, buildDist, secret, testConfig } from './support';
+import { REPO, buildDist, csrfHeaders, secret, testConfig } from './support';
 
 /** The application with its wrapper and its error handling and none of its own routes (routes: false), so a test can register what it likes. */
 const bare = () => buildApp({ config: testConfig({ logLevel: 'silent' }), routes: false });
@@ -92,9 +92,10 @@ describe('T-D01 an endpoint is registered through route(), with an action of the
     await app.close();
   });
 
-  it('the production list of framework routes is empty: nothing is exempt yet', async () => {
+  it('the production list of framework routes holds the one preflight route of the CORS plugin (API07) and nothing else', async () => {
     const { FRAMEWORK_ROUTES } = await import('../../src/permissions/matrix');
-    expect(FRAMEWORK_ROUTES).toEqual([]);
+    expect(FRAMEWORK_ROUTES.map((r) => `${r.method} ${r.url}`)).toEqual(['OPTIONS *']);
+    expect(FRAMEWORK_ROUTES[0].why).toMatch(/cors/i);
   });
 
   it('the compiler refuses route() without an action, and accepts it with one (the build fails, not only the start)', () => {
@@ -197,7 +198,7 @@ describe('T-D01 token and public routes: no session is read for them (A1)', () =
     const app = bare();
     route(app, { action: 'fn:void_receipt', handler: async () => ({ ok: true }) });
     await app.ready();
-    const res = await app.inject({ method: 'POST', url: '/v1/receipts/6c1f1e0e-0f3b-4b4e-9a53-2f5f2d9c7a10/void', headers: { cookie: `${SESSION_COOKIE}=${'a'.repeat(43)}` } });
+    const res = await app.inject({ method: 'POST', url: '/v1/receipts/6c1f1e0e-0f3b-4b4e-9a53-2f5f2d9c7a10/void', headers: { ...csrfHeaders(), cookie: `${SESSION_COOKIE}=${'a'.repeat(43)}` } });
     expect(res.statusCode).toBe(503);
     expect(body(res).error.code).toBe('JV_UNAVAILABLE');
     await app.close();
@@ -375,7 +376,7 @@ describe('T-D02 (D2, A2, A6, A10) the order of work: session, then the must-chan
       const res = await world.app.inject({ method: 'GET', url: '/v1/auth/me?role=owner&user_role=owner', headers: { cookie: ticket, ...headers } });
       expect(res.json(), JSON.stringify(headers)).toMatchObject({ role: 'staff' });
     }
-    const post = await world.app.inject({ method: 'POST', url, headers: { cookie: u.cookie }, payload: { name: 'x', role: 'owner' } });
+    const post = await world.app.inject({ method: 'POST', url, headers: { ...csrfHeaders(), cookie: u.cookie }, payload: { name: 'x', role: 'owner' } });
     expect(post.statusCode).toBe(403); // staff may not call this row, whatever the body says
     // a cookie that holds a role in place of the ticket gets nothing
     const fake = await world.app.inject({ method: 'GET', url: '/v1/auth/me', headers: { cookie: `${SESSION_COOKIE}=owner` } });

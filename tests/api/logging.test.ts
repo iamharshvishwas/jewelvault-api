@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app';
-import { logSink, secret, testConfig, toyRoutes } from './support';
+import { csrfHeaders, logSink, secret, testConfig, toyRoutes } from './support';
 
 async function withApp<T>(fn: (app: ReturnType<typeof buildApp>, sink: ReturnType<typeof logSink>) => Promise<T>) {
   const sink = logSink();
@@ -62,7 +62,7 @@ describe('logging: cookies, authorization and password fields never reach the lo
         );
         return { ok: true };
       });
-      await app.inject({ method: 'POST', url: '/echo', payload: { email: 'owner@example.test', password: a } });
+      await app.inject({ method: 'POST', url: '/echo', headers: csrfHeaders(), payload: { email: 'owner@example.test', password: a } });
       const text = sink.text();
       for (const v of values) expect(text, v).not.toContain(v);
       const line = sink.lines().find((x) => x.msg === 'echo')!;
