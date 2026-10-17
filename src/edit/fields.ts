@@ -4,6 +4,8 @@
 // src/wire/zod.ts: money, rate and weight are text with their decimals and caps (S3, S4), a count is a JSON integer, an id is a lower-case UUID. A refusal names the field and never repeats
 // the value (S8), and no message says "not a field": that sentence is the unknown-field refusal of parseInput and the generated test of the matrix relies on it.
 //
+// API13b adds the fields of the daily rates (a rate above 0, a business date), of the settings (a JSON object or list) and of the customers (mobile, PAN).
+//
 // WIDTHS. The widths of the text columns are the columns' own (VARCHAR(120) for a design's name, 60 for a piece's location, 80 for a category's name, 20 for a purity): a longer text would be a
 // database error (1406) and so a JV_INTERNAL, and it is refused here instead. Two limits are this task's own choice and are not in the spec: a TEXT column (description, notes) takes at most
 // 10,000 characters (the column holds 65,535 bytes, 16,383 characters at four bytes each, so the choice leaves room), and a design has at most 20 tags of 1 to 40 characters.
@@ -94,6 +96,16 @@ export const amount: FieldSpec = decimal(wire.amount, 2);
 /** A rate or a piece price, 2 decimals, at most 100,000,000 (S4). */
 export const rate: FieldSpec = decimal(wire.rate, 2);
 
+const PLAIN_DECIMAL = /^\d+(?:\.\d+)?$/;
+/** A rate per gram that must be above 0 (D4: the CHECK is `rate_per_gram > 0`), 2 decimals, at most 100,000,000. Zero is a refusal of the field, never the database's error. */
+export const positiveRate: FieldSpec = decimal(
+  wire.rate.check((ctx) => {
+    // the pattern and the cap are wire.rate's own checks; this one only runs on text that has the plain shape, so that decimalUnits never meets a letter
+    if (PLAIN_DECIMAL.test(ctx.value) && decimalUnits(ctx.value, 2) <= 0n) ctx.issues.push({ code: 'custom', message: 'must be greater than 0', input: ctx.value });
+  }),
+  2,
+);
+
 const COUNT_MAX = 100_000;
 const countMessage = `must be a whole number from 0 to ${COUNT_MAX.toLocaleString('en-US')}`;
 /** A count (stones, kundan): a JSON integer from 0 up (the columns are INT with a CHECK of 0 or more; the upper bound is this task's own choice). */
@@ -116,6 +128,8 @@ export const flag: FieldSpec = {
 export const idRequired: FieldSpec = { schema: wire.uuid, ...plain };
 /** An id or nothing (a design's subcategory, its primary photo). */
 export const idOrNull: FieldSpec = { schema: wire.uuid.nullable(), ...plain };
+/** A business date, YYYY-MM-DD, a real calendar day. Whether it may be today, the past or the future is the rule of the table (a CHECK cannot read the clock, S4). */
+export const businessDate: FieldSpec = { schema: wire.businessDate, ...plain };
 
 const sameList = (stored: unknown, value: unknown): boolean => JSON.stringify(parseList(stored)) === JSON.stringify(value);
 
@@ -152,4 +166,65 @@ export const archiveTime: FieldSpec = {
   schema: wire.timestamp.nullable(),
   same: (stored, value) => (stored === null) === (value === null),
   param: (value, now) => (value === null ? null : now),
+};
+
+// ------------------------------------------------------------------ settings: one JSON value
+
+/** A setting's value is at most this many bytes of JSON (this task's own choice: the seeded values are under 1 KiB, the column is a LONGTEXT). */
+export const SETTING_BYTES_MAX = 65_536;
+
+/** Whether two JSON values are the same value, whatever the order of the keys of an object (the database keeps the text it was given). */
+export function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((x, i) => sameJson(x, b[i]));
+  const ka = Object.keys(a as object);
+  const kb = Object.keys(b as object);
+  return ka.length === kb.length && ka.every((k) => Object.hasOwn(b as object, k) && sameJson((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
+}
+
+/** The value of a setting: a JSON object or list (every key of D3 is one of the two), of at most SETTING_BYTES_MAX bytes. */
+export const jsonValue: FieldSpec = {
+  schema: z.custom<object>((v) => typeof v === 'object' && v !== null, { error: (issue) => (issue.input === undefined ? 'is required' : 'must be a JSON object or a list') }).check((ctx) => {
+    if (Buffer.byteLength(JSON.stringify(ctx.value), 'utf8') > SETTING_BYTES_MAX) ctx.issues.push({ code: 'custom', message: `must be at most ${SETTING_BYTES_MAX / 1024} KiB of JSON`, input: ctx.value });
+  }),
+  same: (stored, value) => sameJson(typeof stored === 'string' ? (JSON.parse(stored) as unknown) : stored, value),
+  param: (value) => JSON.stringify(value),
+};
+
+// ------------------------------------------------------------------ customers: mobile and PAN
+
+const MOBILE = /^(?:[0-9]{10}|\+[0-9]{7,15})$/;
+export const MOBILE_RULE = 'must be ten digits, or + and 7 to 15 digits (spaces and dashes are taken out)';
+/**
+ * D10 (O33): a mobile number is ten digits, or `+` and 7 to 15 digits for a foreign number; spaces and dashes are taken out on entry. Blank means none (null): whether a customer may have none is the
+ * table's rule (only an imported customer may). X6 (API19) asks for the same pattern.
+ */
+export const customerMobile: FieldSpec = {
+  schema: z
+    .string({ error: required('must be text, or null for none') })
+    .transform((s) => s.replace(/[\s-]/g, ''))
+    .pipe(
+      z.string().check((ctx) => {
+        if (ctx.value !== '' && !MOBILE.test(ctx.value)) ctx.issues.push({ code: 'custom', message: MOBILE_RULE, input: ctx.value });
+      }),
+    )
+    .transform((s) => (s === '' ? null : s))
+    .nullable(),
+  ...plain,
+};
+
+const PAN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+export const PAN_RULE = 'must be five capital letters, four digits and one capital letter';
+/** Z3, D10: a PAN is five capital letters, four digits, one capital letter; the text is NOT corrected (lower case is refused), the empty text and null mean none. */
+export const customerPan: FieldSpec = {
+  schema: z
+    .string({ error: required('must be text, or null for none') })
+    .check((ctx) => {
+      if (ctx.value !== '' && !PAN.test(ctx.value)) ctx.issues.push({ code: 'custom', message: PAN_RULE, input: ctx.value });
+    })
+    .transform((s) => (s === '' ? null : s))
+    .nullable(),
+  ...plain,
 };
