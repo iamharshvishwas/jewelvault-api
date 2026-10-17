@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { migrate } from '../../scripts/migrate.mjs';
 import { type Clock, type Reading, createClock } from '../../src/clock';
+import type { Config } from '../../src/config';
 import { timestampToWire } from '../../src/wire/format';
 import { V, insert } from '../schema/support';
 import { type CallerName, T0, type World, makeWorld } from './cells';
@@ -52,11 +53,13 @@ export interface EditWorld {
 export interface EditWorldOptions {
   /** true: db/optional is applied too, so the generated audit triggers write the audit rows (L1 (a)) */
   triggers?: boolean;
+  /** values for the application's config: `{ auditMode: 'node' }` is mechanism (b) of L1 (API15), on a database WITHOUT the triggers */
+  config?: Partial<Config>;
 }
 
 export async function editWorld(label: string, options: EditWorldOptions = {}): Promise<EditWorld> {
   const time = testClock();
-  const world = await makeWorld({ label, routes: true, clock: time.clock });
+  const world = await makeWorld({ label, routes: true, clock: time.clock, ...(options.config ? { config: options.config } : {}) });
   await migrate(world.sql, { seeds: true, optional: options.triggers === true });
   const [cats] = await world.sql.query<any[]>('SELECT id FROM categories ORDER BY name LIMIT 2');
   const [subs] = await world.sql.query<any[]>("SELECT id FROM subcategories WHERE category_id = ? AND name = 'Kundan'", [cats[0].id]); // the seeds give every category four

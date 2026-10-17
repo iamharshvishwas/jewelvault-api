@@ -6,6 +6,10 @@ import { parseAllowedOrigins } from './security/origins.js';
 const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
+/** L1: who writes the audit rows. 'triggers' (a) is the default: the generated triggers of db/optional/0910. 'node' (b): the API writes the same rows itself (src/db/audit.ts). Never both. */
+export const AUDIT_MODES = ['triggers', 'node'] as const;
+export type AuditMode = (typeof AUDIT_MODES)[number];
+
 const text = z.string().min(1);
 const portNumber = z
   .string()
@@ -39,6 +43,7 @@ const schema = z.object({
   JV_ADMIN_TOKEN_HASH: tokenHash.optional(),
   PORT: portNumber.optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).optional(),
+  JV_AUDIT_MODE: z.enum(AUDIT_MODES).optional(),
 });
 
 /** Every variable the API reads; .env.example lists exactly these. */
@@ -52,6 +57,8 @@ export interface Config {
   readonly allowedOrigins: readonly string[];
   /** U3, O41: the SHA-256 of the admin token, 64 lower-case hex characters. Without it the admin door (/admin/v1/*) does not exist: remove the variable and the door is shut. */
   readonly adminTokenHash?: string | undefined;
+  /** L1: which mechanism writes the audit rows (JV_AUDIT_MODE, default 'triggers'). 'node' only on a database without the audit triggers (O50). */
+  readonly auditMode: AuditMode;
   readonly db: { readonly host: string; readonly port: number; readonly name: string; readonly user: string; readonly password: string };
 }
 
@@ -85,6 +92,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     logLevel: v.LOG_LEVEL ?? 'info',
     allowedOrigins: v.ALLOWED_ORIGINS,
     adminTokenHash: v.JV_ADMIN_TOKEN_HASH,
+    auditMode: v.JV_AUDIT_MODE ?? 'triggers',
     db: Object.freeze({ host: v.DB_HOST, port: v.DB_PORT, name: v.DB_NAME, user: v.DB_USER, password: v.DB_PASSWORD }),
   });
 }

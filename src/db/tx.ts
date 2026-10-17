@@ -12,8 +12,10 @@
 //  - Every path gives the connection back: release() normally, destroy() when it is broken. A transaction a dead process left open is rolled back by MariaDB, which frees its locks at once.
 import type { FastifyRequest } from 'fastify';
 import type { ResultSetHeader } from 'mysql2/promise';
+import type { AuditMode } from '../config.js';
 import { BusyError, classifyError, isConnectionLost, isDeadlock } from '../errors.js';
 import { UUID_TEXT } from '../wire/format.js';
+import { type LockStep, noteWrite } from './locks.js';
 import type { DbConnection, DbPool } from './pool.js';
 import { type Param, checkStatement } from './stmt.js';
 
@@ -52,6 +54,8 @@ export interface TxContext {
   /** 20 to 80 ms */
   jitter(): number;
   readonly log?: TxLog;
+  /** L1: which mechanism writes the audit rows of the audited tables: the generated triggers ('triggers', the default) or the Node writer of src/db/audit.ts ('node'). Never both. */
+  readonly auditMode: AuditMode;
 }
 
 export interface TxContextInit {
@@ -64,6 +68,7 @@ export interface TxContextInit {
   sleep?: (ms: number) => Promise<void>;
   jitter?: () => number;
   log?: TxLog;
+  auditMode?: AuditMode;
 }
 
 export function txContext(pool: TxContext['pool'], init: TxContextInit): TxContext {
@@ -84,17 +89,25 @@ export function txContext(pool: TxContext['pool'], init: TxContextInit): TxConte
     sleep: init.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
     jitter: init.jitter ?? (() => TX_LIMITS.jitterMinMs + Math.random() * (TX_LIMITS.jitterMaxMs - TX_LIMITS.jitterMinMs)),
     log: init.log,
+    auditMode: init.auditMode ?? 'triggers',
   };
 }
 
 /** The context of a request handler: the arrival time and the id come from the request (app.ts takes the first when the request comes in). */
 export function txContextFor(pool: TxContext['pool'], request: FastifyRequest, actor: Actor | null): TxContext {
-  return txContext(pool, { requestId: request.id, actor, arrivedAt: request.arrivedAt, log: request.log });
+  return txContext(pool, { requestId: request.id, actor, arrivedAt: request.arrivedAt, log: request.log, auditMode: request.server.config?.auditMode });
 }
 
 export interface Tx {
   readonly requestId: string;
   readonly actor: Actor | null;
+  /** L1: see TxContext.auditMode. src/db/audit.ts reads it, so a function that audits a change needs no extra argument. */
+  readonly auditMode: AuditMode;
+  /**
+   * NODE-DESIGN 5.3: the lock steps this run of the function has taken, in order: claim, customer, pieces, counter, and write once a row of the books has been written. The helpers of locks.ts,
+   * claim() and takeNumber() add to it and check the order of X0 (LockOrderViolation); nobody else writes it. A deadlock re-run starts with an empty trail.
+   */
+  readonly trail: LockStep[];
   /** A statement that returns rows (SELECT, also ... FOR UPDATE). */
   rows<T extends object = Record<string, unknown>>(sql: string, params?: readonly Param[]): Promise<T[]>;
   /** A statement that changes rows: the OK packet (affectedRows, insertId). */
@@ -166,10 +179,13 @@ async function runOnce<T>(ctx: TxContext, fn: (tx: Tx) => Promise<T>): Promise<T
     const tx: Tx = {
       requestId: ctx.requestId,
       actor: ctx.actor,
+      auditMode: ctx.auditMode,
+      trail: [],
       rows: (sql, params = []) => rowsOf(s, sql, params),
       run: async (sql, params = []) => {
         const result = await send(s, sql, params);
         if (Array.isArray(result)) throw new Error('run() is for statements that change rows; use rows() for a SELECT');
+        noteWrite(tx, sql);
         return result as ResultSetHeader;
       },
     };

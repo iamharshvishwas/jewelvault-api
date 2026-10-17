@@ -14,9 +14,10 @@
 // AN INSERT (POST, shape `fields`): the fields themselves; the id, both stamps and both person columns are the API's. 201 with the new row.
 //
 // AUDIT (L1). Mechanism (a), the generated triggers, writes the audit row of every statement below by itself, from the actor variables that withTx sets. Mechanism (b), the Node writer, is
-// API15's (src/db/audit.ts, JV_AUDIT_MODE=node): it is called from the two places marked "L1 (b)" below, which know the table, the id, the row before and the row after.
+// API15's (src/db/audit.ts, JV_AUDIT_MODE=node): auditChange is called from the two places marked "L1 (b)" below, which know the table, the id, the row before and the row after.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { auditChange } from '../db/audit.js';
 import { newId } from '../db/ids.js';
 import type { Param } from '../db/stmt.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
@@ -208,7 +209,7 @@ export async function updateRecord(app: FastifyInstance, request: FastifyRequest
     if (result.affectedRows !== 1) throw stale(table.table, role, (await readRow(tx, table.table, id, false)) ?? current); // cannot happen under the lock; if it does, nothing was written
     const after = await readRow(tx, table.table, id, false);
     if (!after) throw new Error(`${table.table} ${id}: the row is gone after its own update`);
-    // L1 (b): API15 writes the Node audit row here from { table: table.table, rowId: id, action: 'update', before: current, after } when JV_AUDIT_MODE=node; with the triggers (a) nothing is written here
+    await auditChange(tx, { table: table.table, rowId: id, action: 'update', before: current, after }); // L1 (b): the Node writer, only when JV_AUDIT_MODE=node; with the triggers (a) nothing is written here
     return { row: wireRow(table.table, role, after) };
   });
 }
@@ -233,7 +234,7 @@ export async function insertRecord(app: FastifyInstance, request: FastifyRequest
     );
     const after = await readRow(tx, table.table, id, false);
     if (!after) throw new Error(`${table.table} ${id}: the row is gone after its own insert`);
-    // L1 (b): API15 writes the Node audit row here from { table: table.table, rowId: id, action: 'insert', before: null, after } when JV_AUDIT_MODE=node
+    await auditChange(tx, { table: table.table, rowId: id, action: 'insert', before: null, after }); // L1 (b): the Node writer, only when JV_AUDIT_MODE=node
     return { row: wireRow(table.table, role, after) };
   });
 }

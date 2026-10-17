@@ -14,6 +14,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { JvError } from '../errors.js';
 import { UUID_TEXT } from '../wire/format.js';
+import { noteStep } from './locks.js';
 import type { Tx } from './tx.js';
 
 export const IDEMPOTENCY_KEY_HEADER = 'Idempotency-Key';
@@ -135,6 +136,7 @@ export async function claim(tx: Tx, req: ClaimRequest): Promise<Claim> {
   if (typeof req.fn !== 'string' || !FN_NAME.test(req.fn)) throw new TypeError('the function name is 1 to 40 characters: a lower-case letter, then lower-case letters, digits and underscores');
   const hash = argsHash({ route: req.route, pathIds: req.pathIds, body: req.body, actorId: actor });
   const token = randomUUID();
+  noteStep(tx, 'claim'); // X0 item 1: the first statement of the transaction; the trail refuses a claim that comes after another step
   await tx.run(CLAIM_SQL, [key, req.fn, actor, hash, token]);
   const [row] = await tx.rows<ClaimRow>(READ_SQL, [key]);
   if (!row) throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error('the claim row is not there after its INSERT (the connection is not READ-COMMITTED?)') });
