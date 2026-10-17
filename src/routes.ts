@@ -18,6 +18,7 @@ import { registerEditRoutes } from './edit/routes.js';
 import { registerCreateCustomer } from './money/x06CreateCustomer.js';
 import { registerQuoteBill } from './money/x07QuoteBill.js';
 import { route } from './permissions/route.js';
+import { registerPhotoRoutes } from './photos/routes.js';
 import { registerReadRoutes } from './reads/routes.js';
 import { registerStockRoutes } from './stock/routes.js';
 import { registerSyncRoutes } from './sync/routes.js';
@@ -33,6 +34,7 @@ export function registerRoutes(app: FastifyInstance): void {
   registerDownloadRoutes(app); // API35: the record of Download everything (B3)
   registerCreateCustomer(app); // API19: X6 create_customer
   registerStockRoutes(app); // API16: X8 create_design, X9 set_sku_status
+  registerPhotoRoutes(app); // API17: the photo upload, the public photo read, the owner's removal
   // A14: /readyz says only whether the start-up check passed, {"ok":true} or {"ok":false} (503 while it has not): never why. The reason is in sys_error_log and the owner's dashboard line.
   route(app, { public: 'ready', handler: ({ app: a, reply }) => reply.code(a.startup?.ok === true ? 200 : 503).send({ ok: a.startup?.ok === true }) });
 }

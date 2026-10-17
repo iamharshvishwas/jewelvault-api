@@ -360,7 +360,7 @@ describe('T-D28 limits on a request: 1 MiB, a photo 2 MiB and 16 KiB, unknown ke
       expect([big.statusCode, body(big).error.code]).toEqual([413, 'JV_PAYLOAD_TOO_LARGE']);
       const other = await send(app, 'PUT', '/toy/other', jsonOf(1024 * 1024 + 5));
       expect(other.statusCode).toBe(413);
-    });
+    }, { routes: false }); // the toy stands at the address of the real upload (API17), so the application's own routes are left out
   });
 
   it('unknown JSON keys are refused: at the top, inside a nested object, and in a call that takes no body at all', async () => {
