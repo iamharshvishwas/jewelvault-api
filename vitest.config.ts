@@ -8,6 +8,8 @@ const lane = selectedLane();
 export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
+    // T-D11: with JV_STATEMENT_LOG=<folder> the run writes down the statements of src/ and their plans (tests/api/statement-log.ts); without it the file does nothing
+    setupFiles: ['tests/statement-log.setup.ts'],
     testTimeout: 60000,
     hookTimeout: 60000,
     fileParallelism: false,
