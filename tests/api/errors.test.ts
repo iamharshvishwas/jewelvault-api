@@ -5,7 +5,7 @@ import { DbBusyError } from '../../src/db/errors';
 import { createDbPool, type DbPool } from '../../src/db/pool';
 import { BUSINESS_KEYS, BusyError, JV_STATUS, JvError, classifyError, describeCause, errorBody } from '../../src/errors';
 import { InvalidInputError } from '../../src/wire/zod';
-import { freePort, logSink, testConfig } from './support';
+import { freePort, logSink, testConfig, toyRoutes } from './support';
 import { dbError } from './tx-support';
 
 // S8 (the codes and what each database error becomes), T-C19 (the map), and the T-F08 clause of API03: the 503 JV_UNAVAILABLE and JV_BUSY answers carry the S8 body.
@@ -201,12 +201,13 @@ describe('T-F08 (clause of API03): the 503 JV_UNAVAILABLE and JV_BUSY answers ca
     const sink = logSink();
     const app = buildApp({ config: testConfig(), logStream: sink.stream });
     apps.push(app);
-    for (const reason of ['queue_full', 'wait_timeout', 'connect_refused', 'connection_lost', 'closing'] as const) app.get(`/toy/busy/${reason}`, async () => Promise.reject(new DbBusyError(reason)));
-    app.get('/toy/domain', async () => Promise.reject(new JvError('JV_OVERPAYMENT', 'The payment is more than is pending.', { details: { pending: '10.00' } })));
-    app.get('/toy/invalid', async () => Promise.reject(new InvalidInputError('amount', 'is required')));
-    app.get('/toy/internal', async () => Promise.reject(dbError(1146, 'ER_NO_SUCH_TABLE', "Table 'jewel.secret_table' doesn't exist", { sql: 'SELECT * FROM secret_table' })));
-    app.get('/toy/bug', async () => Promise.reject(dbError(1264, 'ER_WARN_DATA_OUT_OF_RANGE', "Out of range value for column 'amount' at row 1")));
-    app.post('/toy/body', async (request) => request.body);
+    const t = toyRoutes(app);
+    for (const reason of ['queue_full', 'wait_timeout', 'connect_refused', 'connection_lost', 'closing'] as const) t.get(`/toy/busy/${reason}`, async () => Promise.reject(new DbBusyError(reason)));
+    t.get('/toy/domain', async () => Promise.reject(new JvError('JV_OVERPAYMENT', 'The payment is more than is pending.', { details: { pending: '10.00' } })));
+    t.get('/toy/invalid', async () => Promise.reject(new InvalidInputError('amount', 'is required')));
+    t.get('/toy/internal', async () => Promise.reject(dbError(1146, 'ER_NO_SUCH_TABLE', "Table 'jewel.secret_table' doesn't exist", { sql: 'SELECT * FROM secret_table' })));
+    t.get('/toy/bug', async () => Promise.reject(dbError(1264, 'ER_WARN_DATA_OUT_OF_RANGE', "Out of range value for column 'amount' at row 1")));
+    t.post('/toy/body', async (request) => request.body);
     return { app, sink };
   }
 
@@ -239,7 +240,7 @@ describe('T-F08 (clause of API03): the 503 JV_UNAVAILABLE and JV_BUSY answers ca
 
   it('a handler that meets an unreachable database answers JV_UNAVAILABLE in the same body', async () => {
     const { app } = toy();
-    app.get('/toy/down', async () => Promise.reject(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), { code: 'ECONNREFUSED' })));
+    toyRoutes(app).get('/toy/down', async () => Promise.reject(Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), { code: 'ECONNREFUSED' })));
     const res = await app.inject({ method: 'GET', url: '/toy/down' });
     expect(res.statusCode).toBe(503);
     expectS8(res, 'JV_UNAVAILABLE');
@@ -284,7 +285,7 @@ describe('T-F08 (clause of API03): the 503 JV_UNAVAILABLE and JV_BUSY answers ca
     const { app } = toy();
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
-    app.get('/toy/slow', async () => {
+    toyRoutes(app).get('/toy/slow', async () => {
       await gate;
       return { done: true };
     });

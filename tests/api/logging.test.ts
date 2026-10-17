@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildApp } from '../../src/app';
-import { logSink, secret, testConfig } from './support';
+import { logSink, secret, testConfig, toyRoutes } from './support';
 
 async function withApp<T>(fn: (app: ReturnType<typeof buildApp>, sink: ReturnType<typeof logSink>) => Promise<T>) {
   const sink = logSink();
@@ -31,7 +31,7 @@ describe('logging: cookies, authorization and password fields never reach the lo
       const bearer = secret('bearer');
       const setCookie = secret('setcookie');
       const proxy = secret('proxy');
-      app.get('/echo', async (req) => {
+      toyRoutes(app).get('/echo', async (req) => {
         req.log.info({ incoming: { headers: req.headers }, outgoing: { headers: { 'set-cookie': setCookie } }, headers: { 'proxy-authorization': proxy }, ctx: { headers: { cookie } } }, 'echo');
         return { ok: true };
       });
@@ -50,7 +50,7 @@ describe('logging: cookies, authorization and password fields never reach the lo
     await withApp(async (app, sink) => {
       const values = Array.from({ length: 12 }, (_, i) => secret(`p${i}`));
       const [a, b, c, d, e, f, g, h, i, j, k, l] = values;
-      app.post('/echo', async (req) => {
+      toyRoutes(app).post('/echo', async (req) => {
         req.log.info(
           {
             password: a, password_hash: b, new_password: c, current_password: d,

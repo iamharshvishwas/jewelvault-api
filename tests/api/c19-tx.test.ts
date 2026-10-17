@@ -6,7 +6,7 @@ import { StatementRefusedError } from '../../src/db/stmt';
 import { TX_LIMITS, txContext, txContextFor, withRead, withTx, type Tx, type TxContext } from '../../src/db/tx';
 import { BUSINESS_KEYS, BusyError, INTERNAL_KEYS, JvError } from '../../src/errors';
 import { errorOf, sleep } from '../helpers';
-import { logSink, testConfig } from './support';
+import { logSink, testConfig, toyRoutes } from './support';
 import { NOTHING, RIGHT, WRONG, connectionLost, dbError, innodbDeadlocks, leftovers, spyOn, toyIdempotent, toyWrite, txWorld, type Step, type TxWorld } from './tx-support';
 
 // T-C19 (S12, S8, X0): transactions. Every test runs a toy service function (tests/api/tx-support.ts) with the shape of a writing function on a scratch database that has the real schema and
@@ -563,7 +563,7 @@ describe('T-C19 the pool under load: every wait ends in JV_BUSY, never in the ha
     const sink = logSink();
     const app = buildApp({ config: testConfig(), db: pool, logStream: sink.stream });
     apps.push(app);
-    app.post('/toy/pay', async (request) => withTx(txContextFor(pool, request, biller), (tx) => toyWrite(tx, { ...args(), requestId: request.id })));
+    toyRoutes(app).post('/toy/pay', async (request) => withTx(txContextFor(pool, request, biller), (tx) => toyWrite(tx, { ...args(), requestId: request.id })));
     await app.ready();
 
     const holder = await world.scratch.connect();
@@ -622,7 +622,7 @@ describe('T-C19 the pool under load: every wait ends in JV_BUSY, never in the ha
     const pool = open();
     const app = buildApp({ config: testConfig(), db: pool, logStream: logSink().stream });
     apps.push(app);
-    app.get('/toy/arrival', async (request) => {
+    toyRoutes(app).get('/toy/arrival', async (request) => {
       await sleep(60);
       const ctx = txContextFor(pool, request, biller);
       return { waitedMs: performance.now() - ctx.arrivedAt, requestId: ctx.requestId, same: ctx.requestId === request.id };

@@ -111,6 +111,8 @@ describe('T-F02 (API06 clause) the constants file src/limits.ts', () => {
       panThreshold: 200000, // pan_threshold (Z3)
       discountFlagPercent: 10, // discount_flag_percent (I11)
       rateFlagPercent: 5, // rate_flag_percent (I11)
+      sessionIdleMs: 12 * 60 * 60 * 1000, // U4: idle for more than 12 hours ends a session (O42)
+      sessionAbsoluteMs: 14 * 24 * 60 * 60 * 1000, // U4: at most 14 days from the login (O42)
     });
   });
 

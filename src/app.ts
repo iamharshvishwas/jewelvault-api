@@ -5,7 +5,9 @@ import type { Config } from './config.js';
 import type { DbPool } from './db/pool.js';
 import { BusyError, type JvError, classifyError, describeCause, errorBody, unavailableError } from './errors.js';
 import { createLogger } from './logging.js';
+import { installPermissions, route } from './permissions/route.js';
 import { type PreflightResult, runPreflight } from './preflight.js';
+import { registerRoutes } from './routes.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -35,6 +37,11 @@ export interface BuildAppOptions {
    * /healthz is answered 503 JV_UNAVAILABLE. Without one (the tests of tasks that never touch a database) there is no check and no gate.
    */
   db?: DbPool;
+  /**
+   * A seam for tests: false builds the app without the application's routes (src/routes.ts), keeping the permission wrapper, /healthz, the error handler and the start-up gate, so a test can
+   * register routes of its own (a toy route, a stub for every row of the matrix) without meeting the real ones. server.ts never passes it.
+   */
+  routes?: boolean;
 }
 
 /** S11: the one thing a client is told when the start-up check failed. The reason is in the log only. The S8 body: error code, message and details, and the request id. */
@@ -62,6 +69,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const { config } = options;
   // the request id is a UUID: it goes to audit_log.request_id (a UUID column) through @jv_request, and back to the client in the error body
   const app = Fastify({ loggerInstance: createLogger(config.logLevel, options.logStream), genReqId: () => randomUUID() });
+  // A1: from here on every route must come through route() (src/permissions/route.ts), and a path that is not a route answers 404 (A11)
+  installPermissions(app);
   app.decorate('config', config);
   app.decorate('clock', options.clock ?? systemClock);
   app.decorate('db', options.db ?? null);
@@ -107,7 +116,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
     });
   }
 
-  app.get('/healthz', async () => ({ ok: true }));
+  route(app, { public: 'health', handler: async () => ({ ok: true }) });
+  if (options.routes !== false) registerRoutes(app);
 
   return app;
 }

@@ -5,7 +5,11 @@ import net from 'node:net';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { z } from 'zod';
 import type { Config } from '../../src/config';
+import type { HttpMethod } from '../../src/permissions/matrix';
+import { createRoute } from '../../src/permissions/route';
 
 export const REPO = fileURLToPath(new URL('../../', import.meta.url));
 
@@ -31,6 +35,19 @@ export function logSink() {
     text: () => chunks.join(''),
     lines: () => chunks.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>),
   };
+}
+
+/**
+ * A toy route for a test of something else (the error map, the log redaction, the transaction wrapper, the wire formats). Like every route it is registered through the wrapper (A1: the app
+ * refuses a route that is not), as a public route of a table made for the test, so no session is looked up and the permission matrix is not touched. The body is passed through as it came (the toy reads request.body itself).
+ */
+export function toyRoutes(app: FastifyInstance) {
+  type ToyHandler = (request: FastifyRequest, reply: FastifyReply) => unknown;
+  const add = (method: HttpMethod, path: string, handler: ToyHandler) => {
+    const name = `toy-${app.routeTable.length}`;
+    createRoute({ matrix: {}, publicRoutes: { [name]: { method, path } }, tokenDoors: {} })(app, { public: name, body: z.unknown(), handler: ({ request, reply }) => handler(request, reply) });
+  };
+  return { get: (path: string, h: ToyHandler) => add('GET', path, h), post: (path: string, h: ToyHandler) => add('POST', path, h) };
 }
 
 /** A TCP port nobody listens on right now. */

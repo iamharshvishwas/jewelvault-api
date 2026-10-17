@@ -27,6 +27,10 @@ export const limits = Object.freeze({
   discountFlagPercent: 10,
   /** I11: the review line lists a fine_cash rate more than this percent away from the day's Silver rates, and a daily rate that moved more than this percent (`rate_flag_percent`). */
   rateFlagPercent: 5,
+  /** U4: a session idle for more than 12 hours (no call but polling) is over: JV_SESSION_EXPIRED. Siddhi's choice (O42). */
+  sessionIdleMs: 12 * 60 * 60 * 1000,
+  /** U4: a session lasts at most 14 days from the login (`sessions.expires_at` is set to this at login; the lookup reads the column). Siddhi's choice (O42). */
+  sessionAbsoluteMs: 14 * 24 * 60 * 60 * 1000,
 });
 
 export type Limits = typeof limits;
