@@ -306,11 +306,11 @@ export function assertEachPieceOnce(items: readonly { sku_id: string }[]): void 
   });
 }
 
-/** Y8: a future date is refused; a past date only for a caller who may back-date. Returns the bill date (today when none was sent). */
-export function checkBillDate(sent: string | null | undefined, today: string, role: string): string {
+/** Y8: a future date is refused; a past date only for a caller who may back-date. Returns the date (today when none was sent). `field` names the input in the refusal: `bill_date` (X1, X7) or `paid_on` (X2, X3). */
+export function checkBillDate(sent: string | null | undefined, today: string, role: string, field = 'bill_date'): string {
   const date = sent ?? today;
-  if (date > today) throw new wire.InvalidInputError('bill_date', 'must not be in the future');
-  if (date < today && !mayUseField(role, 'back_dates')) throw new wire.InvalidInputError('bill_date', 'must be today');
+  if (date > today) throw new wire.InvalidInputError(field, 'must not be in the future');
+  if (date < today && !mayUseField(role, 'back_dates')) throw new wire.InvalidInputError(field, 'must be today');
   return date;
 }
 

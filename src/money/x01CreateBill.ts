@@ -55,7 +55,7 @@ export const PAYMENT_MODES = ['Cash', 'UPI', 'Card', 'Bank Transfer', 'Other'] a
 /** The most payment rows one bill takes: the spec gives no number, and a body of a megabyte must not make thousands of receipts. */
 export const MAX_PAYMENTS = 10;
 /** receipts.reference is VARCHAR(120); cash_override_reason is VARCHAR(500) and at least 10 characters (Z1). */
-const REFERENCE_MAX = 120;
+export const REFERENCE_MAX = 120;
 const REASON_MIN = 10;
 const REASON_MAX = 500;
 
@@ -64,13 +64,25 @@ const reasonMessage = `must be ${REASON_MIN} to ${REASON_MAX} characters`;
 const paymentsMessage = `must be a list of at most ${MAX_PAYMENTS} payments`;
 const confirmMessage = `must be a list of at most ${limits.maxLines} piece ids`;
 
+/** The mode of a money receipt and its amount (greater than 0): ONE definition for the payment rows of X1 and for X2 record_payment (D13, Y2, S4). */
+export const paymentMode = z.enum(PAYMENT_MODES, { error: (issue) => (issue.input === undefined ? 'is required' : modeMessage) });
+export const paymentAmount = wire.amount.check((ctx) => {
+  if (!/[1-9]/.test(ctx.value)) ctx.issues.push({ code: 'custom', message: 'must be above 0', input: ctx.value });
+});
+
 const paymentRow = wire.strictObject({
-  mode: z.enum(PAYMENT_MODES, { error: (issue) => (issue.input === undefined ? 'is required' : modeMessage) }),
-  amount: wire.amount.check((ctx) => {
-    if (!/[1-9]/.test(ctx.value)) ctx.issues.push({ code: 'custom', message: 'must be above 0', input: ctx.value });
-  }),
+  mode: paymentMode,
+  amount: paymentAmount,
   reference: (f.optionalText(REFERENCE_MAX).schema as z.ZodType<string | null>).optional(),
 });
+
+/** Z1: the reason the OWNER gives for cash over the limit, 10 to 500 characters (X1 and X2 take the same field). */
+export const cashOverrideReason = z
+  .string({ error: (issue) => (issue.input === undefined ? 'is required' : reasonMessage) })
+  .trim()
+  .min(REASON_MIN, reasonMessage)
+  .max(REASON_MAX, reasonMessage)
+  .nullish();
 
 export const createBillBody = wire.strictObject({
   customer_id: wire.uuid,
@@ -89,12 +101,7 @@ export const createBillBody = wire.strictObject({
     .max(limits.maxLines, confirmMessage)
     .optional(),
   /** Z1: the owner's right (FIELD_RIGHTS). The cash rules that use it are API23's; a biller who sends it is refused after the claim. */
-  cash_override_reason: z
-    .string({ error: (issue) => (issue.input === undefined ? 'is required' : reasonMessage) })
-    .trim()
-    .min(REASON_MIN, reasonMessage)
-    .max(REASON_MAX, reasonMessage)
-    .nullish(),
+  cash_override_reason: cashOverrideReason,
 });
 export type CreateBillBody = z.output<typeof createBillBody>;
 
