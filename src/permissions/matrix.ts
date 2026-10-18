@@ -237,6 +237,12 @@ export const FIELD_RIGHTS = {
 } as const satisfies Record<string, readonly Role[]>;
 export type FieldRight = keyof typeof FIELD_RIGHTS;
 
+/**
+ * I11, O26: whose daily rates the nightly review line checks for a move of more than `rate_flag_percent`: "the daily rates entered by a biller". The review (src/domain/review.ts) asks for the roles
+ * here and never writes a role name itself (S10, T-D10).
+ */
+export const RATE_REVIEW_ROLES: readonly Role[] = ['biller'];
+
 // ------------------------------------------------------------------ asking the matrix
 
 const isRole = (role: unknown): role is Role => typeof role === 'string' && (ROLES as readonly string[]).includes(role);

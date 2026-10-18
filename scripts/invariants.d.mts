@@ -11,6 +11,8 @@ export interface RunOptions {
   queries?: Partial<Record<'V1' | 'V2' | 'V3' | 'V4', string>>;
   /** Test seam: called after each invariant query, so a test can commit a change while the run is in progress. */
   between?: (invariant: string) => Promise<void>;
+  /** Called once, inside the snapshot, after the last file and before COMMIT: work that must read the same moment as the files (the Node half of I6 and the review line of API32). A failure rolls the snapshot back. */
+  inSnapshot?: (conn: Connection) => Promise<void>;
 }
 export interface RunResult { ok: boolean; counts: Record<string, number>; rows: InvariantRow[]; ran: string[] }
 /** Runs every file of db/invariants inside ONE consistent snapshot (REPEATABLE READ). I6 is the SQL half only: re-pricing the lines is done in Node. */

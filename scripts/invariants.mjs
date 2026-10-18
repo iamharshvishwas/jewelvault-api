@@ -5,6 +5,9 @@
 // At READ COMMITTED (the server's setting) every statement would read its own snapshot.
 // V1 to V4 are queries (db/queries), put into the invariant files where they say {{V1}} to {{V4}}.
 // Not here: I6's re-pricing of each line and I11 (Node, they need pricing.ts), I8 and I9 (the job and the tests), I12 (database size and backup ages, a separate small query).
+// The Node halves of API32 (src/domain/invariants.ts, src/domain/review.ts) must read the SAME snapshot as the files: `opts.inSnapshot(conn)` is called once, inside the transaction, after the last file
+// and before COMMIT (a failure there rolls the snapshot back like a failure of a file). src/ cannot import this file (it is compiled alone), so src/domain/invariants.ts is the TypeScript twin of this
+// function; tests/api/nightly-invariants.test.ts runs both on the same database and compares the answers.
 //
 // The connection must not be inside a transaction: START TRANSACTION commits one that is open.
 import { readdirSync, readFileSync } from 'node:fs';
@@ -61,6 +64,7 @@ export async function runInvariants(conn, opts = {}) {
       ran.push(f.id);
       if (opts.between) await opts.between(f.id);
     }
+    if (opts.inSnapshot) await opts.inSnapshot(conn);
     await conn.query('COMMIT');
   } catch (e) {
     await conn.query('ROLLBACK').catch(() => undefined);
