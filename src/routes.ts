@@ -22,6 +22,7 @@ import { registerVoidReceipt } from './money/x04VoidReceipt.js';
 import { registerCancelBill } from './money/x05CancelBill.js';
 import { registerCreateCustomer } from './money/x06CreateCustomer.js';
 import { registerQuoteBill } from './money/x07QuoteBill.js';
+import { registerReissueBill } from './money/x10ReissueBill.js';
 import { route } from './permissions/route.js';
 import { registerPhotoRoutes } from './photos/routes.js';
 import { registerReadRoutes } from './reads/routes.js';
@@ -41,6 +42,7 @@ export function registerRoutes(app: FastifyInstance): void {
   registerSettleFine(app); // API24: X3 settle_fine
   registerVoidReceipt(app); // API25: X4 void_receipt
   registerCancelBill(app); // API25: X5 cancel_bill
+  registerReissueBill(app); // API26: X10 reissue_bill
   registerDownloadRoutes(app); // API35: the record of Download everything (B3)
   registerCreateCustomer(app); // API19: X6 create_customer
   registerStockRoutes(app); // API16: X8 create_design, X9 set_sku_status
