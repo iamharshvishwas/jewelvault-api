@@ -82,6 +82,8 @@ interface Outcome {
   event: 'ok' | 'partial' | 'failed';
   detail: Record<string, unknown> | null;
   facts?: Record<string, unknown> | undefined;
+  /** the run did nothing: no event row (PhaseResult.quiet) */
+  quiet?: boolean;
 }
 
 /** Ends a run: the row of sys_job_runs and, for a phase of work, its `event` row, in ONE transaction. */
@@ -89,7 +91,7 @@ async function recordOutcome(app: FastifyInstance, ctx: TxContext, o: Outcome): 
   const at = app.clock.read().timestamp;
   await withTx(ctx, async (tx) => {
     await finishRun(tx, { id: o.id, status: o.status, at, detail: o.detail });
-    if (o.phase.audited === false) return;
+    if (o.phase.audited === false || o.quiet === true) return;
     await writeEvent(tx, { table: 'sys_job_runs', rowId: String(o.id), facts: { ...o.facts, event: 'job_phase', job: o.phase.job, run_date: o.runDate, outcome: o.event } });
   });
 }
@@ -143,6 +145,7 @@ async function runPhases(app: FastifyInstance, conn: DbConnection, options: Tick
         event: result.complete ? 'ok' : 'partial',
         detail: result.detail ?? null,
         facts: result.facts,
+        quiet: result.quiet === true,
       });
       note(phase.job, result.complete ? 'ran' : 'partial', reading.date);
     } catch (e) {

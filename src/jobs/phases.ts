@@ -4,12 +4,15 @@
 //                   phase is `ok` when the check COMPLETED, whatever it found: a broken invariant is `check_runs.ok = 0`, not a failed phase.
 //   heartbeat       the tick's own mark that it ran: its row in `sys_job_runs` (job `heartbeat`, one for each business date) is updated at every tick, `finished_at` and `detail.last_tick_at`. It is not
 //                   work, so it writes no `event` row (24 rows a day of nothing would only bury the real ones).
-//   housekeeping    API33b: L6, and the closing of finished login-failure hours (D24) at every tick  -> add it to defaultPhases() below, `due: 'every_tick'` (or a daily phase for L6)
-//   photo_copy      API33b: copyPhotosOnce in slices that stop starting work after 25 s              -> `due: 'nightly'`, return `{ complete: false, detail: <where it stopped> }` for a slice and
-//                   read it back from `ctx.previous.detail`; the next tick goes on at once, and the row is `ok` only when a run says `complete: true`
+//   housekeeping    API33b (src/jobs/housekeeping.ts): the closing of finished login-failure hours (D24) at every tick, and L6 (the stored result of a request row older than 90 days is emptied)
+//                   once for the business date, from 02:00. It writes its event row only when it did something.
+//   photo_copy      API33b (src/jobs/photoCopy.ts): each photo not yet copied is written once into JV_BACKUP_DIR/photos, in slices that stop starting work after 25 s; `ok` and the heartbeat row of
+//                   backup_runs only when the whole list is done, nightly work like the check.
 //
 // The dump (`db_dump`) is not a phase of the tick: it is the script of API34 with its own lock and its own `sys_job_runs` rows.
+import { housekeepingPhase } from './housekeeping.js';
 import { runNightlyCheck } from './nightly.js';
+import { photoCopyPhase } from './photoCopy.js';
 import type { Phase } from './types.js';
 
 export const nightlyCheckPhase: Phase = {
@@ -34,9 +37,9 @@ export const heartbeatPhase: Phase = {
   },
 };
 
-/** The phases of the application's tick, in order. API33b adds `housekeeping` and `photo_copy` here. */
+/** The phases of the application's tick, in the order of I8. */
 export function defaultPhases(): Phase[] {
-  return [nightlyCheckPhase, heartbeatPhase];
+  return [nightlyCheckPhase, heartbeatPhase, housekeepingPhase, photoCopyPhase];
 }
 
 const JOB_NAME = /^[a-z][a-z0-9_]{0,39}$/;

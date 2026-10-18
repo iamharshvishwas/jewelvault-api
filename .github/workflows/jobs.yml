@@ -1,0 +1,57 @@
+# JewelVault jobs: the OUTSIDE caller of the hourly tick and the OUTSIDE alarm for a missed run (spec I8 and O44; plan task API33b).
+#
+#   1. POST /internal/jobs/tick     the same call the hPanel cron job (Custom type, curl) makes every hour. It does nothing if the first call worked ("already done"); it is here because a cron job
+#                                   on the plan can be late or missed, and GitHub's scheduled runs can be late or skipped too, so the two callers cover each other.
+#   2. GET  /internal/jobs/health   read only. Answers 503 when the last good export is older than 26 hours or the owner's last Download everything is more than 35 days old (B3); curl -f then
+#                                   fails this step, the run fails, and GitHub e-mails the owner of the repository about a failed run at no cost. It runs even when the tick failed (if: always()).
+#
+# What Harsh sets once (plan task PH06a), in the repository's Settings > Secrets and variables > Actions:
+#   secret    JV_JOB_TOKEN   the job token that `npm run make-token -- job` printed once (the API holds only its hash, JV_JOB_TOKEN_HASH). Never typed into a file, a chat or a log.
+#   variable  JV_API_URL     the API's address, https://<api name>, without a slash at the end. Not a secret.
+# Until both are set the first step stops the run with a message that says which one is missing, instead of calling a wrong address with an empty token.
+name: JewelVault jobs
+
+on:
+  schedule:
+    # every hour at minute 17: GitHub delays the runs that are queued at the top of the hour
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jewelvault-jobs
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    name: Tick and health
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      JV_API_URL: ${{ vars.JV_API_URL }}
+      JV_JOB_TOKEN: ${{ secrets.JV_JOB_TOKEN }}
+    steps:
+      - name: Check that the address and the token are set
+        run: |
+          set -eu
+          if [ -z "$JV_API_URL" ]; then
+            echo "The repository variable JV_API_URL is not set (the API address, https://...)."
+            exit 1
+          fi
+          if [ -z "$JV_JOB_TOKEN" ]; then
+            echo "The Actions secret that holds the job token is not set."
+            exit 1
+          fi
+
+      - name: Call the hourly tick
+        run: |
+          set -eu
+          curl -fsS --max-time 60 -X POST -H "Authorization: Bearer $JV_JOB_TOKEN" "$JV_API_URL/internal/jobs/tick"
+
+      - name: Ask the jobs health (fails on a missed export or a lapsed Download everything)
+        if: always()
+        run: |
+          set -eu
+          curl -fsS --max-time 60 -H "Authorization: Bearer $JV_JOB_TOKEN" "$JV_API_URL/internal/jobs/health"

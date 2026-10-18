@@ -47,6 +47,7 @@ const schema = z.object({
   JV_ADMIN_TOKEN_HASH: tokenHash.optional(),
   JV_JOB_TOKEN_HASH: tokenHash.optional(),
   JV_LOGIN_SALT: secretSalt.optional(),
+  JV_BACKUP_DIR: text.optional(),
   PORT: portNumber.optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).optional(),
   JV_AUDIT_MODE: z.enum(AUDIT_MODES).optional(),
@@ -67,6 +68,12 @@ export interface Config {
   readonly jobTokenHash?: string | undefined;
   /** D24, U10: the secret salt of the login counter slots (JV_LOGIN_SALT, at least 16 characters). Unset: a salt made from the database password. */
   readonly loginSalt?: string | undefined;
+  /**
+   * B2: the backup folder on the plan (JV_BACKUP_DIR), an absolute path with the same value for the app and for cron, outside `domains/`. The tick's photo copy (API33b) writes `photos/` into it, the dump
+   * script (API34) `daily/` and `monthly/`. Kept as it is written: the photo copy checks it when it runs (src/jobs/backupFolder.ts resolveBackupDir) and fails visibly when it is not set, not there or
+   * not writable; a wrong value does not stop the start, because the owner's line must still open to say so.
+   */
+  readonly backupDir?: string | undefined;
   /** L1: which mechanism writes the audit rows (JV_AUDIT_MODE, default 'triggers'). 'node' only on a database without the audit triggers (O50). */
   readonly auditMode: AuditMode;
   readonly db: { readonly host: string; readonly port: number; readonly name: string; readonly user: string; readonly password: string };
@@ -104,6 +111,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     adminTokenHash: v.JV_ADMIN_TOKEN_HASH,
     jobTokenHash: v.JV_JOB_TOKEN_HASH,
     loginSalt: v.JV_LOGIN_SALT,
+    backupDir: v.JV_BACKUP_DIR,
     auditMode: v.JV_AUDIT_MODE ?? 'triggers',
     db: Object.freeze({ host: v.DB_HOST, port: v.DB_PORT, name: v.DB_NAME, user: v.DB_USER, password: v.DB_PASSWORD }),
   });

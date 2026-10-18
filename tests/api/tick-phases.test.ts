@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { checkPhases, defaultPhases } from '../../src/jobs/phases';
+import { checkPhases, defaultPhases, heartbeatPhase, nightlyCheckPhase } from '../../src/jobs/phases';
 import { runTick } from '../../src/jobs/tick';
 import { type TickWorld, at, body, tickWorld, toyPhase } from './tick-support';
 
@@ -194,11 +194,13 @@ describe('PT-T1 a list of phases is checked when it is registered', () => {
   });
 });
 
-describe('PT-T1 the application\'s own phases: nightly_check (API32) and the heartbeat, in this order; housekeeping and photo_copy are API33b\'s', () => {
+describe('PT-T1 the application\'s own phases: nightly_check (API32) and the heartbeat, then housekeeping and photo_copy (API33b, tests/api/tick-t-r04.test.ts), in the order of I8', () => {
   it('the registry lists them in the order of I8', () => {
     expect(defaultPhases().map((p) => [p.job, p.due])).toEqual([
       ['nightly_check', 'nightly'],
       ['heartbeat', 'every_tick'],
+      ['housekeeping', 'every_tick'],
+      ['photo_copy', 'nightly'],
     ]);
   });
 });
@@ -207,7 +209,8 @@ describe('PT-T1 the real nightly check inside the tick: once for a business date
   let w: TickWorld;
   const checkRuns = async () => (await w.sql.query<any[]>('SELECT id, ok, details FROM check_runs ORDER BY id'))[0].map((r: any) => ({ ...r, id: Number(r.id), ok: Number(r.ok), details: typeof r.details === 'string' ? JSON.parse(r.details) : r.details }));
   beforeAll(async () => {
-    w = await tickWorld('ticknight', { routes: true, seeds: true });
+    // the check and the heartbeat alone: the rules of this part are those of the nightly check inside the tick (the other two phases are proved in tick-t-r04.test.ts and tick-housekeeping.test.ts)
+    w = await tickWorld('ticknight', { phases: [nightlyCheckPhase, heartbeatPhase], seeds: true });
   }, 120_000);
   afterAll(async () => {
     await w?.close();

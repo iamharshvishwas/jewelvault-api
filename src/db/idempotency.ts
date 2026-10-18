@@ -10,7 +10,8 @@
 //  - A first request that rolls back leaves no row, so the waiting twin becomes first and runs. A failure after the claim (the function's own role check, X0 item 2) rolls the claim back with it.
 //  - A call that fails the route wrapper's checks never gets here, so it never uses up its key; a creating call without a valid key is refused here before any statement is sent.
 //  - The database runs READ-COMMITTED (S11): under REPEATABLE READ an old snapshot made the duplicate probe fail with error 1020.
-// The emptying of results older than 90 days (L6) belongs to the housekeeping task; a row whose result was emptied refuses a repeat of its key.
+// L6: the nightly housekeeping of the tick (src/jobs/housekeeping.ts, API33b) empties the result of a row older than 90 days; the row stays (S7) and a repeat of its key is refused with
+// JV_INVALID_INPUT "this request is too old to repeat" and never run again.
 import { createHash, randomUUID } from 'node:crypto';
 import { JvError } from '../errors.js';
 import { UUID_TEXT } from '../wire/format.js';
@@ -145,7 +146,7 @@ export async function claim(tx: Tx, req: ClaimRequest): Promise<Claim> {
     throw new JvError('JV_INVALID_INPUT', 'This Idempotency-Key was already used for a different request. Make a new key for a different action.', { details: KEY_FIELD });
   }
   if (row.result === null || row.result === undefined) {
-    throw new JvError('JV_INVALID_INPUT', 'This Idempotency-Key was used before and its answer is no longer kept. Check whether it was saved, then make a new key.', { details: KEY_FIELD });
+    throw new JvError('JV_INVALID_INPUT', 'This request is too old to repeat: its answer is no longer kept. Check whether it was saved, then make a new key.', { details: KEY_FIELD });
   }
   return { first: false, key, result: typeof row.result === 'string' ? JSON.parse(row.result) : row.result };
 }

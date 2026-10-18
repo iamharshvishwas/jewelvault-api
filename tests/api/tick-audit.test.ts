@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { heartbeatPhase, nightlyCheckPhase } from '../../src/jobs/phases';
 import { JOB_HASH, JOB_TOKEN, type TickWorld, type TickWorldOptions, at, tickWorld } from './tick-support';
 
 // PT-T1 / T-D14 clause (API33): "each phase run of the tick writes one `event` row with role job" (D16, L1). An `event` row is what is not a change of an audited row: a job run is one. The row has no
@@ -18,7 +19,8 @@ const MECHANISMS: [string, string, TickWorldOptions][] = [
 describe.each(MECHANISMS)('PT-T1 / T-D14 clause: every phase run of the tick writes one event row with the role job, mechanism %s', (_name, letter, options) => {
   let w: TickWorld;
   beforeAll(async () => {
-    w = await tickWorld(`tickaud${letter}`, { routes: true, seeds: true, ...options });
+    // the nightly check and the heartbeat: the phase list these rules were written for (the events of housekeeping and photo_copy are proved in tick-housekeeping.test.ts and tick-photo-copy.test.ts)
+    w = await tickWorld(`tickaud${letter}`, { phases: [nightlyCheckPhase, heartbeatPhase], seeds: true, ...options });
   }, 120_000);
   afterAll(async () => {
     await w?.close();

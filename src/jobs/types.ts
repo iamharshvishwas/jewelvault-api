@@ -43,6 +43,11 @@ export interface PhaseResult {
   detail?: Record<string, unknown>;
   /** Added to the facts of the phase's `event` audit row: identifiers and counts only (writeEvent refuses a key that names a secret). */
   facts?: Record<string, unknown>;
+  /**
+   * true: the run had nothing to do and writes its row in `sys_job_runs` but NO `event` row. For a phase that is due at every tick (the housekeeping, API33b), whose idle runs would be 24
+   * rows a day of nothing in an audit log that nothing can purge (S7); a run that did something says nothing here and has its event.
+   */
+  quiet?: boolean;
 }
 
 export interface Phase {
