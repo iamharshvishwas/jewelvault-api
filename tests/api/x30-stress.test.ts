@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { runInvariants } from '../../scripts/invariants.mjs';
 import { POOL_LIMITS } from '../../src/db/pool';
+import { REVIEW_LISTS } from '../../src/domain/review';
+import { runNightlyCheck } from '../../src/jobs/nightly';
 import { rng } from '../helpers';
 import { T } from '../schema/support';
 import type { CallerName } from './cells';
@@ -17,7 +19,7 @@ import { busyLines, movingWorld, sleep, tally } from './x30-support';
 // API30. T-C15 (X0, S8, S11, S12), the stress run: 8 workers (the pool of 8, the paced connect of S11) make 200 mixed calls through the REAL routes (bills, payments, fine settlements, voids, cancels,
 // re-issues and refunds) over 3 customers (the walk-in among them) and 12 pieces. It ends with no deadlock (1213: the server's own counter, the log of the API and every answer), no 5xx and no JV_BUSY,
 // every answer one of the documented ones, the rows in the database exactly the rows the answers say were written, and I1 to I5, I7 and I10 true (with every other invariant the SQL files check).
-// I6 and I11 are the T-C15 clause of API31, run on the stress database.
+// I6 and I11 are the T-C15 clause of API31, run on the stress database: one more run (seed 304) ends with the nightly check of API32 and must report I6 and I11 true (see `nightlyProblems`).
 //
 // How the calls are chosen: each worker takes the next of the 200 numbers, reads the books with the test's own connection, picks an operation and its target at random (a seeded generator for each
 // worker: the seed fixes the choices, the interleaving is the machine's), and makes it. A target is read just before the call, so another worker's call may take it first: those calls end in the refusals
@@ -251,10 +253,12 @@ interface Report {
   invariantCounts: Record<string, number>;
   ranInvariants: string[];
   seconds: number;
+  /** the nightly check at the end of the run (API31, T-C15 clause); only when asked for */
+  nightly?: { ok: boolean; counts: Record<string, number>; ran: string[]; reviewDate: string; reviewCounts: Record<string, number>; checkRunId: number };
 }
 
 /** Runs the stress and returns every way it went wrong as a sentence (an empty list is a clean run). The control passes `noLock`. */
-async function stress(seed: number, noLock = false): Promise<Report> {
+async function stress(seed: number, noLock = false, withNightly = false): Promise<Report> {
   const f = await fixture(`x30s${seed % 1000}`);
   const { w } = f;
   const problems: string[] = [];
@@ -383,8 +387,60 @@ async function stress(seed: number, noLock = false): Promise<Report> {
       if (before !== after) problem(`repeats wrote rows: ${before} -> ${after}`);
     }
 
+    // 8. API31, T-C15 clause: the nightly check of API32 at the end of the run, on the stress database. The run is on one Indian day (the API clock started at T0 and moves with real time), so the check
+    //    for the NEXT day reviews exactly this one: I6 (every stored line equals a fresh priceLine of its pinned version: the Node half) and the other invariants must be 0, and the review line I11
+    //    must say what the run did (its counts equal what the answers say, and the lists are all there).
+    let nightly: Report['nightly'];
+    if (withNightly) {
+      const day = TODAY;
+      const next = new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+      const conn = await w.world.app.db!.checkout();
+      try {
+        const out = await runNightlyCheck(conn, { clock: w.world.app.clock, date: next });
+        nightly = { ok: out.ok, counts: out.counts, ran: out.ran, reviewDate: out.review.date, reviewCounts: out.review.counts, checkRunId: out.checkRunId };
+        if (!out.ok) problem(`the nightly check is red: ${JSON.stringify(out.rows.slice(0, 3))}`);
+        for (const id of ['I1', 'I2', 'I3', 'I4', 'I5', 'I6', 'I7', 'I10', 'I13']) {
+          if (!out.ran.includes(id)) problem(`the nightly check did not run ${id}`);
+          else if (out.counts[id] !== 0) problem(`the nightly check: ${id} has ${out.counts[id]} broken row(s), e.g. ${JSON.stringify(out.rows.filter((x) => x.invariant === id).slice(0, 2))}`);
+        }
+        // I11: a report that must say what happened. Two opinions: the counts of the answers (what the run did) and the counts of the base tables worked out here from the words of I11 (not from
+        //      src/domain/review.ts), list by list.
+        const said = (op: Op) => saved.filter((a) => a.plan.op === op).length;
+        const want: Record<string, number> = { voids: said('void'), cancellations: said('cancel') + said('reissue'), reissues: said('reissue'), refunds: said('refund') };
+        if (out.review.date !== day) problem(`the review line is for ${out.review.date}, the run was on ${day}`);
+        const count = async (text: string, marks = 1): Promise<number> => Number((await rows(w, text, Array<string>(marks).fill(day)))[0].n);
+        const fromTables: Record<string, number> = {
+          // lines of active bills of the day sold below the server's list prices (a Per Piece line on its price only)
+          below_list_lines: await count("SELECT COUNT(*) AS n FROM bill_items i JOIN bills b ON b.id = i.bill_id WHERE b.bill_date = ? AND b.status = 'active' AND (i.metal_rate < i.list_metal_rate OR (i.selling_method = 'By Weight' AND i.list_labour_rate IS NOT NULL AND i.labour_rate < i.list_labour_rate))"),
+          discount_over: await count("SELECT COUNT(*) AS n FROM bills WHERE bill_date = ? AND status = 'active' AND discount > subtotal / 10"),
+          cash_overrides: await count('SELECT (SELECT COUNT(*) FROM bills WHERE bill_date = ? AND cash_override_reason IS NOT NULL) + (SELECT COUNT(*) FROM receipts WHERE paid_on = ? AND cash_override_reason IS NOT NULL) AS n', 2),
+          cancellations: await count("SELECT COUNT(*) AS n FROM bills WHERE status = 'cancelled' AND cancelled_on = ?"),
+          reissues: await count('SELECT COUNT(*) AS n FROM bills WHERE reissue_of IS NOT NULL AND bill_date = ?'),
+          voids: await count("SELECT COUNT(*) AS n FROM receipts WHERE status = 'voided' AND voided_on = ?"),
+          refunds: await count("SELECT COUNT(*) AS n FROM receipts WHERE kind = 'refund' AND paid_on = ?"),
+          walkin_bills: await count("SELECT COUNT(*) AS n FROM bills b JOIN customers c ON c.id = b.customer_id WHERE c.is_walkin = 1 AND b.bill_date = ? AND b.status = 'active'"),
+          sale_type_differs: await count("SELECT COUNT(*) AS n FROM bills b JOIN customers c ON c.id = b.customer_id WHERE b.bill_date = ? AND b.status = 'active' AND b.doc_type <> 'opening_balance' AND b.sale_type <> c.customer_type"),
+          // an active fine_cash settlement of the day whose rate is more than 5 percent away from the one Silver rate (85.00) of the day
+          fine_cash_rate_away: await count("SELECT COUNT(*) AS n FROM receipts WHERE kind = 'fine_cash' AND status = 'active' AND paid_on = ? AND ABS(silver_rate - 85) * 100 > 5 * 85"),
+          biller_rate_moves: 0, // the run enters no rate
+        };
+        for (const [list, n] of Object.entries(want)) if (out.review.counts[list as keyof typeof out.review.counts] !== n) problem(`I11 ${list}: the review says ${out.review.counts[list as keyof typeof out.review.counts]}, the answers say ${n}`);
+        for (const [list, n] of Object.entries(fromTables)) if (out.review.counts[list as keyof typeof out.review.counts] !== n) problem(`I11 ${list}: the review says ${out.review.counts[list as keyof typeof out.review.counts]}, the base tables say ${n}`);
+        for (const list of REVIEW_LISTS) if (!Array.isArray(out.review.lists[list]) || typeof out.review.counts[list] !== 'number') problem(`I11: the list ${list} is missing from the review line`);
+        const [walkinCash] = await rows(w, "SELECT COALESCE(SUM(r.amount), 0) AS t FROM receipts r JOIN customers c ON c.id = r.customer_id WHERE c.is_walkin = 1 AND r.status = 'active' AND r.paid_on = ? AND r.is_opening = 0 AND ((r.kind = 'money' AND r.mode = 'Cash') OR r.kind = 'fine_cash')", [day]);
+        if (out.review.walkin.bills !== fromTables.walkin_bills || out.review.walkin.cash_total !== String(walkinCash.t)) problem(`I11 walk-in: the review says ${out.review.walkin.bills} bills and ${out.review.walkin.cash_total} in cash, the tables ${fromTables.walkin_bills} and ${walkinCash.t}`);
+        // the row it wrote is the one the owner reads (GET /v1/health/checks) with the same verdict and the same review
+        const read = JSON.parse((await w.world.call('owner', 'GET', '/v1/health/checks?limit=5')).body) as { check_runs: { id: number; ok: boolean | number; details: { review?: { date: string; counts: Record<string, number> } } }[] };
+        const written = read.check_runs.find((r) => Number(r.id) === out.checkRunId);
+        if (!written) problem(`the owner does not see check_runs row ${out.checkRunId}`);
+        else if (Number(written.ok) !== 1 || written.details.review?.date !== day || JSON.stringify(written.details.review?.counts) !== JSON.stringify(out.review.counts)) problem(`the check_runs row does not say what the check returned: ${JSON.stringify(written).slice(0, 200)}`);
+      } finally {
+        conn.release();
+      }
+    }
+
     await root.end();
-    return { seed, problems, ok, refused, deadlocks, maxConnections, invariantCounts: inv.counts as Record<string, number>, ranInvariants: inv.ran as string[], seconds };
+    return { seed, problems, ok, refused, deadlocks, maxConnections, invariantCounts: inv.counts as Record<string, number>, ranInvariants: inv.ran as string[], seconds, ...(nightly ? { nightly } : {}) };
   } finally {
     undo();
     await w.world.close();
@@ -402,6 +458,17 @@ describe('T-C15 stress run: 8 workers and 200 mixed calls (bills, payments, fine
       expect(report.deadlocks).toBe(0);
     }, 300_000);
   }
+
+  it('T-C15 clause (API31): the stress run repeated once (seed 304) with the nightly check at its end: 0 deadlocks, the same checks, and the nightly check reports I6 and I11 true on the stress database', async () => {
+    const report = await stress(304, false, true);
+    console.log(`[T-C15 stress seed 304 + nightly]`, JSON.stringify({ seconds: Math.round(report.seconds * 10) / 10, ok: report.ok, refused: report.refused, deadlocks: report.deadlocks, maxConnections: report.maxConnections, nightly: report.nightly }));
+    expect(report.problems).toEqual([]);
+    expect(report.deadlocks).toBe(0);
+    expect(report.nightly?.ok).toBe(true);
+    expect(report.nightly?.ran).toContain('I6');
+    expect(report.nightly?.counts.I6).toBe(0);
+    expect(Object.keys(report.nightly?.reviewCounts ?? {})).toHaveLength(11);
+  }, 300_000);
 
   it('NEGATIVE CONTROL: with the customer-lock helper replaced by a no-op in the test build the same run FAILS (a bill paid twice, a refund of money that is spent, an invariant, a deadlock or a refusal that is none of the documented ones)', async () => {
     let found: Report | undefined;
