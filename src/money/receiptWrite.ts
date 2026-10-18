@@ -1,4 +1,5 @@
-// The one place that inserts a row of `receipts` (D13): X1 for the payment rows of a bill, X2 for a payment, X3 for a fine settled (API24), X10 for the new payments of a re-issue. It inserts the row,
+// The one place that inserts a row of `receipts` (D13): X1 for the payment rows of a bill, X2 for a payment, X3 for a fine settled (API24), X10 for the new payments of a re-issue, X12 for the opening
+// advances (`isOpening`, D15). It inserts the row,
 // reads it back as the table holds it and writes the audit row of mechanism (b) of L1 (a no-op in mode triggers, whose triggers write their own), and returns the row for the answer.
 //
 // The caller holds the customer lock, has taken its ONE clock reading (`at`: every stamp of the call, C4) and has decided everything else; the CHECK of D13 (`chk_receipts_kind`) stands behind the
@@ -28,17 +29,19 @@ export interface ReceiptToInsert {
   reference: string | null;
   notes: string | null;
   cashOverrideReason: string | null;
+  /** D15: an advance brought forward (X12). Only a `money` receipt of mode Other or a `fine_silver` receipt may be one: chk_receipts_opening and chk_receipts_kind stand behind it. Absent means false. */
+  isOpening?: boolean;
   /** the call's clock reading, 'YYYY-MM-DD HH:MM:SS.ffffff' */
   at: string;
   /** the user who makes it */
   by: string;
 }
 
-/** Inserts one active, non-opening receipt and audits it. Returns the row as the table holds it (every column). */
+/** Inserts one active receipt (an opening one only when `isOpening` says so) and audits it. Returns the row as the table holds it (every column). */
 export async function insertReceipt(tx: Tx, r: ReceiptToInsert): Promise<Row> {
   const id = r.id ?? newId();
   await tx.run(RECEIPT_INSERT, [
-    id, r.customerId, r.kind, r.mode, r.amount, r.fineGrams, r.silverRate, r.paidOn, r.reference, r.notes, 0, r.cashOverrideReason, 'active', r.at, r.at, r.by, r.by,
+    id, r.customerId, r.kind, r.mode, r.amount, r.fineGrams, r.silverRate, r.paidOn, r.reference, r.notes, r.isOpening === true ? 1 : 0, r.cashOverrideReason, 'active', r.at, r.at, r.by, r.by,
   ]);
   const row = await readRow(tx, 'receipts', id, false);
   if (!row) throw new Error('the receipt is gone after its own insert');

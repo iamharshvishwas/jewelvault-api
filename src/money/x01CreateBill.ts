@@ -36,7 +36,7 @@ import { z } from 'zod';
 import { type AuditedRow, auditChange } from '../db/audit.js';
 import { claim, idempotencyKey, markReplay, storeResult } from '../db/idempotency.js';
 import { newId } from '../db/ids.js';
-import { type PieceLockRow, lockCustomer, lockPieces } from '../db/locks.js';
+import { type CustomerLockRow, type PieceLockRow, lockCustomer, lockPieces } from '../db/locks.js';
 import { billNumbers, ensureSeries, nextBillNo } from '../db/numbers.js';
 import { readCustomerState } from '../db/state.js';
 import type { Param } from '../db/stmt.js';
@@ -53,7 +53,7 @@ import { columnsOfTable, mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
 import { insertReceipt } from './receiptWrite.js';
-import { type PieceRow, PRICING_VERSIONS, type VersionTable, assertEachPieceOnce, buildQuote, checkBillDate, quoteBody, readEstimate, readRates } from './x07QuoteBill.js';
+import { type PieceRow, PRICING_VERSIONS, type Quote, type VersionTable, assertEachPieceOnce, buildQuote, checkBillDate, quoteBody, readEstimate, readRates } from './x07QuoteBill.js';
 
 // ------------------------------------------------------------------ the body
 
@@ -137,8 +137,8 @@ export interface CreateBillOptions {
 
 // ------------------------------------------------------------------ rules that need no database rows
 
-/** The pieces named in `confirm_held` must be pieces of this bill, each once. Returns them as a set. */
-function confirmedPieces(input: CreateBillBody): ReadonlySet<string> {
+/** The pieces named in `confirm_held` must be pieces of this bill, each once. Returns them as a set. X10 takes the same list. */
+export function confirmedPieces(input: Pick<CreateBillBody, 'items' | 'confirm_held'>): ReadonlySet<string> {
   const onBill = new Set(input.items.map((i) => i.sku_id));
   const seen = new Set<string>();
   (input.confirm_held ?? []).forEach((id, i) => {
@@ -149,8 +149,12 @@ function confirmedPieces(input: CreateBillBody): ReadonlySet<string> {
   return seen;
 }
 
-/** R10: an In Stock piece that is on no bill; a Reserved or On Approval piece only when the screen passed its id in the confirm list. Anything else never. */
-function isBillable(p: PieceLockRow, confirmed: ReadonlySet<string>): boolean {
+/**
+ * R10: an In Stock piece that is on no bill; a Reserved or On Approval piece only when the screen passed its id in the confirm list. Anything else never. `freed` is for X10: the pieces of the bill
+ * being re-issued, which the cancel of K3 returns to In Stock in the same transaction (they are Sold on the old bill in the locked rows, which are read before that), so they are billable again.
+ */
+function isBillable(p: PieceLockRow, confirmed: ReadonlySet<string>, freed?: ReadonlySet<string>): boolean {
+  if (freed?.has(p.id)) return true;
   if (p.sold_bill_id !== null) return false;
   if (p.status === 'In Stock') return true;
   return (p.status === 'Reserved' || p.status === 'On Approval') && confirmed.has(p.id);
@@ -182,7 +186,7 @@ const designsSql = (n: number) =>
   `SELECT d.id, d.design_no, d.material, d.purity, d.selling_method, c.name AS category FROM designs d JOIN categories c ON c.id = d.category_id WHERE d.id IN ${marks(n)}`;
 
 const BILL_COLUMNS =
-  'id, bill_no, customer_id, bill_date, doc_type, sale_type, status, pricing_version, subtotal, discount, additional_charges, gst_percent, gst_amount, grand_total, round_off, fine_weight_due, notes, cash_override_reason, request_id, created_at, updated_at, created_by, updated_by';
+  'id, bill_no, customer_id, bill_date, doc_type, sale_type, status, pricing_version, subtotal, discount, additional_charges, gst_percent, gst_amount, grand_total, round_off, fine_weight_due, notes, cash_override_reason, request_id, created_at, updated_at, created_by, updated_by, reissue_of';
 const LINE_COLUMNS =
   'id, bill_id, line_no, sku_id, design_no, sku_no, category, material, purity, selling_method, gross_weight, customer_net_weight, quantity, metal_rate, labour_rate, labour_amount, piroi, other_charges, metal_amount, fine_weight_due, item_total, tax_rate, tax_amount, list_metal_rate, list_labour_rate, created_at, updated_at';
 const LINES_PER_STATEMENT = 100;
@@ -275,6 +279,135 @@ export async function writePayments(tx: Tx, o: { plan: PaymentPlan; customerId: 
   return { receipts, allocations };
 }
 
+// ------------------------------------------------------------------ pricing and writing a new bill (X1 and X10 share them)
+
+/** The part of the body of X1 that prices a bill. X10 has the same keys (its body is X1's without `customer_id`, plus the reason). */
+export type NewBillInput = Pick<CreateBillBody, 'sale_type' | 'items' | 'discount' | 'additional_charges'>;
+
+export interface PricedNewBill {
+  quote: Quote;
+  /** the grand total in paise */
+  grand: bigint;
+  /** PAN_MISSING, RATE_MISSING, RATE_STALE */
+  warnings: Set<string>;
+  /** K5: the customer is the walk-in */
+  walkin: boolean;
+  /** the locked rows of the pieces on the new bill, by id */
+  byId: Map<string, PieceLockRow>;
+  designOf: (p: PieceLockRow) => DesignRow;
+}
+
+/**
+ * X1 step 4 and the checks of step 5 that need no payment: with the customer and the pieces locked, R10 (JV_PIECE_UNAVAILABLE naming the pieces), the plain reads of the designs, the daily rates and
+ * the settings, the bill priced from the LOCKED rows and the rates sent (R1 to R8, R14) by buildQuote, the walk-in's bill (Z2) and the PAN prompt (Z3). `locked` may hold more pieces than the bill's
+ * (X10 locks the old bill's pieces and the new lines' together); only the pieces named by the items are judged and priced. Nothing is written and no number is taken.
+ */
+export async function priceNewBill(
+  tx: Tx,
+  o: { customer: CustomerLockRow; input: NewBillInput; billDate: string; locked: readonly PieceLockRow[]; confirmed: ReadonlySet<string>; freed?: ReadonlySet<string>; estimate: { prefix: string }; versions: VersionTable; version: number },
+): Promise<PricedNewBill> {
+  const locked = new Map(o.locked.map((p) => [p.id, p]));
+  o.input.items.forEach((it, i) => {
+    if (!locked.has(it.sku_id)) throw invalid(`items[${i}].sku_id`, 'is not a piece');
+  });
+  const billed = o.input.items.map((it) => locked.get(it.sku_id) as PieceLockRow);
+  const byId = new Map(billed.map((p) => [p.id, p]));
+  const bad = billed.filter((p) => !isBillable(p, o.confirmed, o.freed));
+  if (bad.length > 0) throw piecesUnavailable(bad); // K2, R10, X1 (c)
+
+  const designIds = [...new Set(billed.map((p) => p.design_id))];
+  const designs = new Map((await tx.rows<DesignRow>(designsSql(designIds.length), designIds)).map((r) => [r.id, r]));
+  const designOf = (p: PieceLockRow): DesignRow => {
+    const found = designs.get(p.design_id);
+    if (!found) throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error(`the design of the locked piece ${p.id} is not there`) });
+    return found;
+  };
+  const pieces = new Map<string, PieceRow>(
+    billed.map((p) => {
+      const dsg = designOf(p);
+      return [p.id, { id: p.id, sku_no: p.sku_no, customer_net_weight: p.customer_net_weight, labour_retail: p.labour_retail, labour_semi: p.labour_semi, labour_wholesale: p.labour_wholesale, material: dsg.material, purity: dsg.purity, selling_method: dsg.selling_method }];
+    }),
+  );
+  const rates = await readRates(tx, pieces.values(), o.billDate);
+  const inside = await readEstimate(tx);
+  if (inside.prefix !== o.estimate.prefix) throw new BusyError('series_changed', { cause: new Error('the bill prefix of settings.estimate changed after the counter row of its series was made') });
+  // R1 to R8, R14: the one function quote_bill uses, on the locked rows and the rates sent; it refuses what pricing.ts refuses (a cap, a By Weight line without labour_rate, quantity 2 on a By Weight piece, a discount above the total)
+  const quote = buildQuote({
+    saleType: o.input.sale_type,
+    billDate: o.billDate,
+    version: o.version,
+    versions: o.versions,
+    items: o.input.items,
+    discount: o.input.discount,
+    additionalCharges: o.input.additional_charges,
+    roundOff: inside.roundOff,
+    pieces,
+    rates,
+  });
+
+  const warnings = new Set<string>(quote.warnings);
+  const grand = toUnits(quote.totals.grand_total, 2);
+  const walkin = Number(o.customer.is_walkin) === 1;
+  // Z2: the walk-in's bill of the PAN threshold or more is refused (JV_NOT_ALLOWED); Z3: a named customer without a PAN is only asked for it (a prompt, never a block)
+  refuseWalkinBill({ walkin, grand });
+  if (needsPanPrompt({ walkin, pan: o.customer.pan, grand })) warnings.add('PAN_MISSING');
+  return { quote, grand, warnings, walkin, byId, designOf };
+}
+
+/**
+ * X1 step 6 up to the audit rows: the bill and its lines (with the snapshot and the list prices), the conditional UPDATE of the pieces to Sold checked against the number of lines (K2, X1 (h):
+ * defence in depth), the touch of the customer (D23) and the audit rows of mechanism (b). Everything is stamped `at`. `reissueOf` is the cancelled bill this one replaces (X10, K6), else null; `billId` is for X10, which names the bill before it writes it (the rebalance is planned with that name). The
+ * caller holds the customer lock and the locks of the pieces, has taken the number and checked everything; X10 has cancelled the old bill just before, so its pieces are In Stock here.
+ */
+export async function writeNewBill(
+  tx: Tx,
+  o: { customerId: string; billDate: string; billNo: string; priced: PricedNewBill; notes: string | null | undefined; cashReason: string | null; requestId: string; reissueOf: string | null; at: string; by: string; billId?: string },
+): Promise<{ billId: string; billRow: Row; lineRows: Row[] }> {
+  const { quote, byId, designOf } = o.priced;
+  const { at, by } = o;
+  const ids = quote.lines.map((l) => l.sku_id);
+  const billId = o.billId ?? newId();
+  await tx.run(`INSERT INTO bills (${BILL_COLUMNS}) VALUES ${marks(24)}`, [
+    billId, o.billNo, o.customerId, o.billDate, 'estimate', quote.sale_type, 'active', quote.pricing_version, quote.totals.subtotal, quote.totals.discount, quote.totals.additional_charges, '0.00', '0.00',
+    quote.totals.grand_total, quote.totals.round_off, quote.totals.fine_weight_due, o.notes ?? null, o.cashReason, o.requestId, at, at, by, by, o.reissueOf,
+  ]);
+  for (let from = 0; from < quote.lines.length; from += LINES_PER_STATEMENT) {
+    const chunk = quote.lines.slice(from, from + LINES_PER_STATEMENT);
+    const params: Param[] = [];
+    chunk.forEach((l, k) => {
+      const list = quote.list_prices[from + k];
+      const piece = byId.get(l.sku_id) as PieceLockRow;
+      const dsg = designOf(piece);
+      params.push(
+        newId(), billId, l.line_no, l.sku_id, dsg.design_no, piece.sku_no, dsg.category, l.material, l.purity, l.selling_method, piece.gross_weight, l.customer_net_weight, l.quantity, l.metal_rate, l.labour_rate,
+        l.labour_amount, l.piroi, l.other_charges, l.metal_amount, l.fine_weight_due, l.item_total, '0.00', '0.00', list.list_metal_rate, list.list_labour_rate, at, at,
+      );
+    });
+    await tx.run(`INSERT INTO bill_items (${LINE_COLUMNS}) VALUES ${chunk.map(() => marks(27)).join(', ')}`, params);
+  }
+  // K2, X1 (h): the pieces become Sold, only if each is still billable and on no bill, and the row count must equal the number of lines
+  const before = tx.auditMode === 'node' ? await readSkus(tx, ids) : [];
+  const sold = await tx.run(`UPDATE skus SET status = ?, sold_bill_id = ?, updated_at = ?, updated_by = ? WHERE id IN ${marks(ids.length)} AND status IN (?, ?, ?) AND sold_bill_id IS NULL`, [
+    'Sold', billId, at, by, ...ids, 'In Stock', 'Reserved', 'On Approval',
+  ]);
+  if (sold.affectedRows !== ids.length) {
+    throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error(`the conditional update to Sold changed ${sold.affectedRows} of ${ids.length} locked pieces`) });
+  }
+  await touchForBillWrite(tx, { customerId: o.customerId, at }); // D23: the customer's figures changed
+
+  // the rows as the tables hold them: the audit rows of mechanism (b) (the triggers of (a) write their own) and the answer
+  const billRow = await readRow(tx, 'bills', billId, false);
+  if (!billRow) throw new Error('the bill is gone after its own insert');
+  const lineRows = await tx.rows<Row>(`SELECT ${columnList('bill_items')} FROM bill_items WHERE bill_id = ? ORDER BY line_no`, [billId]);
+  await auditChange(tx, { table: 'bills', action: 'insert', before: null, after: billRow as AuditedRow });
+  for (const row of lineRows) await auditChange(tx, { table: 'bill_items', action: 'insert', before: null, after: row as AuditedRow });
+  if (tx.auditMode === 'node') {
+    const after = new Map((await readSkus(tx, ids)).map((r) => [String(r.id), r]));
+    for (const old of before) await auditChange(tx, { table: 'skus', action: 'update', before: old as AuditedRow, after: after.get(String(old.id)) as AuditedRow });
+  }
+  return { billId, billRow, lineRows };
+}
+
 function contextOf(app: FastifyInstance, request: FastifyRequest, auth: Auth) {
   if (!app.db) throw unavailableError();
   return txContextFor(app.db, request, { id: auth.user.id, role: auth.user.role });
@@ -316,41 +449,11 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     // 3. the state of the customer, read ONCE (X0 item 8). Rebalance (j) allocates from `state` and does not read again.
     const state = await readCustomerState(tx, { fn: 'create_bill', customerId: customer.id });
 
-    // 4. the pieces in one statement, R10, the plain reads, the pricing
+    // 4. the pieces in one statement, R10, the plain reads, the pricing, the walk-in's bill and the PAN prompt
     const ids = input.items.map((i) => i.sku_id);
     const locked = await lockPieces(tx, ids);
-    const byId = new Map(locked.map((p) => [p.id, p]));
-    input.items.forEach((it, i) => {
-      if (!byId.has(it.sku_id)) throw invalid(`items[${i}].sku_id`, 'is not a piece');
-    });
-    const bad = ids.filter((id) => !isBillable(byId.get(id) as PieceLockRow, confirmed)).map((id) => byId.get(id) as PieceLockRow);
-    if (bad.length > 0) throw piecesUnavailable(bad); // K2, R10, X1 (c)
-
-    const designIds = [...new Set(locked.map((p) => p.design_id))];
-    const designs = new Map((await tx.rows<DesignRow>(designsSql(designIds.length), designIds)).map((r) => [r.id, r]));
-    const designOf = (p: PieceLockRow): DesignRow => {
-      const found = designs.get(p.design_id);
-      if (!found) throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error(`the design of the locked piece ${p.id} is not there`) });
-      return found;
-    };
-    const pieces = new Map<string, PieceRow>(
-      locked.map((p) => {
-        const dsg = designOf(p);
-        return [p.id, { id: p.id, sku_no: p.sku_no, customer_net_weight: p.customer_net_weight, labour_retail: p.labour_retail, labour_semi: p.labour_semi, labour_wholesale: p.labour_wholesale, material: dsg.material, purity: dsg.purity, selling_method: dsg.selling_method }];
-      }),
-    );
-    const rates = await readRates(tx, pieces.values(), billDate);
-    const inside = await readEstimate(tx);
-    if (inside.prefix !== estimate.prefix) throw new BusyError('series_changed', { cause: new Error('the bill prefix of settings.estimate changed after the counter row of its series was made') });
-    // R1 to R8, R14: the one function quote_bill uses, on the locked rows and the rates sent; it refuses what pricing.ts refuses (a cap, a By Weight line without labour_rate, quantity 2 on a By Weight piece, a discount above the total)
-    const quote = buildQuote({ saleType: input.sale_type, billDate, version, versions, items: input.items, discount: input.discount, additionalCharges: input.additional_charges, roundOff: inside.roundOff, pieces, rates });
-
-    const warnings = new Set<string>(quote.warnings);
-    const grand = toUnits(quote.totals.grand_total, 2);
-    const walkin = Number(customer.is_walkin) === 1;
-    // Z2: the walk-in's bill of the PAN threshold or more is refused (JV_NOT_ALLOWED); Z3: a named customer without a PAN is only asked for it (a prompt, never a block)
-    refuseWalkinBill({ walkin, grand });
-    if (needsPanPrompt({ walkin, pan: customer.pan, grand })) warnings.add('PAN_MISSING');
+    const priced = await priceNewBill(tx, { customer, input, billDate, locked, confirmed, estimate, versions, version });
+    const { quote, grand, warnings, walkin } = priced;
 
     // (e) the payment rows may not exceed the grand total (JV_OVERPAYMENT, Y5) and the cash rules of section 13 must pass (JV_CASH_LIMIT, Z1, Z2); the Cash rows are dated the bill date, so that is the day
     const payments = planPayments(input.payments ?? [], grand);
@@ -362,45 +465,7 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     // 6. the writes, stamped from one reading taken after the locks (C4)
     const at = app.clock.read().timestamp;
     const by = auth.user.id;
-    const billId = newId();
-    await tx.run(`INSERT INTO bills (${BILL_COLUMNS}) VALUES ${marks(23)}`, [
-      billId, issued.no, customer.id, billDate, 'estimate', input.sale_type, 'active', quote.pricing_version, quote.totals.subtotal, quote.totals.discount, quote.totals.additional_charges, '0.00', '0.00',
-      quote.totals.grand_total, quote.totals.round_off, quote.totals.fine_weight_due, input.notes ?? null, cash.reason, c.key, at, at, by, by,
-    ]);
-    for (let from = 0; from < quote.lines.length; from += LINES_PER_STATEMENT) {
-      const chunk = quote.lines.slice(from, from + LINES_PER_STATEMENT);
-      const params: Param[] = [];
-      chunk.forEach((l, k) => {
-        const list = quote.list_prices[from + k];
-        const piece = byId.get(l.sku_id) as PieceLockRow;
-        const dsg = designOf(piece);
-        params.push(
-          newId(), billId, l.line_no, l.sku_id, dsg.design_no, piece.sku_no, dsg.category, l.material, l.purity, l.selling_method, piece.gross_weight, l.customer_net_weight, l.quantity, l.metal_rate, l.labour_rate,
-          l.labour_amount, l.piroi, l.other_charges, l.metal_amount, l.fine_weight_due, l.item_total, '0.00', '0.00', list.list_metal_rate, list.list_labour_rate, at, at,
-        );
-      });
-      await tx.run(`INSERT INTO bill_items (${LINE_COLUMNS}) VALUES ${chunk.map(() => marks(27)).join(', ')}`, params);
-    }
-    // K2, X1 (h): the pieces become Sold, only if each is still billable and on no bill, and the row count must equal the number of lines
-    const before = tx.auditMode === 'node' ? await readSkus(tx, ids) : [];
-    const sold = await tx.run(`UPDATE skus SET status = ?, sold_bill_id = ?, updated_at = ?, updated_by = ? WHERE id IN ${marks(ids.length)} AND status IN (?, ?, ?) AND sold_bill_id IS NULL`, [
-      'Sold', billId, at, by, ...ids, 'In Stock', 'Reserved', 'On Approval',
-    ]);
-    if (sold.affectedRows !== ids.length) {
-      throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error(`the conditional update to Sold changed ${sold.affectedRows} of ${ids.length} locked pieces`) });
-    }
-    await touchForBillWrite(tx, { customerId: customer.id, at }); // D23: the customer's figures changed
-
-    // the rows as the tables hold them: the audit rows of mechanism (b) (the triggers of (a) write their own) and the answer
-    const billRow = await readRow(tx, 'bills', billId, false);
-    if (!billRow) throw new Error('the bill is gone after its own insert');
-    const lineRows = await tx.rows<Row>(`SELECT ${columnList('bill_items')} FROM bill_items WHERE bill_id = ? ORDER BY line_no`, [billId]);
-    await auditChange(tx, { table: 'bills', action: 'insert', before: null, after: billRow as AuditedRow });
-    for (const row of lineRows) await auditChange(tx, { table: 'bill_items', action: 'insert', before: null, after: row as AuditedRow });
-    if (tx.auditMode === 'node') {
-      const after = new Map((await readSkus(tx, ids)).map((r) => [String(r.id), r]));
-      for (const old of before) await auditChange(tx, { table: 'skus', action: 'update', before: old as AuditedRow, after: after.get(String(old.id)) as AuditedRow });
-    }
+    const { billId, billRow, lineRows } = await writeNewBill(tx, { customerId: customer.id, billDate, billNo: issued.no, priced, notes: input.notes, cashReason: cash.reason, requestId: c.key, reissueOf: null, at, by });
 
     // (i) one `money` receipt and one allocation per payment row, dated the bill date. The new bill is handed to the rebalance with what is STILL pending on it, or an advance would be applied to
     // money the bill already has. The rows come BEFORE the rebalance (spec order i, j).
