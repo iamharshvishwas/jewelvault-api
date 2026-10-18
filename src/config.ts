@@ -28,6 +28,7 @@ const originList = z
   });
 
 // U3: the SHA-256 of the admin token, in hex (scripts/make-token.mjs prints it). The admin door exists only while this is set; it is optional, so an unset variable is a shut door and not a failed start.
+// I8: JV_JOB_TOKEN_HASH is the same kind of value for the job door (`npm run make-token -- job` prints it); the hourly tick and the jobs health route exist only while it is set.
 const tokenHash = z
   .string()
   .regex(/^[0-9a-fA-F]{64}$/)
@@ -44,6 +45,7 @@ const schema = z.object({
   DB_PASSWORD: text,
   ALLOWED_ORIGINS: originList,
   JV_ADMIN_TOKEN_HASH: tokenHash.optional(),
+  JV_JOB_TOKEN_HASH: tokenHash.optional(),
   JV_LOGIN_SALT: secretSalt.optional(),
   PORT: portNumber.optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).optional(),
@@ -61,6 +63,8 @@ export interface Config {
   readonly allowedOrigins: readonly string[];
   /** U3, O41: the SHA-256 of the admin token, 64 lower-case hex characters. Without it the admin door (/admin/v1/*) does not exist: remove the variable and the door is shut. */
   readonly adminTokenHash?: string | undefined;
+  /** I8: the SHA-256 of the job token, 64 lower-case hex characters (JV_JOB_TOKEN_HASH). The hourly tick (POST /internal/jobs/tick) and the jobs health route exist only while it is set. */
+  readonly jobTokenHash?: string | undefined;
   /** D24, U10: the secret salt of the login counter slots (JV_LOGIN_SALT, at least 16 characters). Unset: a salt made from the database password. */
   readonly loginSalt?: string | undefined;
   /** L1: which mechanism writes the audit rows (JV_AUDIT_MODE, default 'triggers'). 'node' only on a database without the audit triggers (O50). */
@@ -98,6 +102,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     logLevel: v.LOG_LEVEL ?? 'info',
     allowedOrigins: v.ALLOWED_ORIGINS,
     adminTokenHash: v.JV_ADMIN_TOKEN_HASH,
+    jobTokenHash: v.JV_JOB_TOKEN_HASH,
     loginSalt: v.JV_LOGIN_SALT,
     auditMode: v.JV_AUDIT_MODE ?? 'triggers',
     db: Object.freeze({ host: v.DB_HOST, port: v.DB_PORT, name: v.DB_NAME, user: v.DB_USER, password: v.DB_PASSWORD }),
