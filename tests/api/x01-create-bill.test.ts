@@ -861,15 +861,9 @@ describe('T-A09 bill and line inputs through create_bill: refused with JV_INVALI
     expect(codeOf(notAnObject)).toBe('JV_INVALID_INPUT');
   });
 
-  describe('the payment rows (Y2): the shape is checked here, the receipts are API22\'s', () => {
+  describe('the payment rows (Y2): the shape is checked here; the receipts, the overpayment and the cash rules are in x01-payments.test.ts (API23)', () => {
     const pay = (row: Body) => cart([base()], { payments: [row] });
-    it('a well-formed payment is refused for now (JV_NOT_ALLOWED) and nothing is saved, rather than a bill saved without its money; an empty list is no payment', async () => {
-      const before = await footprint(w);
-      const res = await postBill(w, 'owner', cart([base()], { payments: [{ mode: 'UPI', amount: '10.00', reference: 'ref-1' }] }));
-      expect(res.statusCode, res.body).toBe(409);
-      expect(codeOf(res)).toBe('JV_NOT_ALLOWED');
-      expect(body(res).error.details.field).toBe('payments');
-      expect(await footprint(w)).toEqual(before);
+    it('an empty list is no payment: the bill is saved with no receipt', async () => {
       const ok = await postBill(w, 'owner', cart([item(await piece(w, d.gold24pp, { retail: '1.00' }), { metal_rate: '1.00' })], { payments: [] }));
       expect(ok.statusCode, ok.body).toBe(201);
       expect(body(ok).receipts).toEqual([]);
@@ -878,8 +872,8 @@ describe('T-A09 bill and line inputs through create_bill: refused with JV_INVALI
       for (const mode of ['Credit', 'cash', 'Cheque', '', 5, null]) await refused(pay({ mode, amount: '10.00' }), 'payments[0].mode');
       await refused(pay({ amount: '10.00' }), 'payments[0].mode');
     });
-    it('an amount is plain money text above 0 and within the cap; a reference is at most 120 characters', async () => {
-      for (const amount of ['0', '0.00', '-1.00', '1.234', 10, '1000000000.01', '.5', ' 7.50 ']) await refused(pay({ mode: 'Cash', amount }), 'payments[0].amount');
+    it('an amount is plain money text (0 is allowed: the row is ignored) within the cap; a reference is at most 120 characters', async () => {
+      for (const amount of ['-1.00', '1.234', 10, '1000000000.01', '.5', ' 7.50 ']) await refused(pay({ mode: 'Cash', amount }), 'payments[0].amount');
       await refused(pay({ mode: 'Cash' }), 'payments[0].amount');
       await refused(pay({ mode: 'UPI', amount: '10.00', reference: 'r'.repeat(121) }), 'payments[0].reference');
       await refused(pay({ mode: 'UPI', amount: '10.00', extra: 1 }), 'payments[0].extra');
@@ -956,7 +950,7 @@ describe('T-D09 the matrix row of X1 (POST /v1/bills: owner and biller) and its 
     expect(codeOf(res)).toBe('JV_FORBIDDEN');
     expect(body(res).error.details.field).toBe('cash_override_reason');
     expect(await footprint(w)).toEqual(before);
-    // the owner may send it (the cash rules that use it are API23's); a reason under 10 characters or over 500 is refused for everybody
+    // the owner may send it (stored only when the cash rule needs it: x01-payments.test.ts); a reason under 10 characters or over 500 is refused for everybody
     const ok = await postBill(w, 'owner', cart, key);
     expect(ok.statusCode, ok.body).toBe(201);
     await refused(billBody(c, 'Retail', [item(await piece(w, d.gold24pp, { retail: '10.00' }), { metal_rate: '10.00' })], { cash_override_reason: 'too short' }), 'cash_override_reason');

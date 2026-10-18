@@ -37,7 +37,7 @@ import {
 
 // API22, X2 record_payment (POST /v1/customers/:id/payments; X2, Y1, Y3, Y4, Y5, K5, D13, D14, D23): the receipt, its allocation by Y3 (the named bill first, then the oldest), the remainder kept as an
 // advance and reported, the walk-in's rules, the repeat-safety of the key, and the clauses of T-A09, T-D14 (in x02-audit.test.ts) and T-D09 for this function. The two-session test T-C09 is in
-// x02-two-sessions.test.ts. The cash rules of section 13 are API23's: none is tested here.
+// x02-two-sessions.test.ts. The cash rules of section 13 (API23) are in x02-cash-rules.test.ts.
 //
 // The world is the scratch database of the other money tests: the real routes, the seeds (the walk-in customer among them), a clock fixed at 17 Oct 2026 10:00 UTC (15:30 in Kolkata, so "today" is
 // 2026-10-17). A customer's history is typed in by SQL (the way the import writes it), with stamps earlier than the API clock's. Expected figures are written in the test, never read back from the

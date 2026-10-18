@@ -1,16 +1,19 @@
-// X1 create_bill (POST /v1/bills, 201 {bill, items, receipts, allocations, warnings, advance_applied}), K2, R1 to R8, R10, R13, R14, Y2, Y8, Z3, L3, L4, L5, X0, T-A03, T-A06, T-A10, T-A15, T-A17, T-C04 to T-C06, T-C08.
+// X1 create_bill (POST /v1/bills, 201 {bill, items, receipts, allocations, warnings, advance_applied}), K2, R1 to R8, R10, R13, R14, Y2, Y5, Y6, Y8, Z1 to Z3, K5, L3, L4, L5, X0, T-A03, T-A06, T-A10, T-A12, T-A15, T-A17, T-B01, T-B03, T-B07, T-B17, T-B23, T-C04 to T-C06, T-C08.
 //
 //   body     customer_id, sale_type, bill_date (absent or null: today), items [sku_id, metal_rate, labour_rate, piroi, other_charges, quantity], discount, additional_charges, notes, payments
-//            [mode, amount, reference], confirm_held [piece ids], cash_override_reason. The items, the sale type, the date and the two charges are the body of quote_bill (X7): ONE definition, so a quote and
+//            [mode, amount, reference] (a row of amount 0 is ignored), confirm_held [piece ids], cash_override_reason. The items, the sale type, the date and the two charges are the body of quote_bill (X7): ONE definition, so a quote and
 //            a bill are asked in the same words. A weight is never an input: the net weight, the material, the purity and the method of a line are the PIECE's, read under the lock.
 //   header   Idempotency-Key (a UUID the screen makes once for each save and reuses for a retry).
 //   answer   201 {bill, items, receipts, allocations, warnings, advance_applied}: `bill` and `items` are the rows in the wire format of the sync read of the caller's role (so the cache applies them as
 //            it applies a polled row), `warnings` holds PAN_MISSING, RATE_MISSING and RATE_STALE (unique, sorted). A repeat of the key answers the same body and status with `Idempotent-Replay: true`.
 //
-// WHAT IS NOT HERE YET (the plan's next tasks call into this function at the points marked (e) and (i) below): the payment rows and their receipts and allocations (API22), the overpayment and cash
-// rules (API22, API23), the walk-in's PAN refusal of Z2 (API23). Until then the function accepts an EMPTY payment list: a non-empty one is refused (JV_NOT_ALLOWED) rather than saved without its
-// money. The Credit mode does not exist (D13, Y2): it is refused with the other words that are not one of the five modes. The rebalance of Y6 (j) is built (API21, src/domain/rebalance.ts): an advance
-// the customer holds is applied to their oldest pending bills, the new bill among them, and `advance_applied` says how much of it went to THIS bill.
+// THE PAYMENT ROWS (X1 (e) and (i), API23). `payments` are the money received with the bill: each row of an amount above 0 is one `money` receipt and one allocation to THIS bill, dated the bill date;
+// a row of amount 0 is ignored. Together they may not exceed the grand total (JV_OVERPAYMENT, Y5). The Credit mode does not exist (D13, Y2): it is refused with the other words that are not one of the
+// five modes. The cash rules of section 13 (src/domain/cashRules.ts) judge the Cash rows before the number is taken: a named customer's cash of the bill date reaching the limit is JV_CASH_LIMIT
+// unless the owner gives `cash_override_reason`, which is then stored on the bill (Z1); for the walk-in a bill of the PAN threshold or more is refused (JV_NOT_ALLOWED) and so is a single cash
+// payment at the limit (Z2); a named customer without a PAN gets the warning PAN_MISSING at the threshold (Z3). The rebalance of Y6 (j) comes AFTER the payment rows (API21,
+// src/domain/rebalance.ts): an advance the customer holds is applied to what the rows leave pending, the new bill among the oldest, and `advance_applied` says how much of it went to THIS bill.
+// `planPayments` and `writePayments` are exported for X10, which makes the new payments of a re-issue by the rules of X1.
 //
 // ORDER OF WORK (X1 and X0). Before the transaction: one reading of the API clock (`day`: the business date for Y8 and for a bill_date left out, and the year of the number series, S5), the prefix of the bill
 // numbers (settings.estimate, NODE-DESIGN 5.5), and the counter row of the series (ensureSeries: a series made inside a transaction can deadlock, spike F3). Then, in one withTx:
@@ -19,11 +22,13 @@
 //   3. the state of the customer, read once (X0 item 8, `create_bill.after_read` of the test build: the hook is a wrapper of the test build, not a line of this file); the rebalance (j) allocates
 //      from it and reads nothing again;
 //   4. the pieces by ONE statement, `... WHERE id IN (...) ORDER BY id FOR UPDATE` (X0 item 5), R10 (JV_PIECE_UNAVAILABLE naming the pieces), the plain reads of the designs, the daily rates and the settings,
-//      the bill priced from the LOCKED rows and the rates sent (R1 to R8, R14) by buildQuote, the one function quote_bill also uses, with the bill's pricing version (R13);
+//      the bill priced from the LOCKED rows and the rates sent (R1 to R8, R14) by buildQuote, the one function quote_bill also uses, with the bill's pricing version (R13); then the walk-in's bill
+//      (Z2), the overpayment (Y5) and the cash rules with their plain read of the day's cash (Z1, Z2);
 //   5. the number counter, LAST (X0 item 6), after every check;
 //   6. the writes, all stamped from one reading of the API clock taken after the locks (C4: no row is stamped long before its commit): the bill, its lines with the snapshot and the list prices, the
-//      conditional UPDATE of the pieces to Sold checked against the number of lines (K2, X1 (h): defence in depth), the touch of the customer (D23), the audit rows of mechanism (b) (L1), and
-//      last the rebalance (j: Y6, the advance goes to the oldest pending bills; its allocations and touches carry the same stamp), so that the audit log reads in the order of the writes in both mechanisms;
+//      conditional UPDATE of the pieces to Sold checked against the number of lines (K2, X1 (h): defence in depth), the touch of the customer (D23), the audit rows of mechanism (b) (L1), the
+//      receipts of the payment rows and their allocations (i), and last the rebalance (j: Y6, the advance goes to the oldest pending bills; its allocations and touches carry the same stamp), so that
+//      the audit log reads in the order of the writes in both mechanisms;
 //   7. the result is stored in the claim row, in the same transaction.
 // A failure anywhere rolls everything back, the claim and the counter included: no piece is Sold and no number is used.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -37,8 +42,9 @@ import { readCustomerState } from '../db/state.js';
 import type { Param } from '../db/stmt.js';
 import { touchForBillWrite } from '../db/touch.js';
 import { type Tx, txContextFor, withRead, withTx } from '../db/tx.js';
-import { CURRENT_PRICING_VERSION, parseRupees } from '../domain/pricing.js';
-import { fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
+import { applyCashRules, needsPanPrompt, refuseWalkinBill } from '../domain/cashRules.js';
+import { CURRENT_PRICING_VERSION } from '../domain/pricing.js';
+import { type AllocationRow, fromUnits, insertAllocations, rebalance, toUnits } from '../domain/rebalance.js';
 import { type Row, invalid, readRow, wireRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { BusyError, JvError, unavailableError } from '../errors.js';
@@ -46,6 +52,7 @@ import { limits } from '../limits.js';
 import { columnsOfTable, mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
+import { insertReceipt } from './receiptWrite.js';
 import { type PieceRow, PRICING_VERSIONS, type VersionTable, assertEachPieceOnce, buildQuote, checkBillDate, quoteBody, readEstimate, readRates } from './x07QuoteBill.js';
 
 // ------------------------------------------------------------------ the body
@@ -58,6 +65,7 @@ export const MAX_PAYMENTS = 10;
 export const REFERENCE_MAX = 120;
 const REASON_MIN = 10;
 const REASON_MAX = 500;
+const MONEY = 2;
 
 const modeMessage = `must be one of ${PAYMENT_MODES.join(', ')}; there is no Credit: a bill that is not paid in full simply has no receipt for the rest`;
 const reasonMessage = `must be ${REASON_MIN} to ${REASON_MAX} characters`;
@@ -70,9 +78,10 @@ export const paymentAmount = wire.amount.check((ctx) => {
   if (!/[1-9]/.test(ctx.value)) ctx.issues.push({ code: 'custom', message: 'must be above 0', input: ctx.value });
 });
 
+/** A payment row of a bill: a row of amount 0 is well-formed and ignored (T-B03), so the amount is plain money text, not `paymentAmount`. */
 const paymentRow = wire.strictObject({
   mode: paymentMode,
-  amount: paymentAmount,
+  amount: wire.amount,
   reference: (f.optionalText(REFERENCE_MAX).schema as z.ZodType<string | null>).optional(),
 });
 
@@ -100,7 +109,7 @@ export const createBillBody = wire.strictObject({
     .array(wire.uuid, { error: (issue) => (issue.input === undefined ? 'is required' : confirmMessage) })
     .max(limits.maxLines, confirmMessage)
     .optional(),
-  /** Z1: the owner's right (FIELD_RIGHTS). The cash rules that use it are API23's; a biller who sends it is refused after the claim. */
+  /** Z1: the owner's right (FIELD_RIGHTS), stored on the bill when the cash rule needed it; a biller who sends it is refused after the claim. */
   cash_override_reason: cashOverrideReason,
 });
 export type CreateBillBody = z.output<typeof createBillBody>;
@@ -110,9 +119,9 @@ export type CreateBillBody = z.output<typeof createBillBody>;
 export interface CreateBillResult {
   bill: Row;
   items: Row[];
-  /** the money receipts of the explicit payments (API22) */
+  /** the money receipts of the payment rows, in the order sent (rows of amount 0 are left out) */
   receipts: Row[];
-  /** the allocations the call made: those of the explicit payments (API22) and those of the rebalance (the advance applied to the oldest pending bills, this bill among them) */
+  /** the allocations the call made: those of the payment rows (in order) and those of the rebalance (the advance applied to the oldest pending bills, this bill among them) */
   allocations: Row[];
   warnings: string[];
   /** money from an advance the customer held that the rebalance applied to THIS bill ("Advance adjusted", O23), money text; "0.00" when there was none */
@@ -173,12 +182,98 @@ const designsSql = (n: number) =>
   `SELECT d.id, d.design_no, d.material, d.purity, d.selling_method, c.name AS category FROM designs d JOIN categories c ON c.id = d.category_id WHERE d.id IN ${marks(n)}`;
 
 const BILL_COLUMNS =
-  'id, bill_no, customer_id, bill_date, doc_type, sale_type, status, pricing_version, subtotal, discount, additional_charges, gst_percent, gst_amount, grand_total, round_off, fine_weight_due, notes, request_id, created_at, updated_at, created_by, updated_by';
+  'id, bill_no, customer_id, bill_date, doc_type, sale_type, status, pricing_version, subtotal, discount, additional_charges, gst_percent, gst_amount, grand_total, round_off, fine_weight_due, notes, cash_override_reason, request_id, created_at, updated_at, created_by, updated_by';
 const LINE_COLUMNS =
   'id, bill_id, line_no, sku_id, design_no, sku_no, category, material, purity, selling_method, gross_weight, customer_net_weight, quantity, metal_rate, labour_rate, labour_amount, piroi, other_charges, metal_amount, fine_weight_due, item_total, tax_rate, tax_amount, list_metal_rate, list_labour_rate, created_at, updated_at';
 const LINES_PER_STATEMENT = 100;
 
 const readSkus = (tx: Tx, ids: readonly string[]): Promise<Row[]> => tx.rows<Row>(`SELECT ${columnList('skus')} FROM skus WHERE id IN ${marks(ids.length)}`, ids);
+
+// ------------------------------------------------------------------ the payment rows (X1 (e) and (i))
+
+/** One payment row that will be written: a mode, an amount above 0 in paise, a reference. */
+export interface PaymentRowPlan {
+  mode: string;
+  amount: bigint;
+  reference: string | null;
+}
+
+/** The rows that count, and what they add up to: all rows and the Cash rows alone (the cash rules judge the latter), in paise. */
+export interface PaymentPlan {
+  rows: PaymentRowPlan[];
+  total: bigint;
+  cash: bigint;
+}
+
+/**
+ * X1 (e), Y5: the payment rows as they will be written. A row of amount 0 is ignored; the rest may not add up to more than the bill's grand total (`alreadyPaid` is what the bill has received
+ * before these rows: X10 passes the money carried over from the cancelled bill), else JV_OVERPAYMENT and nothing has been written. Amounts are exact: text to paise, no float.
+ */
+export function planPayments(payments: readonly { mode: string; amount: string; reference?: string | null }[], grand: bigint, alreadyPaid: bigint = 0n): PaymentPlan {
+  const rows: PaymentRowPlan[] = [];
+  let total = 0n;
+  let cash = 0n;
+  for (const p of payments) {
+    const amount = toUnits(p.amount, MONEY);
+    if (amount <= 0n) continue;
+    rows.push({ mode: p.mode, amount, reference: p.reference ?? null });
+    total += amount;
+    if (p.mode === 'Cash') cash += amount;
+  }
+  if (alreadyPaid + total > grand) {
+    throw new JvError('JV_OVERPAYMENT', 'The payments are more than the total of the bill. Nothing was saved.', {
+      details: { field: 'payments', grand_total: fromUnits(grand, MONEY), payments_total: fromUnits(total, MONEY) },
+    });
+  }
+  return { rows, total, cash };
+}
+
+export interface WrittenPayments {
+  /** the receipts as the table holds them, in the order of the rows */
+  receipts: Row[];
+  /** one allocation to the bill for each receipt, in the same order */
+  allocations: AllocationRow[];
+}
+
+/**
+ * X1 (i): one `money` receipt and one allocation to the new bill for each row of the plan, dated the bill date (the customer's lock is held and the bill exists). The receipts are inserted and audited
+ * first, then the allocations in one statement, so that the audit log reads the same in both mechanisms of L1. The cash override reason of Z1 is on the bill, not on these receipts. The touch of
+ * the customer was made with the bill (D23) and the bill is new, so nothing else needs a stamp.
+ */
+export async function writePayments(tx: Tx, o: { plan: PaymentPlan; customerId: string; billId: string; billDate: string; at: string; by: string }): Promise<WrittenPayments> {
+  const receipts: Row[] = [];
+  const allocations: AllocationRow[] = [];
+  for (const p of o.plan.rows) {
+    const receipt = await insertReceipt(tx, {
+      customerId: o.customerId,
+      kind: 'money',
+      mode: p.mode,
+      amount: fromUnits(p.amount, MONEY),
+      fineGrams: '0.000',
+      silverRate: null,
+      paidOn: o.billDate,
+      reference: p.reference,
+      notes: null,
+      cashOverrideReason: null,
+      at: o.at,
+      by: o.by,
+    });
+    receipts.push(receipt);
+    allocations.push({
+      id: newId(),
+      receipt_id: String(receipt.id),
+      bill_id: o.billId,
+      customer_id: o.customerId,
+      amount: fromUnits(p.amount, MONEY),
+      fine_grams: '0.000',
+      released_at: null,
+      created_at: o.at,
+      updated_at: o.at,
+    });
+  }
+  await insertAllocations(tx, allocations);
+  return { receipts, allocations };
+}
 
 function contextOf(app: FastifyInstance, request: FastifyRequest, auth: Auth) {
   if (!app.db) throw unavailableError();
@@ -215,10 +310,6 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     const billDate = checkBillDate(input.bill_date, day.date, role); // Y8
     assertEachPieceOnce(input.items); // X1 (a): a piece twice is JV_INVALID_INPUT, never the duplicate-key error of UNIQUE (bill_id, sku_id)
     const confirmed = confirmedPieces(input);
-    if ((input.payments ?? []).length > 0) {
-      // (i) and (e) belong to API22 and API23: money is never silently dropped, so a bill that names payments is refused until they are built
-      throw new JvError('JV_NOT_ALLOWED', 'Payments are not accepted with a bill yet.', { details: { field: 'payments' } });
-    }
     if (!customer) throw invalid('customer_id', 'is not a customer');
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before billing.', { details: { customer_id: customer.id } });
 
@@ -255,11 +346,15 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     const quote = buildQuote({ saleType: input.sale_type, billDate, version, versions, items: input.items, discount: input.discount, additionalCharges: input.additional_charges, roundOff: inside.roundOff, pieces, rates });
 
     const warnings = new Set<string>(quote.warnings);
-    const grandPaise = parseRupees(quote.totals.grand_total);
-    // Z3: a prompt, never a block. The walk-in never holds a PAN (D10); its refusal at the threshold is Z2 and API23's.
-    if (Number(customer.is_walkin) !== 1 && customer.pan === null && grandPaise >= limits.panThreshold * 100) warnings.add('PAN_MISSING');
+    const grand = toUnits(quote.totals.grand_total, 2);
+    const walkin = Number(customer.is_walkin) === 1;
+    // Z2: the walk-in's bill of the PAN threshold or more is refused (JV_NOT_ALLOWED); Z3: a named customer without a PAN is only asked for it (a prompt, never a block)
+    refuseWalkinBill({ walkin, grand });
+    if (needsPanPrompt({ walkin, pan: customer.pan, grand })) warnings.add('PAN_MISSING');
 
-    // (e) the explicit payments must not exceed the grand total (JV_OVERPAYMENT) and the cash rules of section 13 must pass (JV_CASH_LIMIT): API22, API23, here, before the counter.
+    // (e) the payment rows may not exceed the grand total (JV_OVERPAYMENT, Y5) and the cash rules of section 13 must pass (JV_CASH_LIMIT, Z1, Z2); the Cash rows are dated the bill date, so that is the day
+    const payments = planPayments(input.payments ?? [], grand);
+    const cash = await applyCashRules(tx, { customerId: customer.id, walkin, day: billDate, cash: payments.cash, role, reason: input.cash_override_reason });
 
     // 5. the number, last (X0 item 6)
     const issued = await nextBillNo(tx, series);
@@ -268,9 +363,9 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     const at = app.clock.read().timestamp;
     const by = auth.user.id;
     const billId = newId();
-    await tx.run(`INSERT INTO bills (${BILL_COLUMNS}) VALUES ${marks(22)}`, [
+    await tx.run(`INSERT INTO bills (${BILL_COLUMNS}) VALUES ${marks(23)}`, [
       billId, issued.no, customer.id, billDate, 'estimate', input.sale_type, 'active', quote.pricing_version, quote.totals.subtotal, quote.totals.discount, quote.totals.additional_charges, '0.00', '0.00',
-      quote.totals.grand_total, quote.totals.round_off, quote.totals.fine_weight_due, input.notes ?? null, c.key, at, at, by, by,
+      quote.totals.grand_total, quote.totals.round_off, quote.totals.fine_weight_due, input.notes ?? null, cash.reason, c.key, at, at, by, by,
     ]);
     for (let from = 0; from < quote.lines.length; from += LINES_PER_STATEMENT) {
       const chunk = quote.lines.slice(from, from + LINES_PER_STATEMENT);
@@ -307,25 +402,25 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
       for (const old of before) await auditChange(tx, { table: 'skus', action: 'update', before: old as AuditedRow, after: after.get(String(old.id)) as AuditedRow });
     }
 
-    // (i) API22: one `money` receipt and one allocation per payment row, dated the bill date. API22 sets `paidNow` to the sum of those allocations (paise) and adds their rows to the answer: the new bill
-    // is handed to the rebalance with what is STILL pending on it, or an advance would be applied to money the bill already has.
-    const paidNow = 0n;
+    // (i) one `money` receipt and one allocation per payment row, dated the bill date. The new bill is handed to the rebalance with what is STILL pending on it, or an advance would be applied to
+    // money the bill already has. The rows come BEFORE the rebalance (spec order i, j).
+    const written = await writePayments(tx, { plan: payments, customerId: customer.id, billId, billDate, at, by });
     // (j) Y6: rebalance the customer, which applies any advance the customer holds, from `state` (read before the bill existed, so the bill is handed over: it is placed among the pending bills by
     // its date and its stamp). The walk-in is never rebalanced (K5).
     const rebalanced = await rebalance(tx, {
       customerId: customer.id,
-      walkin: Number(customer.is_walkin) === 1,
+      walkin,
       state,
       at,
-      newBills: [{ id: billId, bill_date: billDate, created_at: at, pending: fromUnits(toUnits(quote.totals.grand_total, 2) - paidNow, 2), fine_pending: quote.totals.fine_weight_due }],
+      newBills: [{ id: billId, bill_date: billDate, created_at: at, pending: fromUnits(grand - payments.total, 2), fine_pending: quote.totals.fine_weight_due }],
     });
     const adjusted = rebalanced.allocations.filter((a) => a.bill_id === billId).reduce((sum, a) => sum + toUnits(a.amount, 2), 0n);
 
     const value: CreateBillResult = {
       bill: wireRow('bills', role, billRow),
       items: lineRows.map((r) => wireRow('bill_items', role, r)),
-      receipts: [],
-      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', role, { ...a })),
+      receipts: written.receipts.map((r) => wireRow('receipts', role, r)),
+      allocations: [...written.allocations, ...rebalanced.allocations].map((a) => wireRow('receipt_allocations', role, { ...a })),
       warnings: [...warnings].sort(),
       advance_applied: fromUnits(adjusted, 2),
     };

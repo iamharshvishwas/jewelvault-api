@@ -1,4 +1,4 @@
-// X2 record_payment (POST /v1/customers/:id/payments, 201 {receipt, allocations, advance_remaining}), X2, Y1, Y3, Y4, Y5, Y8, K5, D13, D14, D23, L5, X0, T-B01, T-B04, T-B05, T-B06, T-B17, T-B22, T-C09.
+// X2 record_payment (POST /v1/customers/:id/payments, 201 {receipt, allocations, advance_remaining}), X2, Y1, Y3, Y4, Y5, Y8, Z1, Z2, K5, D13, D14, D23, L5, X0, T-B01, T-B04, T-B05, T-B06, T-B17, T-B22, T-B23, T-C09.
 //
 //   path     the customer (`p_customer_id`): a lower-case UUID, else 422 on `id`; no such customer is 404 JV_NOT_FOUND.
 //   body     amount (a text above 0, at most 2 decimals, at most 1,000,000,000), mode (Cash, UPI, Card, Bank Transfer, Other: there is no Credit, D13, Y2), paid_on (absent or null: today; Y8: a biller
@@ -9,8 +9,9 @@
 //            `advance_remaining` is what is left of THIS payment after those allocations: money received that is neither allocated to a bill nor handed back (Y5), "0.00" when it all went to bills.
 //            A repeat of the key answers the same body and status with `Idempotent-Replay: true`.
 //
-// WHAT IS NOT HERE (API23): the cash rules of section 13 (the cash limit, `JV_CASH_LIMIT`, the owner's override stored on the receipt). `cash_override_reason` is accepted from the owner, refused for a
-// biller (JV_FORBIDDEN, T-D09), and NOT stored yet; the marked place below is where API23 puts the rule, before the first write.
+// THE CASH RULES (section 13, Z1, Z2, API23): a `Cash` payment that would make the customer's cash of the day (`paid_on`) reach the limit raises JV_CASH_LIMIT unless the owner gives a
+// `cash_override_reason`, which is stored on the receipt; for the walk-in a single Cash payment at the limit raises it with 'Select or create the customer' (src/domain/cashRules.ts). A biller who
+// sends a reason is refused (JV_FORBIDDEN, T-D09). The rules run before the first write.
 //
 // ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a role not on the row, an invalid body); then the key is read from the header (missing
 // or not a UUID: 422 naming the header, nothing claimed) and ONE transaction runs:
@@ -20,7 +21,8 @@
 //      its date is the business day for Y8, its stamp is every stamp of the call (C4: taken after the lock, so a payment that waited is stamped after the one it waited for);
 //   3. the state of the customer, read ONCE (X0 item 8, `x02.after_read` of the test build: the hook is a wrapper of the test build, not a line of this file); everything below allocates from it and
 //      reads nothing again: the named bill must be one of its open bills with money pending (Y3, else JV_INVALID_INPUT), and the walk-in's rules of K5 are decided on it;
-//   4. no number is taken (a receipt has none) and no piece is locked; the writes, all stamped `now`: the receipt, its audit row (L1 b), the payment's own allocation by Y3 (planRebalance with the
+//   4. no number is taken (a receipt has none) and no piece is locked; the cash rules (Z1, Z2) are decided here, on a plain read of the day's cash, before the first write; the writes, all stamped `now`:
+//      the receipt, its audit row (L1 b), the payment's own allocation by Y3 (planRebalance with the
 //      one receipt: the named bill first, then the oldest, each taking the smaller of what is left and what is pending), the touches of D23 (the bills that received money and the customer,
 //      also when nothing was allocated: the advance moved the customer's figures), then the rebalance of Y6 on the state as the payment left it (the walk-in is never rebalanced, K5), which applies
 //      any older advance to what is still pending: with the books in the state I10 leaves them (an advance only when nothing is pending) it applies nothing and sends nothing;
@@ -28,21 +30,22 @@
 // A failure anywhere rolls everything back, the claim included.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { type AuditedRow, auditChange } from '../db/audit.js';
 import { claim, idempotencyKey, markReplay, storeResult } from '../db/idempotency.js';
 import { newId } from '../db/ids.js';
 import { lockCustomer } from '../db/locks.js';
 import { type CustomerState, type OpenBill, readCustomerState } from '../db/state.js';
 import { touchForReceiptWrite } from '../db/touch.js';
 import { txContextFor, withTx } from '../db/tx.js';
+import { applyCashRules } from '../domain/cashRules.js';
 import { type AllocationRow, fromUnits, insertAllocations, planRebalance, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, invalid, notFound, readRow, wireRow } from '../edit/engine.js';
+import { type Row, invalid, notFound, wireRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { JvError, unavailableError } from '../errors.js';
 import { mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
 import { REFERENCE_MAX, cashOverrideReason, paymentAmount, paymentMode } from './x01CreateBill.js';
+import { insertReceipt } from './receiptWrite.js';
 import { checkBillDate } from './x07QuoteBill.js';
 
 // ------------------------------------------------------------------ the body
@@ -55,7 +58,7 @@ export const recordPaymentBody = wire.strictObject({
   notes: (f.optionalText(f.TEXT_MAX).schema as z.ZodType<string | null>).optional(),
   /** Y3: the bill to pay first. It must be an active bill of this customer with money pending, else JV_INVALID_INPUT. */
   bill_id: wire.uuid.nullish(),
-  /** Z1: the owner's right (FIELD_RIGHTS). The cash rules that use it are API23's; a biller who sends it is refused after the claim. */
+  /** Z1: the owner's right (FIELD_RIGHTS), stored on the receipt when a Cash payment needed it; a biller who sends it is refused after the claim. */
   cash_override_reason: cashOverrideReason,
 });
 export type RecordPaymentBody = z.output<typeof recordPaymentBody>;
@@ -74,9 +77,6 @@ const ACTION = 'fn:record_payment';
 const ROUTE_NAME = 'POST /v1/customers/:id/payments';
 const MONEY = 2;
 const FINE = 3;
-
-const RECEIPT_INSERT =
-  'INSERT INTO receipts (id, customer_id, kind, mode, amount, fine_grams, silver_rate, paid_on, reference, notes, is_opening, cash_override_reason, status, created_at, updated_at, created_by, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
 
 function contextOf(app: FastifyInstance, request: FastifyRequest, auth: Auth) {
   if (!app.db) throw unavailableError();
@@ -149,16 +149,26 @@ export async function recordPayment(
       }
     }
 
-    // (cash rules of section 13, Z1: JV_CASH_LIMIT, the owner's override stored on the receipt: API23, here, before the first write)
+    // The cash rules of section 13 (Z1, Z2), before the first write: only a Cash payment is judged; the day is the date of the payment; the reason comes back only when the override was needed.
+    const cashRules = await applyCashRules(tx, { customerId: customer.id, walkin, day: paidOn, cash: input.mode === 'Cash' ? amount : 0n, role, reason: input.cash_override_reason });
 
     // 4. the writes. The receipt (a money receipt: kind, no silver, not an opening advance), its audit row, then the payment's own allocation by Y3.
     const receiptId = newId();
-    await tx.run(RECEIPT_INSERT, [
-      receiptId, customer.id, 'money', input.mode, fromUnits(amount, MONEY), '0.000', null, paidOn, input.reference ?? null, input.notes ?? null, 0, null, 'active', at, at, by, by,
-    ]);
-    const receiptRow = await readRow(tx, 'receipts', receiptId, false);
-    if (!receiptRow) throw new Error('the receipt is gone after its own insert');
-    await auditChange(tx, { table: 'receipts', action: 'insert', before: null, after: receiptRow as AuditedRow });
+    const receiptRow = await insertReceipt(tx, {
+      id: receiptId,
+      customerId: customer.id,
+      kind: 'money',
+      mode: input.mode,
+      amount: fromUnits(amount, MONEY),
+      fineGrams: '0.000',
+      silverRate: null,
+      paidOn,
+      reference: input.reference ?? null,
+      notes: input.notes ?? null,
+      cashOverrideReason: cashRules.reason,
+      at,
+      by,
+    });
 
     const plan = planRebalance(
       {

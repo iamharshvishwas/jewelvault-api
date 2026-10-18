@@ -92,6 +92,17 @@ for (const mode of MODES) {
       expect(log.slice(1).map((x) => x.row_id)).toEqual(r.allocations.map((x) => x.id));
     });
 
+    it('the owner\'s reason for Cash over the limit is a column of the receipt, so the audit row of the receipt holds it (Z1, API23)', async () => {
+      const c = await addCustomer(w);
+      const reason = 'wedding party, six payers';
+      const res = await pay(w, 'owner', c, { amount: '200000.00', mode: 'Cash', cash_override_reason: reason });
+      const r = await paid(res);
+      expect(r.receipt.cash_override_reason).toBe(reason);
+      const log = await auditOf(w, requestIdOf(res));
+      expect(log.map((x) => [x.table_name, x.action])).toEqual([['receipts', 'insert']]);
+      expect(log[0].new_row).toMatchObject({ id: r.receipt.id, mode: 'Cash', amount: '200000.00', cash_override_reason: reason });
+    });
+
     it('a replay, a refused call and a failed call write no audit row at all', async () => {
       const c = await addCustomer(w);
       const bill = await addBill(w, c, '100.00', '2026-10-10');

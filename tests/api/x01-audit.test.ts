@@ -104,6 +104,35 @@ for (const mode of MODES) {
       shapes[mode.name].receipt_allocations = Object.keys(log.find((x) => x.table_name === 'receipt_allocations')!.new_row);
     });
 
+    it('a bill with a Cash row, a UPI row and the owner\'s reason writes one audit row for each receipt and each allocation after the pieces; the bill\'s row holds the reason (Z1, API23)', async () => {
+      const c = await addCustomer(w);
+      const p = await piece(w, d.gold24pp, { retail: '300000.00' });
+      const reason = 'wedding party, six payers';
+      const res = await postBill(
+        w,
+        'owner',
+        billBody(c, 'Retail', [item(p, { metal_rate: '300000.00' })], { payments: [{ mode: 'Cash', amount: '200000.00' }, { mode: 'UPI', amount: '1000.00', reference: 'U-1' }], cash_override_reason: reason }),
+      );
+      const r = await saved(res);
+      expect(r.receipts).toHaveLength(2);
+      const log = await auditOf(w, requestIdOf(res));
+      expect(log.map((x) => x.table_name), 'the log reads in the order of the writes, the same in both mechanisms').toEqual([
+        'bills', 'bill_items', 'skus', 'receipts', 'receipts', 'receipt_allocations', 'receipt_allocations',
+      ]);
+      expect(log.find((x) => x.table_name === 'bills')!.new_row.cash_override_reason, 'the reason is audited with the bill').toBe(reason);
+      const audited = log.filter((x) => x.table_name === 'receipts');
+      expect(audited.map((x) => x.row_id)).toEqual(r.receipts.map((x) => x.id));
+      expect(audited.map((x) => [x.new_row.mode, x.new_row.amount, x.new_row.paid_on, x.new_row.cash_override_reason])).toEqual([['Cash', '200000.00', '2026-10-17', null], ['UPI', '1000.00', '2026-10-17', null]]);
+      expect(log.filter((x) => x.table_name === 'receipt_allocations').map((x) => [x.new_row.receipt_id, x.new_row.bill_id, x.new_row.amount])).toEqual(
+        r.receipts.map((x) => [x.id, r.bill.id, x.amount]),
+      );
+      for (const x of log) {
+        expect(x.actor).toBe(w.world.fixtures.owner.userId);
+        expect(x.actor_role).toBe('owner');
+      }
+      shapes[mode.name].receipts = Object.keys(audited[0].new_row);
+    });
+
     it('a replay, a refused call and a failed call write no audit row at all', async () => {
       const c = await addCustomer(w);
       const [p, q] = [await piece(w, d.gold24pp, { retail: '10.00' }), await piece(w, d.gold24pp, { retail: '10.00', status: 'Repair' })];
@@ -138,7 +167,7 @@ for (const mode of MODES) {
 
 describe('T-D14 the two mechanisms write rows of the same shape', () => {
   it('the audited columns of the bill, of a line and of a piece are the same list in both', () => {
-    for (const table of ['bills', 'bill_items', 'skus', 'receipt_allocations']) {
+    for (const table of ['bills', 'bill_items', 'skus', 'receipts', 'receipt_allocations']) {
       expect(shapes['node writer (L1 b)']?.[table], table).toBeDefined();
       expect(shapes['node writer (L1 b)'][table]).toEqual(shapes['triggers (L1 a)'][table]);
     }
