@@ -1,0 +1,33 @@
+task,plan_days,agent_minutes,orchestrator_minutes,kind,agent_minutes_per_plan_day,note
+API01,1.0,16.8,,pure,16.8,
+API06,0.9,13.3,,pure,14.8,
+API02,0.9,25.1,,pure,27.9,
+API03,1.3,34.9,,money,26.8,
+API14,1.0,30.0,,money,30.0,
+API04,1.2,36.0,,pure,30.0,
+API05,1.3,29.5,,pure,22.7,
+API10,0.8,34.3,,pure,42.9,
+API07,0.9,43.6,,pure,48.4,
+API18,1.3,30.5,,pure,23.5,
+API09,1.2,51.9,,pure,43.2,
+API11,1.5,57.7,,pure,38.5,
+WEB00,0.8,24.4,,web,30.5,
+API12,1.0,32.7,,pure,32.7,
+API13,1.0,35.2,,pure,35.2,
+WEB01,1.0,22.5,,web,22.5,
+WEB02,1.3,28.4,,web,21.8,
+API13b,0.7,30.8,,pure,44.0,
+API15,1.3,60.7,,money,46.7,
+WEB03,1.2,40.8,,web,34.0,
+API19,0.7,34.0,,money,48.6,
+API16,1.2,46.5,,money,38.8,two runs in the log (34.5 and 46.5 min); the longer one is shown
+WEB04,1.2,58.3,,web,48.6,
+API20,1.4,54.6,,money,39.0,two runs in the log (36.0 and 54.6 min); the longer one is shown
+API17,1.4,55.1,,pure,39.4,
+WEB05,1.2,57.9,,web,48.2,
+API21,0.9,33.3,,money,37.0,
+API13c,0.3,31.9,,pure,106.3,
+API22,1.0,30.9,,money,30.9,
+WEB06,1.1,72.4,,web,65.8,
+API23,0.8,45.0,,money,56.2,about 45 minutes of active work by the agent's own report (it was paused overnight)
+API24,0.8,43.0,,money,53.8,43 minutes by the agent's own report
