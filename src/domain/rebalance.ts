@@ -241,20 +241,24 @@ export async function insertAllocations(tx: Tx, rows: readonly AllocationRow[]):
   for (const row of rows) await auditChange(tx, { table: 'receipt_allocations', action: 'insert', before: null, after: { ...row } });
 }
 
+/** The plan of a rebalance, made before anything is written: what `rebalance` would insert, and the ids of the bills the call itself inserted (they are not touched again, D23). */
+export interface PlannedRebalance {
+  plan: Plan;
+  fresh: ReadonlySet<string>;
+}
+
+const noPlan = (): PlannedRebalance => ({ plan: { allocations: [], applied: fromUnits(0n, MONEY), fine_applied: fromUnits(0n, FINE) }, fresh: new Set() });
+
 /**
- * Y6 inside a money function, after its own writes: allocates the customer's advance from `state` (and from what the call made, `newBills`, `newReceipts`), inserts the allocations, audits them and
- * touches what they changed. Returns the rows as the table holds them and the totals applied. A call that applies nothing sends nothing.
+ * The pure half of `rebalance`: the allocations of Y6 worked out from the state the call read and the rows it made, with no write and no clock. A call that has to judge the result BEFORE its
+ * first write (X10 counts what is carried over to the new bill against the explicit payments and refuses a surplus for the walk-in, and takes its number only after those checks) plans first and
+ * applies with `applyRebalance` later; the allocation ids are made here, so the rows that were judged are the rows that are written. The walk-in gets an empty plan (K5).
  */
-export async function rebalance(tx: Tx, o: RebalanceOptions): Promise<RebalanceResult> {
-  if (!UUID_TEXT.test(o.customerId)) throw new TypeError('the customer id must be a lower-case uuid');
-  if (!STAMP.test(o.at)) throw new TypeError("the stamp of a rebalance is the API clock's reading: 'YYYY-MM-DD HH:MM:SS.ffffff'");
-  if (lockedCustomerId(tx) !== o.customerId) {
-    throw new LockOrderViolation('the rebalance runs under the customer lock of the same customer (X0 item 3); this call has not locked that customer', tx.trail);
-  }
+export function planRebalanceOf(o: Omit<RebalanceOptions, 'at'>): PlannedRebalance {
   if (o.state.customerId !== o.customerId) {
     throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error('the state handed to the rebalance is another customer\'s') });
   }
-  if (o.walkin) return none(); // K5
+  if (o.walkin) return noPlan(); // K5
 
   // the bills in the order of Y3: the state's (S1: bill_date, created_at, id) with the call's own bills placed in it
   const bills = o.state.openBills.map((b) => ({ id: b.id, bill_date: b.bill_date, created_at: b.created_at, pending: b.pending, fine_pending: b.fine_pending }));
@@ -282,7 +286,17 @@ export async function rebalance(tx: Tx, o: RebalanceOptions): Promise<RebalanceR
     placeInOrder(receipts, { id: r.id, kind: r.kind, paid_on: r.paid_on, created_at: r.created_at, remaining: r.remaining, fine_remaining: r.fine_remaining }, (x) => [x.paid_on, stampKey(x.created_at)]);
   }
 
-  const plan = planRebalance({ bills, receipts, advance: fromUnits(advance, MONEY), fine_advance: fromUnits(fineAdvance, FINE), first: o.first }, newId);
+  return { plan: planRebalance({ bills, receipts, advance: fromUnits(advance, MONEY), fine_advance: fromUnits(fineAdvance, FINE), first: o.first }, newId), fresh };
+}
+
+/** The write half of `rebalance`: inserts, audits and touches the allocations of a plan made by `planRebalanceOf`, all stamped `at`. A plan with no allocation sends nothing. */
+export async function applyRebalance(tx: Tx, o: { customerId: string; at: string }, planned: PlannedRebalance): Promise<RebalanceResult> {
+  if (!UUID_TEXT.test(o.customerId)) throw new TypeError('the customer id must be a lower-case uuid');
+  if (!STAMP.test(o.at)) throw new TypeError("the stamp of a rebalance is the API clock's reading: 'YYYY-MM-DD HH:MM:SS.ffffff'");
+  if (lockedCustomerId(tx) !== o.customerId) {
+    throw new LockOrderViolation('the rebalance runs under the customer lock of the same customer (X0 item 3); this call has not locked that customer', tx.trail);
+  }
+  const { plan, fresh } = planned;
   if (plan.allocations.length === 0) return none();
 
   const rows: AllocationRow[] = plan.allocations.map((a) => ({ ...a, customer_id: o.customerId, released_at: null, created_at: o.at, updated_at: o.at }));
@@ -290,4 +304,17 @@ export async function rebalance(tx: Tx, o: RebalanceOptions): Promise<RebalanceR
   // D23: the bills that received money or silver and the customer carry the call's stamp; a bill the call inserted already does
   await touchForReceiptWrite(tx, { customerId: o.customerId, billIds: rows.map((a) => a.bill_id).filter((id) => !fresh.has(id)), at: o.at });
   return { allocations: rows, applied: plan.applied, fine_applied: plan.fine_applied };
+}
+
+/**
+ * Y6 inside a money function, after its own writes: allocates the customer's advance from `state` (and from what the call made, `newBills`, `newReceipts`), inserts the allocations, audits them and
+ * touches what they changed. Returns the rows as the table holds them and the totals applied. A call that applies nothing sends nothing.
+ */
+export async function rebalance(tx: Tx, o: RebalanceOptions): Promise<RebalanceResult> {
+  if (!UUID_TEXT.test(o.customerId)) throw new TypeError('the customer id must be a lower-case uuid');
+  if (!STAMP.test(o.at)) throw new TypeError("the stamp of a rebalance is the API clock's reading: 'YYYY-MM-DD HH:MM:SS.ffffff'");
+  if (lockedCustomerId(tx) !== o.customerId) {
+    throw new LockOrderViolation('the rebalance runs under the customer lock of the same customer (X0 item 3); this call has not locked that customer', tx.trail);
+  }
+  return applyRebalance(tx, o, planRebalanceOf(o));
 }
