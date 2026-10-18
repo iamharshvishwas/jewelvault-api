@@ -13,6 +13,13 @@ export function dailyRunName(date: string, runId: string | number): string;
 export function monthlyName(date: string): string;
 /** JV_BACKUP_DIR: absolute, no "~", no "..", not the root. Returns the normalised path. */
 export function resolveBackupDir(value: string | undefined): string;
+/** Why the folder cannot be used: ENOENT (missing), ENOTDIR, EACCES (read-only), EROFS, ENOSPC ... or CONFIG (the setting itself). `where` is `folder`, a sub-folder, or `JV_BACKUP_DIR`. No path is in it. */
+export interface FolderProbeFailure { ok: false; code: string; where: string; message: string }
+export type FolderProbe = { ok: true } | FolderProbeFailure;
+/** Spec 5.2.2: the folder exists, is a folder and is writable (a file is created and removed in it and in each sub-folder that exists). Never makes the folder. */
+export function probeBackupDir(dir: string): Promise<FolderProbe>;
+/** resolveBackupDir, then probeBackupDir: a value that is no usable path is `CONFIG`. On success the answer carries the resolved folder. */
+export function probeBackupSetting(value: string | undefined): Promise<FolderProbe & { dir?: string }>;
 export function prepareFolder(dir: string): Promise<void>;
 export function sweepPartials(dir: string, opts?: { nowMs?: number; maxAgeMs?: number }): Promise<string[]>;
 export interface FolderStats { files: number; bytes: number; free_bytes: number | null; daily: number; monthly: number; photos: number }

@@ -71,7 +71,7 @@ export interface Config {
   /**
    * B2: the backup folder on the plan (JV_BACKUP_DIR), an absolute path with the same value for the app and for cron, outside `domains/`. The tick's photo copy (API33b) writes `photos/` into it, the dump
    * script (API34) `daily/` and `monthly/`. Kept as it is written: the photo copy checks it when it runs (src/jobs/backupFolder.ts resolveBackupDir) and fails visibly when it is not set, not there or
-   * not writable; a wrong value does not stop the start, because the owner's line must still open to say so.
+   * not writable; a wrong value does not stop the start, because the owner's line must still open to say so. The start-up check of spec 5.2.2 (src/jobs/backupProbe.ts) judges it and a bad folder is a red line on the owner's dashboard.
    */
   readonly backupDir?: string | undefined;
   /** L1: which mechanism writes the audit rows (JV_AUDIT_MODE, default 'triggers'). 'node' only on a database without the audit triggers (O50). */

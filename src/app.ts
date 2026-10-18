@@ -4,6 +4,7 @@ import { type Clock, systemClock } from './clock.js';
 import type { Config } from './config.js';
 import type { DbPool } from './db/pool.js';
 import { BusyError, type JvError, classifyError, describeCause, errorBody, unavailableError } from './errors.js';
+import { checkBackupFolderAtStart } from './jobs/backupProbe.js';
 import { createLogger } from './logging.js';
 import { installPermissions, route } from './permissions/route.js';
 import { type PreflightResult, runPreflight } from './preflight.js';
@@ -142,6 +143,8 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
       // A14: the reason goes to sys_error_log (and so to the owner's dashboard line) and to nobody else; /healthz and /readyz say only whether
       const at = new Date(Number(app.clock.read().micros / 1000n));
       for (const startupEntry of startupEntries(app.startup)) app.errorLog.record(startupEntry, at);
+      // B2, I12 (spec 5.2.2): the backup folder exists and is writable. A folder that is not does NOT stop the start (the shop works without it): it is recorded for the owner's dashboard line
+      if (config.backupDir !== undefined) await checkBackupFolderAtStart(db, config.backupDir, at.getTime(), app.log);
     });
     // S11: a failed check keeps the API up and answers 503 JV_UNAVAILABLE to everything except /healthz and /readyz; until the check has run, nothing is served either.
     app.addHook('onRequest', async (request, reply) => {

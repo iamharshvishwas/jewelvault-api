@@ -12,10 +12,12 @@
 //  - pruning touches only exact name patterns, always keeps the newest 30 daily and 13 monthly files whatever their age, runs only after a good write of the same night, never when the
 //    folder holds fewer files than the last recorded count, and the first real prune is preceded by a logged dry run; photos/ is never pruned.
 // The dashboard turns red when the file count falls without a prune (health.mjs reads backup_runs.detail.folder and detail.pruned that recordBackupRun writes).
+//  - the folder must be THERE and writable on every run (spec 5.2.2): probeBackupDir tests it by writing a file; a missing folder is never made for the job (a stale absolute path would grow a new
+//    tree under domains/) and never read as "nothing due". The default place is /home/<user>/jv-backup, outside domains/: connecting a domain renames the site's folder in domains/.
 
-import { link, lstat, mkdir, open, readdir, stat, statfs, unlink } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { access, link, lstat, mkdir, open, readdir, stat, statfs, unlink } from 'node:fs/promises';
+import { constants, createReadStream } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { createExportWriter } from './export-file.mjs';
 
@@ -346,3 +348,61 @@ export async function recordBackupRun(conn, { kind, ok, bytes = 0, detail = {}, 
   return { id: Number(res.insertId) };
 }
 
+
+// ---------------------------------------------------------------- the folder must be there (spec 5.2.2, B2, I12)
+
+const failure = (code, where, message) => ({ ok: false, code: String(code ?? 'UNKNOWN'), where, message });
+
+/** Writes a one-byte file in `folder` and removes it. The name ends in .partial, so a crash in between leaves what the sweep removes. */
+async function writeProbe(folder) {
+  const file = path.join(folder, `.probe-${randomBytes(6).toString('hex')}.partial`);
+  const handle = await open(file, 'wx');
+  try {
+    await handle.write('x');
+    await handle.sync();
+  } finally {
+    await handle.close();
+    await unlink(file).catch(() => undefined);
+  }
+}
+
+/**
+ * Spec 5.2.2 (B2, I12): the folder named by JV_BACKUP_DIR exists, is a folder and is writable. A mode is not enough (a read-only mount, a quota, an ACL), so a file is really created, flushed and
+ * removed in the folder and in each of daily/, monthly/ and photos/ that exists; a sub-folder that is missing is made by prepareFolder when the first file is written. The folder itself is NEVER made
+ * here. Answers { ok: true } or { ok: false, code, where, message } with the system's code (ENOENT, EACCES, ENOTDIR, EROFS, ENOSPC, EDQUOT ...) and where it failed (`folder` or a sub-folder name); the
+ * path is not in the answer.
+ */
+export async function probeBackupDir(dir) {
+  try {
+    if (!(await stat(dir)).isDirectory()) return failure('ENOTDIR', 'folder', 'the backup folder is not a folder');
+  } catch (e) {
+    return failure(e.code, 'folder', `the backup folder cannot be looked at (${e.code ?? e.message})`);
+  }
+  for (const where of ['folder', ...SUBFOLDERS]) {
+    const target = where === 'folder' ? dir : path.join(dir, where);
+    try {
+      if (where !== 'folder') {
+        const st = await stat(target).catch((e) => (e.code === 'ENOENT' ? null : Promise.reject(e)));
+        if (!st) continue;
+        if (!st.isDirectory()) return failure('ENOTDIR', where, `${where}/ is not a folder`);
+      }
+      await access(target, constants.R_OK | constants.W_OK | constants.X_OK);
+      await writeProbe(target);
+    } catch (e) {
+      return failure(e.code, where, `the backup folder cannot be written (${e.code ?? e.message})`);
+    }
+  }
+  return { ok: true };
+}
+
+/** resolveBackupDir, then probeBackupDir. A value that is no usable path (unset, relative, "~", "..", the root) is { ok: false, code: 'CONFIG', where: 'JV_BACKUP_DIR' }. */
+export async function probeBackupSetting(value) {
+  let dir;
+  try {
+    dir = resolveBackupDir(value);
+  } catch (e) {
+    return failure('CONFIG', 'JV_BACKUP_DIR', e.message);
+  }
+  const probe = await probeBackupDir(dir);
+  return probe.ok ? { ok: true, dir } : probe;
+}
