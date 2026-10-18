@@ -50,6 +50,7 @@ const schema = z.object({
   PORT: portNumber.optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).optional(),
   JV_AUDIT_MODE: z.enum(AUDIT_MODES).optional(),
+  JV_BACKUP_DIR: text.optional(),
 });
 
 /** Every variable the API reads; .env.example lists exactly these. */
@@ -69,6 +70,11 @@ export interface Config {
   readonly loginSalt?: string | undefined;
   /** L1: which mechanism writes the audit rows (JV_AUDIT_MODE, default 'triggers'). 'node' only on a database without the audit triggers (O50). */
   readonly auditMode: AuditMode;
+  /**
+   * B2: the backup folder, an absolute path with the same value for the app and for cron (JV_BACKUP_DIR), kept as written: the start-up check judges it (src/jobs/backupFolder.ts) and a wrong one is
+   * a red line on the owner's dashboard, not a failed start. By default `/home/<user>/jv-backup`, outside `domains/` (spec 5.2.2). Unset: the start-up check does not test it.
+   */
+  readonly backupDir?: string | undefined;
   readonly db: { readonly host: string; readonly port: number; readonly name: string; readonly user: string; readonly password: string };
 }
 
@@ -105,6 +111,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     jobTokenHash: v.JV_JOB_TOKEN_HASH,
     loginSalt: v.JV_LOGIN_SALT,
     auditMode: v.JV_AUDIT_MODE ?? 'triggers',
+    backupDir: v.JV_BACKUP_DIR,
     db: Object.freeze({ host: v.DB_HOST, port: v.DB_PORT, name: v.DB_NAME, user: v.DB_USER, password: v.DB_PASSWORD }),
   });
 }

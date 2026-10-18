@@ -8,6 +8,8 @@ import type { Reading } from '../clock.js';
 export const JOB_LIMITS = Object.freeze({
   /** A `running` row older than this is abandoned (I8). */
   abandonedAfterMs: 10 * 60 * 1000,
+  /** The same for the dump (I8: "the dump: 30"). `scripts/dump-job.mjs` has the other copy (DUMP_ABANDONED_AFTER_MS); a test keeps them equal. */
+  dumpAbandonedAfterMs: 30 * 60 * 1000,
   /** The nightly work (the check, the photo copy) is due from this hour on, Asia/Kolkata (I8). */
   nightlyFromHour: 2,
   /** The statement limit of the tick's session, in seconds (S11, I8). */
