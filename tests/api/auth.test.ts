@@ -782,7 +782,8 @@ describe('T-D06 (HTTP half) a user cannot change their own role or active; no ro
 describe('T-D15 the role is read from users on every request; nothing the caller sends names it', () => {
   it('a changed role takes effect at the next call, with the same cookie, up and down', async () => {
     const u = await signIn('biller');
-    const callVoid = () => inject('POST', concreteUrl('/v1/receipts/:id/void'), { cookie: u.cookie, payload: {} });
+    // fn:void_receipt has a real route since API25 (it was a stub that answered 200): past the matrix row the handler runs and finds no such receipt, 404 JV_NOT_FOUND, so a role that is let in is not a 403
+    const callVoid = () => inject('POST', concreteUrl('/v1/receipts/:id/void'), { cookie: u.cookie, headers: { 'idempotency-key': randomUUID() }, payload: { reason: 'role check' } });
     expect((await inject('GET', '/v1/auth/me', { cookie: u.cookie })).json().user.role).toBe('biller');
     const refused = await callVoid();
     expect(refused.statusCode).toBe(403);
@@ -790,8 +791,9 @@ describe('T-D15 the role is read from users on every request; nothing the caller
     await world.sql.query("UPDATE users SET role = 'owner' WHERE id = ?", [u.userId]);
     expect((await inject('GET', '/v1/auth/me', { cookie: u.cookie })).json().user.role).toBe('owner');
     const before = world.handled.length;
-    expect((await callVoid()).statusCode).toBe(200);
-    expect(world.handled.slice(before)).toEqual(['fn:void_receipt']);
+    const letIn = await callVoid();
+    expect({ status: letIn.statusCode, code: errorOf(letIn).code }).toEqual({ status: 404, code: 'JV_NOT_FOUND' });
+    expect(world.handled.length, 'the real handler answered, not a stub').toBe(before);
     await world.sql.query("UPDATE users SET role = 'staff' WHERE id = ?", [u.userId]);
     expect((await inject('GET', '/v1/auth/me', { cookie: u.cookie })).json().user.role).toBe('staff');
     expect((await callVoid()).statusCode).toBe(403);
