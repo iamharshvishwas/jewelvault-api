@@ -8,6 +8,7 @@
 //   API05  the session routes (me, logout, change-password, activity) and the login
 //   API07  /readyz (below)
 //   API09  the admin door and the job routes
+//   API33  the hourly tick (POST /internal/jobs/tick)
 //   API11  the read side (the sync resources, the poll) ...
 //   API13  the ordinary edits (designs, pieces, categories, subcategories) ...
 import type { FastifyInstance } from 'fastify';
@@ -15,6 +16,7 @@ import { registerAdminRoutes } from './admin/routes.js';
 import { registerAuthRoutes } from './auth/loginRoutes.js';
 import { registerDownloadRoutes } from './download/record.js';
 import { registerEditRoutes } from './edit/routes.js';
+import { registerJobRoutes } from './jobs/routes.js';
 import { registerCreateBill } from './money/x01CreateBill.js';
 import { registerRecordPayment } from './money/x02RecordPayment.js';
 import { registerSettleFine } from './money/x03SettleFine.js';
@@ -36,6 +38,7 @@ export function registerRoutes(app: FastifyInstance): void {
   registerSyncRoutes(app);
   registerReadRoutes(app); // API12: the ledger, the daily totals, the audit log, the health lists, the dashboard line
   registerAdminRoutes(app); // API09: the admin door, only while JV_ADMIN_TOKEN_HASH is set
+  registerJobRoutes(app); // API33: the hourly tick, only while JV_JOB_TOKEN_HASH is set
   registerEditRoutes(app); // API13: the ordinary edits
   registerQuoteBill(app); // API18: X7 quote_bill
   registerCreateBill(app); // API20: X1 create_bill
