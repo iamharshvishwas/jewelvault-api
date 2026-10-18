@@ -188,7 +188,7 @@ describe('T-C19 (T-C15 clause) the pool under load on the real X2: the customer 
     expect(reasons.lock_wait, 'at most 8 of them were at the customer lock at once; each of those waited the full 5 s').toBeGreaterThanOrEqual(1);
     expect(reasons.lock_wait).toBeLessThanOrEqual(POOL_LIMITS.size * 2);
     // "held for 28 seconds": the row stays held to the end of that time, with the pool back at rest and the books untouched
-    await sleep(Math.max(0, 28_000 - held.heldMs()));
+    await sleep(Math.max(0, 28_000 - held.heldMs()) + 100); // a timer can fire a fraction of a millisecond early: 27999.82 once
     expect(held.heldMs()).toBeGreaterThanOrEqual(28_000);
     await held.release();
     expect(await footprint(w)).toEqual(before);
