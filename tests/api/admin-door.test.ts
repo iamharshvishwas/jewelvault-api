@@ -764,6 +764,54 @@ describe('T-D24 (API09 clause) the admin-door rows of A13: 10 a minute per addre
   });
 });
 
+// ------------------------------------------------------------------------------------------------ PT-RV1b (RV1-7)
+
+describe('PT-RV1b T-D24 (RV1-7) with an address that cannot be trusted the right token is never counted: only wrong tokens are, against the 5 an hour (A13, U3)', () => {
+  const wrong = () => randomBytes(32).toString('base64url');
+  const retryAfter = (res: LightMyRequestResponse) => Number(res.headers['retry-after']);
+
+  it('12 calls with the right token and no x-real-ip all pass (the ten a minute are for an address that can be told apart); then the wrong tokens use the hourly five, and the right token still passes after the sixth', async () => {
+    advance(61n * MINUTE); // a clean hour: the other tests of this file used the budget
+    for (let i = 0; i < 12; i++) expect((await call('GET', '/admin/v1/users', { ip: null })).statusCode, `right token ${i + 1}`).toBe(200);
+    // the right tokens used nothing: the whole budget of five wrong tokens is still there
+    for (let i = 0; i < 5; i++) expect((await call('GET', '/admin/v1/users', { ip: null, token: wrong() })).statusCode, `wrong token ${i + 1}`).toBe(401);
+    const sixth = await call('GET', '/admin/v1/users', { ip: null, token: wrong() });
+    expect(sixth.statusCode).toBe(429);
+    expect(errorOf(sixth).code).toBe('JV_RATE_LIMITED');
+    expect(retryAfter(sixth)).toBeGreaterThan(50 * 60);
+    expect(retryAfter(sixth)).toBeLessThanOrEqual(60 * 60);
+    // a call with no Authorization header is a wrong token too: refused, not counted twice
+    expect((await call('GET', '/admin/v1/users', { ip: null, token: null })).statusCode).toBe(429);
+    for (let i = 0; i < 12; i++) expect((await call('GET', '/admin/v1/users', { ip: null })).statusCode, `right token after the sixth wrong one, ${i + 1}`).toBe(200);
+  });
+
+  it('writing calls with the right token pass too, any number a minute, and each writes its one event row; a stranger\'s wrong tokens in between change nothing for them', async () => {
+    advance(61n * MINUTE);
+    const before = await countOf('audit_log');
+    for (let i = 0; i < 12; i++) {
+      expect((await call('POST', '/admin/v1/login-counters/clear', { ip: null })).statusCode, `clear ${i + 1}`).toBe(200);
+      if (i < 3) expect((await call('POST', '/admin/v1/login-counters/clear', { ip: null, token: wrong() })).statusCode).toBe(401);
+    }
+    expect(await countOf('audit_log')).toBe(before + 12);
+  });
+
+  it('a header that is not one address (a list, a port, text) is untrusted in the same way: 12 right tokens pass', async () => {
+    advance(61n * MINUTE);
+    const headers: Record<string, string>[] = [{ 'x-real-ip': '203.0.113.9, 198.51.100.4' }, { 'x-real-ip': '203.0.113.9:443' }, { 'x-real-ip': 'unknown' }];
+    for (let i = 0; i < 12; i++) expect((await call('GET', '/admin/v1/users', { ip: null, headers: headers[i % headers.length] })).statusCode, `right token ${i + 1}`).toBe(200);
+  });
+
+  it('an address that CAN be trusted keeps its rows: ten a minute with the right token (the eleventh is 429), and the pause after two wrong tokens in a row (nothing is weakened)', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) expect((await call('GET', '/admin/v1/users', { ip })).statusCode).toBe(200);
+    expect((await call('GET', '/admin/v1/users', { ip })).statusCode).toBe(429);
+    const other = freshIp();
+    expect((await call('GET', '/admin/v1/users', { ip: other, token: wrong() })).statusCode).toBe(401);
+    expect((await call('GET', '/admin/v1/users', { ip: other, token: wrong() })).statusCode).toBe(401);
+    expect((await call('GET', '/admin/v1/users', { ip: other })).statusCode, 'paused: even the right token').toBe(429);
+  });
+});
+
 // ------------------------------------------------------------------------------------------------ T-D20, U2, A8
 
 describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on /v1/users and /v1/users/{id} are 404 for every role', () => {

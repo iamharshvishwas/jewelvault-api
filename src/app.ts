@@ -8,6 +8,7 @@ import { createLogger } from './logging.js';
 import { installPermissions, route } from './permissions/route.js';
 import { type PreflightResult, runPreflight } from './preflight.js';
 import { registerRoutes } from './routes.js';
+import { answerBadAddress } from './security/badAddress.js';
 import { type ErrorLog, createErrorLog, errorLogEntry, startupEntries } from './security/errorLog.js';
 import { installSecurity } from './security/index.js';
 import { type RequestTimers, defaultTimers, requestLimits } from './security/requestLimits.js';
@@ -80,9 +81,12 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   const { config } = options;
   const timers: RequestTimers = { ...defaultTimers(), ...options.timers };
   // the request id is a UUID: it goes to audit_log.request_id (a UUID column) through @jv_request, and back to the client in the error body
-  const app = Fastify({
+  const app: FastifyInstance = Fastify({
     loggerInstance: createLogger(config.logLevel, options.logStream),
     genReqId: () => randomUUID(),
+    // RV1-6, A14: an address the router cannot take (a broken percent sign, a segment over 100 characters) would be answered by Fastify itself, with its own body and none of our headers; it is made
+    // readable and put through the router again instead, and is then an address that is not a route (src/security/badAddress.ts)
+    frameworkErrors: (error, request, reply) => answerBadAddress(app, error, request, reply),
     // A14: a body is at most 1 MiB (the photo upload has its own, src/security), receiving a request may take 30 s, a call 25 s (the login and the job tick have their own).
     // Node enforces requestTimeout only when headersTimeout is not longer than it (its default is 60 s: measured, a 30 s requestTimeout then cuts nothing), so the headers get the same 30 s; and it
     // looks for requests that have run out of time every 30 s unless told otherwise, so it is told to look every second.

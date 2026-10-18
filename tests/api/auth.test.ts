@@ -1,7 +1,9 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import nodeCrypto, { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { sleep } from '../helpers';
 import { migrate } from '../../scripts/migrate.mjs';
 import { registerAuthRoutes } from '../../src/auth/loginRoutes';
 import { passwords } from '../../src/auth/password';
@@ -11,7 +13,7 @@ import { withTx, txContextFor } from '../../src/db/tx';
 import { limits } from '../../src/limits';
 import { MATRIX } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
-import { SESSION_COOKIE, microsOfDbTimestamp } from '../../src/permissions/session';
+import { SESSION_COOKIE, microsOfDbTimestamp, newTicket } from '../../src/permissions/session';
 import { registerSyncRoutes } from '../../src/sync/routes';
 import { T0, type World, concreteUrl, makeWorld, registerStubs } from './cells';
 import { csrfHeaders, secret, testConfig } from './support';
@@ -346,6 +348,165 @@ describe('T-D25 login: the cookie, a new ticket every time, the old session ende
     const row = await userRow(u.userId);
     expect(row.password_hash).toMatch(passwords.scheme === 'argon2id' ? /^\$argon2id\$v=19\$m=65536,t=3,p=1\$/ : /^\$scrypt\$ln=17,r=8,p=1\$/);
     expect(row.password_hash).not.toContain(PASSWORD);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ PT-RV1b (RV1-3): the ticket is random
+
+describe('PT-RV1b T-D25 (RV1-3) the session ticket is random, not only 32 bytes long (U12, impl-review-1 N08)', () => {
+  it('2,000 tickets are all different and every one of the 32 byte positions takes more than 100 different values (a ticket of 4 random bytes and 28 zero bytes has 43 characters too, and fails this)', () => {
+    const CALLS = 2_000;
+    const tickets = Array.from({ length: CALLS }, () => newTicket());
+    expect(new Set(tickets).size).toBe(CALLS);
+    const seen = Array.from({ length: 32 }, () => new Set<number>());
+    for (const ticket of tickets) {
+      expect(ticket).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      const bytes = Buffer.from(ticket, 'base64url');
+      expect(bytes).toHaveLength(32);
+      bytes.forEach((byte, position) => seen[position].add(byte));
+    }
+    // 2,000 draws from 256 values leave about 256 different ones in each position; 100 is far below any chance and far above a position that is fixed or has only a few bits
+    seen.forEach((values, position) => expect(values.size, `byte ${position} of the ticket`).toBeGreaterThan(100));
+  });
+
+  it('a ticket is exactly what crypto.randomBytes(32) returned, nothing mixed in, cut or padded: the spy sees one call, with 32', () => {
+    const spy = vi.spyOn(nodeCrypto, 'randomBytes');
+    syncBuiltinESMExports(); // the named export src/permissions/session.ts imported follows the spy
+    try {
+      const ticket = newTicket();
+      expect(spy.mock.calls).toEqual([[32]]);
+      expect(ticket).toBe((spy.mock.results[0].value as Buffer).toString('base64url'));
+    } finally {
+      spy.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ PT-RV1b (RV1-4): the password changed while the login was verified
+
+describe('PT-RV1b T-D25 (RV1-4) a login whose password changed, or whose user was deactivated, while it was being verified is refused (U11, impl-review-1 N23)', () => {
+  /**
+   * Holds the FIRST verification asked for, after its answer is known and before the login goes on: the password has been checked against the hash the login read, no connection is held, and the
+   * transaction that makes the session has not begun. Every other verification (the change of password in between) runs at once.
+   */
+  function holdFirstVerification() {
+    const real = passwords.verify.bind(passwords);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let verified!: (answer: boolean) => void;
+    const reached = new Promise<boolean>((resolve) => (verified = resolve));
+    let held = false;
+    const spy = vi.spyOn(passwords, 'verify').mockImplementation(async (password, stored) => {
+      const answer = await real(password, stored);
+      if (!held) {
+        held = true;
+        verified(answer);
+        await gate;
+      }
+      return answer;
+    });
+    return {
+      reached,
+      release,
+      end: () => {
+        release();
+        spy.mockRestore();
+      },
+    };
+  }
+
+  const factsOf = (row: Record<string, any>) => (typeof row.new_row === 'string' ? JSON.parse(row.new_row) : row.new_row) as Record<string, any>;
+  const loginEventsSince = async (userId: string, after: number) => (await auditSince(after)).filter((r) => r.action === 'event' && r.table_name === 'users' && r.row_id === userId && factsOf(r).event === 'login');
+  const otherSessions = async (u: { userId: string; sessionId: string }) => (await sessionsOf(u.userId)).filter((s) => s.id !== u.sessionId);
+
+  /**
+   * Starts a login with the RIGHT password and waits until its verification is held with the answer "right"; the login's own answer is `pending`. (It is returned inside an object: an async
+   * function that returned the promise itself would not be done until the login was, and the test would go on before the hold.)
+   */
+  async function heldLogin(email: string, hold: ReturnType<typeof holdFirstVerification>) {
+    const pending = loginWith(email, PASSWORD);
+    const first = await Promise.race([hold.reached, pending.then(() => 'the login ended before its password was verified')]);
+    expect(first).toBe(true);
+    return { pending };
+  }
+
+  it('control: nothing changes while the verification is held, and the login goes through (so the tests below are refused for the change, not for the hold)', async () => {
+    const u = await makeUser('biller');
+    const before = await maxAuditId();
+    const hold = holdFirstVerification();
+    try {
+      const { pending } = await heldLogin(u.email, hold);
+      await sleep(50);
+      hold.release();
+      const res = await pending;
+      expect(res.statusCode).toBe(200);
+      expect(await otherSessions(u)).toHaveLength(1);
+      expect(await loginEventsSince(u.userId, before)).toHaveLength(1);
+    } finally {
+      hold.end();
+    }
+  });
+
+  it('the password is changed from another browser while the old one is being verified: the held login is the plain bad login (401), with no cookie, no session and no login event; the new password works and the old one does not', async () => {
+    const u = await makeUser('biller');
+    const before = await maxAuditId();
+    const newPassword = secret('Pw');
+    const hold = holdFirstVerification();
+    try {
+      const { pending } = await heldLogin(u.email, hold);
+      const changed = await inject('POST', '/v1/auth/change-password', { cookie: u.cookie, payload: { current_password: PASSWORD, new_password: newPassword } });
+      expect(changed.statusCode, changed.body).toBe(200);
+      hold.release();
+      const res = await pending;
+      expect(res.statusCode).toBe(401);
+      expect(errorOf(res)).toEqual({ code: 'JV_BAD_LOGIN', message: 'Wrong email or password.', details: {} });
+      expect(setCookies(res)).toEqual([]);
+    } finally {
+      hold.end();
+    }
+    expect(await otherSessions(u)).toEqual([]);
+    expect(await loginEventsSince(u.userId, before)).toEqual([]);
+    expect((await loginWith(u.email, newPassword)).statusCode).toBe(200);
+    expect((await loginWith(u.email, PASSWORD)).statusCode).toBe(401);
+  });
+
+  it('the stored hash is replaced by an UPDATE (as a reset does) while the old password is being verified: refused the same way', async () => {
+    const u = await makeUser('staff');
+    const before = await maxAuditId();
+    const hold = holdFirstVerification();
+    try {
+      const { pending } = await heldLogin(u.email, hold);
+      await world.sql.query('UPDATE users SET password_hash = ? WHERE id = ?', [await passwords.hash(secret('Pw')), u.userId]);
+      hold.release();
+      const res = await pending;
+      expect(res.statusCode).toBe(401);
+      expect(errorOf(res).code).toBe('JV_BAD_LOGIN');
+      expect(setCookies(res)).toEqual([]);
+    } finally {
+      hold.end();
+    }
+    expect(await otherSessions(u)).toEqual([]);
+    expect(await loginEventsSince(u.userId, before)).toEqual([]);
+  });
+
+  it('the user is deactivated while the right password is being verified: 403 JV_FORBIDDEN "inactive", no cookie, no session, no login event', async () => {
+    const u = await makeUser('biller');
+    const before = await maxAuditId();
+    const hold = holdFirstVerification();
+    try {
+      const { pending } = await heldLogin(u.email, hold);
+      await world.sql.query('UPDATE users SET active = 0 WHERE id = ?', [u.userId]);
+      hold.release();
+      const res = await pending;
+      expect(res.statusCode).toBe(403);
+      expect(errorOf(res)).toMatchObject({ code: 'JV_FORBIDDEN', details: { reason: 'inactive' } });
+      expect(setCookies(res)).toEqual([]);
+    } finally {
+      hold.end();
+    }
+    expect(await otherSessions(u)).toEqual([]);
+    expect(await loginEventsSince(u.userId, before)).toEqual([]);
   });
 });
 

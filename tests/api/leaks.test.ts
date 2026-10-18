@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
+import http from 'node:http';
 import net from 'node:net';
 import Fastify, { type FastifyInstance, type LightMyRequestResponse } from 'fastify';
 import pino from 'pino';
 import { z } from 'zod';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/app';
 import { type DbPool, createDbPool } from '../../src/db/pool';
 import { TX_LIMITS } from '../../src/db/tx';
@@ -11,6 +12,7 @@ import { SESSION_SETTINGS } from '../../src/db/pool';
 import { MATRIX, PUBLIC_ROUTES } from '../../src/permissions/matrix';
 import { createRoute, route } from '../../src/permissions/route';
 import { SESSION_COOKIE, newTicket } from '../../src/permissions/session';
+import { MAX_SEGMENT_LENGTH, answerBadAddress, readableAddress } from '../../src/security/badAddress';
 import { handlerTimeoutFor, requestLimits, TICK_PATH } from '../../src/security/requestLimits';
 import * as wire from '../../src/wire/zod';
 import { type Scratch, scratchDatabase, sleep } from '../helpers';
@@ -148,6 +150,181 @@ describe('T-D28 every answer carries Cache-Control: no-store and X-Request-Id, a
     } finally {
       await missing.close();
     }
+  });
+});
+
+// ------------------------------------------------------------------ an address that is not valid
+
+describe('PT-RV1b T-D28 (RV1-6) an address with a broken percent sign, or a segment that is too long, is answered as any address that is not a route: the S8 body, a request id and every header of A14', () => {
+  /** Addresses the router cannot decode (a percent sign that starts no escape; an escape that is not UTF-8) and a segment over the router's 100 characters. None of them is a route. */
+  const NO_ROUTE: [string, string][] = [
+    ['GET', '/%zz'],
+    ['GET', '/v1/sync/skus%zz'],
+    ['POST', '/v1/auth/login%zz'],
+    ['GET', '/%'],
+    ['GET', '/v1/%4'],
+    ['GET', '/v1/%E0%A4%A'],
+    ['GET', '/v1/%C0%80'],
+    ['GET', '/v1/%ff/x'],
+    ['PUT', '/v1/settings/%zz/%'],
+    ['GET', `/v1/${'a'.repeat(150)}`],
+    ['GET', `/${'%41'.repeat(120)}`],
+  ];
+
+  const headerNames = (res: LightMyRequestResponse) => Object.keys(res.headers).filter((h) => !['date', 'content-length', 'connection', 'keep-alive'].includes(h)).sort();
+  const withHeaders = (method: string) => ({ ...(method === 'GET' ? {} : csrfHeaders()), origin: TEST_ORIGIN });
+
+  it('each answers 404 JV_NOT_FOUND in the S8 body with the request id, no framework text, no code of the framework, and not one character of the address', async () => {
+    await withToy(async ({ app }) => {
+      for (const [method, url] of NO_ROUTE) {
+        const res = await app.inject({ method: method as 'GET', url, headers: withHeaders(method) });
+        const label = `${method} ${url.slice(0, 40)}`;
+        expect(res.statusCode, label).toBe(404);
+        const parsed = body(res);
+        expect(Object.keys(parsed).sort(), label).toEqual(['error', 'request_id']);
+        expect(parsed.error, label).toEqual({ code: 'JV_NOT_FOUND', message: 'There is nothing at this address.', details: {} });
+        expect(parsed.request_id, label).toMatch(UUID);
+        expect(parsed.request_id, label).toBe(String(res.headers['x-request-id']));
+        expect(res.body, label).not.toMatch(/FST_ERR|Bad Request|url component|param length|statusCode|fastify/i);
+        expect(res.body, label).not.toContain('zz');
+        expect(res.body, label).not.toContain('aaaa');
+      }
+    });
+  });
+
+  it('each carries the same headers as an address that simply is not a route: no-store, the request id, the helmet set (nosniff, HSTS, CSP, referrer policy, the Cross-Origin policies) and the CORS answer for an allowed origin', async () => {
+    await withToy(async ({ app }) => {
+      for (const method of ['GET', 'POST', 'PUT'] as const) {
+        const plain = await app.inject({ method, url: '/nothing-here', headers: withHeaders(method) });
+        expect(plain.statusCode).toBe(404);
+        const expected = headerNames(plain);
+        expect(expected).toEqual(expect.arrayContaining(['cache-control', 'x-request-id', 'x-content-type-options', 'strict-transport-security', 'content-security-policy', 'referrer-policy', 'cross-origin-opener-policy', 'cross-origin-resource-policy', 'access-control-allow-origin']));
+        for (const [m, url] of NO_ROUTE.filter(([m]) => m === method)) {
+          const res = await app.inject({ method, url, headers: withHeaders(m) });
+          expect(headerNames(res), `${m} ${url.slice(0, 40)}`).toEqual(expected);
+          expect(res.headers['cache-control']).toBe('no-store');
+          expect(res.headers['x-content-type-options']).toBe('nosniff');
+          expect(res.headers['cross-origin-resource-policy']).toBe('same-origin');
+          expect(res.headers['cross-origin-opener-policy']).toBe('same-origin');
+          expect(res.headers['access-control-allow-origin']).toBe(TEST_ORIGIN);
+          expect(res.headers['content-type']).toMatch(/^application\/json/);
+        }
+      }
+    });
+  });
+
+  it('a percent sign that starts no escape is read as the character itself: the answer is the answer of the same address written with %25 (a route that takes the segment gets it, and judges it)', async () => {
+    await withToy(async ({ app, toy }) => {
+      toy.get('/toy/read', async () => ({ ok: true }));
+      const strip = (res: LightMyRequestResponse) => ({ status: res.statusCode, error: body(res).error, headers: headerNames(res) });
+      for (const [broken, written] of [
+        ['/v1/sync/skus%zz', '/v1/sync/skus%25zz'],
+        ['/v1/customers/%zz/ledger', '/v1/customers/%25zz/ledger'],
+        ['/v1/%4/x', '/v1/%254/x'],
+      ]) {
+        const a = await app.inject({ method: 'GET', url: broken, headers: { origin: TEST_ORIGIN } });
+        const b = await app.inject({ method: 'GET', url: written, headers: { origin: TEST_ORIGIN } });
+        expect(strip(a), broken).toEqual(strip(b));
+        expect(a.body).not.toMatch(/FST_ERR|url component/);
+      }
+      // an address that was valid all along is untouched: a route is found, and a good escape is still decoded
+      expect((await app.inject({ method: 'GET', url: '/toy/%72ead' })).json()).toEqual({ ok: true });
+    });
+  });
+
+  it('a preflight to the admin door or the job door with a broken address is a 404 with no CORS header, as for any address of the door (U3)', async () => {
+    await withToy(async ({ app }) => {
+      const asked = { origin: TEST_ORIGIN, 'access-control-request-method': 'POST' };
+      for (const url of ['/admin/v1/%zz', '/admin/v1/users/%', '/internal/jobs/tick%zz', '/admin/v1/nothing']) {
+        const res = await app.inject({ method: 'OPTIONS', url, headers: asked });
+        expect(res.statusCode, url).toBe(404);
+        expect(body(res).error.code, url).toBe('JV_NOT_FOUND');
+        expect(Object.keys(res.headers).filter((h) => h.startsWith('access-control-')), url).toEqual([]);
+      }
+    });
+  });
+
+  it('readableAddress: 30,000 random addresses (stray percent signs, half escapes, invalid UTF-8, long segments, a query) all become addresses the router decodes, each segment at most 100 characters, the query untouched, and a second pass changes nothing', () => {
+    const alphabet = ['%', '%', '4', '1', 'z', 'E', '0', 'A', 'C', '8', 'f', 'F', 'a', 'b', '-', '.', '/', '/', '%E2%82%AC', '%C3%A9', '%25', '%2F'];
+    let seed = 20_261_017;
+    const random = (n: number) => {
+      seed = (Math.imul(seed, 1_103_515_245) + 12_345) >>> 0;
+      return seed % n;
+    };
+    for (let i = 0; i < 30_000; i++) {
+      const length = random(10) === 0 ? 60 + random(200) : 1 + random(24);
+      let path = '/';
+      for (let k = 0; k < length; k++) path += alphabet[random(alphabet.length)];
+      const query = random(4) === 0 ? `?q=%zz${random(9)}` : '';
+      const url = path + query;
+      const fixed = readableAddress(url);
+      const [fixedPath, ...fixedQuery] = fixed.split('?');
+      expect(() => decodeURI(fixedPath), url).not.toThrow();
+      for (const segment of fixedPath.split('/')) expect(segment.length, url).toBeLessThanOrEqual(MAX_SEGMENT_LENGTH);
+      expect(fixedQuery.join('?'), url).toBe(query.slice(1));
+      expect(readableAddress(fixed), url).toBe(fixed);
+    }
+    // an address that was fine is left exactly as it is
+    for (const fine of ['/', '/v1/sync/skus?updated_after=2026-10-17T10%3A00%3A00Z', '/v1/customers/0b7d6cf2-3d24-4f43-9d9c-1c2f1b0e5a11/ledger?after=abc%25def', '/%E2%82%AC/%C3%A9', '/a%2Fb']) expect(readableAddress(fine)).toBe(fine);
+    expect(readableAddress('/v1/sync/skus%zz')).toBe('/v1/sync/skus%25zz');
+    expect(readableAddress('/%E0%A4%A')).toBe('/%25E0%25A4%25A');
+    expect(readableAddress(`/admin/v1/${'a'.repeat(101)}/y`)).toBe('/admin/v1/x/y');
+    expect(readableAddress(`/admin/v1/${'a'.repeat(100)}`)).toBe(`/admin/v1/${'a'.repeat(100)}`);
+  });
+
+  it('if an address were ever handed to the handler that readableAddress leaves as it is, it is answered at once (404, S8 body, no-store, request id) and not sent to the router again: no loop', async () => {
+    await withToy(async ({ app }) => {
+      const routing = vi.spyOn(app, 'routing');
+      const sent: { code?: number; headers: Record<string, string>; payload?: unknown } = { headers: {} };
+      const reply = {
+        raw: {},
+        code(c: number) {
+          sent.code = c;
+          return reply;
+        },
+        header(k: string, v: string) {
+          sent.headers[k] = v;
+          return reply;
+        },
+        send(p: unknown) {
+          sent.payload = p;
+          return reply;
+        },
+      };
+      answerBadAddress(app, new Error('x') as never, { raw: { url: '/fine' }, id: '11111111-1111-4111-8111-111111111111' } as never, reply as never);
+      expect(routing).not.toHaveBeenCalled();
+      expect(sent.code).toBe(404);
+      expect(sent.headers).toEqual({ 'Cache-Control': 'no-store', 'X-Request-Id': '11111111-1111-4111-8111-111111111111' });
+      expect(sent.payload).toEqual({ error: { code: 'JV_NOT_FOUND', message: 'There is nothing at this address.', details: {} }, request_id: '11111111-1111-4111-8111-111111111111' });
+    });
+  });
+
+  it('over a real socket too (the raw request and response of Node, not the test injector): the S8 body, the request id and the headers', async () => {
+    await withToy(async ({ app }) => {
+      const port = await freePort();
+      await app.listen({ port, host: '127.0.0.1' });
+      const get = (path: string) =>
+        new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; text: string }>((resolve, reject) => {
+          const req = http.get({ host: '127.0.0.1', port, path, headers: { origin: TEST_ORIGIN } }, (res) => {
+            let text = '';
+            res.setEncoding('utf8');
+            res.on('data', (chunk: string) => (text += chunk));
+            res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text }));
+          });
+          req.on('error', reject);
+        });
+      for (const path of ['/%zz', '/v1/sync/skus%zz', `/v1/${'a'.repeat(150)}`]) {
+        const res = await get(path);
+        expect(res.status, path).toBe(404);
+        const parsed = JSON.parse(res.text) as ReturnType<typeof body>;
+        expect(parsed.error.code, path).toBe('JV_NOT_FOUND');
+        expect(parsed.request_id, path).toBe(res.headers['x-request-id']);
+        expect(res.headers['cache-control'], path).toBe('no-store');
+        expect(res.headers['strict-transport-security'], path).toBeDefined();
+        expect(res.headers['cross-origin-resource-policy'], path).toBe('same-origin');
+        expect(res.text, path).not.toMatch(/FST_ERR|url component|param length/);
+      }
+    });
   });
 });
 

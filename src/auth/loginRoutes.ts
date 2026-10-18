@@ -86,7 +86,10 @@ interface LoginRow {
   password_hash: string;
   must_change_password: number | string;
 }
-const LOGIN_SQL = 'SELECT id, email, full_name, role, active, password_hash, must_change_password FROM users WHERE email = ?';
+// RV1-5: the e-mail is looked up by an exact compare of the lower-cased text. `users.email` has the collation utf8mb4_unicode_ci, which takes `é` for `e` and ignores some invisible characters
+// (a zero-width space), so `email = ?` alone would find the user for spellings whose counter slot (D24: the lower-cased, trimmed text) is another one, and those tries would never wait. The first
+// condition is the unique index (uq_users_email); the second, in the binary collation, drops every row that is not the same text. The admin door stores the e-mail in lower case.
+const LOGIN_SQL = 'SELECT id, email, full_name, role, active, password_hash, must_change_password FROM users WHERE email = ? AND email COLLATE utf8mb4_bin = ?';
 const LOCK_USER_SQL = 'SELECT password_hash, active FROM users WHERE id = ? FOR UPDATE';
 const SET_PASSWORD_SQL = 'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?';
 
@@ -104,7 +107,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     body: loginBody,
     handler: async ({ app: a, request, reply, body }) => {
       const db = databaseOf(a);
-      const email = body.email.trim();
+      const email = body.email.trim().toLowerCase(); // D1: the login name ignores letter case; any other difference makes it another (unknown) e-mail, RV1-5
       const attempt = await loginThrottleOf(a).begin({ email, headers: request.headers, signal: callSignal(reply), log: request.log }); // counted now; 429 at once over a cap
       try {
         await attempt.delay(); // A13 (1): the e-mail's wait; it ends when the client has gone, and then nothing below runs
@@ -114,7 +117,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         const right =
           lengthOf(body.password) <= PASSWORD_MAX_LENGTH &&
           (await attempt.check(async () => {
-            found.user = (await withRead(afterWait(db, request, null), (r) => r.rows<LoginRow>(LOGIN_SQL, [email])))[0];
+            found.user = (await withRead(afterWait(db, request, null), (r) => r.rows<LoginRow>(LOGIN_SQL, [email, email])))[0];
             return passwords.verify(body.password, found.user ? found.user.password_hash : await passwords.dummyHash());
           }));
         const user = found.user;
