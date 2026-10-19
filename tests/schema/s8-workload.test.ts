@@ -16,7 +16,10 @@ let admin: Connection;
 let AUDIT = false; // the same workload runs twice: plain, and with the generated audit triggers installed (L1 (a))
 let seeded: Record<string, number> = {};
 let customers: string[];
-let skus: { id: string; design_no: string; sku_no: string; category: string; gross: string; net: string; labour: string; piroi: string }[];
+type Piece = { id: string; design_no: string; sku_no: string; category: string; gross: string; net: string; labour: string; piroi: string };
+let skus: Piece[];
+let design: { id: string; design_no: string };
+let categoryName: string;
 
 class Business extends Error {}
 const toPaise = (s: string) => BigInt(parseRupees(s));
@@ -188,6 +191,15 @@ async function workload(seed: number): Promise<Stats> {
   return stats;
 }
 
+/** A new piece In Stock of the one design; it joins `skus`, the list the workload and writeBill take their pieces from. */
+async function addPiece(i: number): Promise<Piece> {
+  const s = V.sku(design.id, { gross_weight: `${12 + i}.500`, customer_net_weight: `${10 + i}.250`, labour_retail: '350.00', piroi: '2.15' });
+  await insert(admin, 'skus', s);
+  const piece = { id: s.id, design_no: design.design_no, sku_no: s.sku_no, category: categoryName, gross: s.gross_weight, net: s.customer_net_weight, labour: '350.00', piroi: '2.15' };
+  skus.push(piece);
+  return piece;
+}
+
 const AUDITED = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations'];
 async function auditedCounts() {
   const out: Record<string, number> = {};
@@ -208,15 +220,12 @@ for (const audit of [false, true]) {
       ({ db, c: admin } = await migratedDb(AUDIT ? 's8_workload_audit' : 's8_workload', { optional: AUDIT }));
       seeded = await auditedCounts();
       const [cats] = await admin.query<any[]>('SELECT id, name FROM categories ORDER BY name LIMIT 1');
-      const design = (await insert(admin, 'designs', V.design(cats[0].id))) as { id: string; design_no: string };
+      categoryName = cats[0].name;
+      design = (await insert(admin, 'designs', V.design(cats[0].id))) as { id: string; design_no: string };
       customers = [];
       for (let i = 0; i < 5; i++) customers.push(((await insert(admin, 'customers', V.customer({ name: `Customer ${i}` }))) as { id: string }).id);
       skus = [];
-      for (let i = 0; i < 14; i++) {
-        const s = V.sku(design.id, { gross_weight: `${12 + i}.500`, customer_net_weight: `${10 + i}.250`, labour_retail: '350.00', piroi: '2.15' });
-        await insert(admin, 'skus', s);
-        skus.push({ id: s.id, design_no: design.design_no, sku_no: s.sku_no, category: cats[0].name, gross: s.gross_weight, net: s.customer_net_weight, labour: '350.00', piroi: '2.15' });
-      }
+      for (let i = 0; i < 14; i++) await addPiece(i);
     });
     afterAll(async () => {
       await admin.end();
@@ -253,12 +262,16 @@ for (const audit of [false, true]) {
       console.log(`[s8] audit: ${Number(updates[0].n)} update rows and ${(await admin.query<any[]>("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'insert'"))[0][0].n} insert rows written by the triggers under 3 x 8 parallel workers`);
     }, 180000);
 
-    it('the invariant checks have teeth: damaged data is reported (mutation test, T-B18 in miniature)', async () => {
-      const [r] = await admin.query<any[]>("SELECT s.id FROM skus s JOIN bill_items i ON i.sku_id = s.id JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE s.status = 'Sold' LIMIT 1");
-      expect(r.length, 'the workload should have left at least one piece on an active bill').toBe(1);
-      await admin.query("UPDATE skus SET status = 'In Stock', sold_bill_id = NULL WHERE id = ?", [r[0].id]);
+    // RV2-1: the test builds its own sold piece on an active bill, so it holds under `-t` (which skips the workload tests above, none of which has a T- in its name) as well as in the file
+    it('PT-RV2b: the invariant checks have teeth: damaged data is reported (mutation test, T-B18 in miniature; builds its own sold piece and active bill)', async () => {
+      const piece = await addPiece(14);
+      await runTx(admin, () => createBill(admin, customers[0], [piece.id]));
+      const [r] = await admin.query<any[]>("SELECT s.id FROM skus s JOIN bill_items i ON i.sku_id = s.id JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE s.id = ? AND s.status = 'Sold'", [piece.id]);
+      expect(r.length, 'the test just sold this piece on an active bill').toBe(1);
+      expect(await invariants(), 'before the damage every invariant holds').toEqual([]);
+      await admin.query("UPDATE skus SET status = 'In Stock', sold_bill_id = NULL WHERE id = ?", [piece.id]);
       expect((await invariants()).join(' ')).toContain('I1');
-      await admin.query("UPDATE skus SET status = 'Sold', sold_bill_id = (SELECT i.bill_id FROM bill_items i JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE i.sku_id = ? LIMIT 1) WHERE id = ?", [r[0].id, r[0].id]);
+      await admin.query("UPDATE skus SET status = 'Sold', sold_bill_id = (SELECT i.bill_id FROM bill_items i JOIN bills b ON b.id = i.bill_id AND b.status = 'active' WHERE i.sku_id = ? LIMIT 1) WHERE id = ?", [piece.id, piece.id]);
       expect(await invariants()).toEqual([]);
     });
   });

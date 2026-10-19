@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { formatTimestamp } from '../../src/clock';
 import * as receiptWrite from '../../src/money/receiptWrite';
 import { type Designs, addDesigns, billBody, counterOf, item, piece, pieceRow, postBill, saved, setEstimate } from './x01-support';
 import { addFineBill, finePendingByBill, settle, settled } from './x03-support';
@@ -694,5 +695,27 @@ describe('X10 the answer is what the wire says (S3): money as text, rows in the 
     const stored = typeof claim.result === 'string' ? JSON.parse(claim.result) : claim.result;
     expect(stored).toEqual(r);
     expect(await ledgerOf(w, c)).toHaveLength(4);
+  });
+});
+
+// last in the file: the API clock never runs backwards (S5), so this moves it forward and leaves it there
+describe('PT-RV2b (RV2-2) L4 + X10: the year of a re-issued bill\'s number is the year of the day it is SAVED, not the year of its bill_date', () => {
+  it('on 2 January 2027 the owner re-issues a bill of 2026 and dates the new one 15 December 2026: it takes NUM2-2027-0001 from the series of 2027, and the closed series of 2026 gives no number', async () => {
+    await setEstimate(w, { prefix: 'NUM2' });
+    const c = await addCustomer(w);
+    const a = await bill(c, '500.00');
+    expect(a.made.bill.bill_no).toBe('NUM2-2026-0001'); // saved on 17 October 2026
+    expect(await counterOf(w, 'bill:NUM2:2026')).toBe(1);
+    // 2 January 2027, 15:30 in Kolkata; the sessions of the fixture are renewed (a jump of weeks ends them: idle 12 hours, absolute 14 days)
+    const now = BigInt(Date.UTC(2027, 0, 2, 10, 0, 0)) * 1000n;
+    w.time.time.micros = now;
+    await w.world.sql.query('UPDATE sessions SET last_seen_at = ?, expires_at = ?, revoked_at = NULL', [formatTimestamp(now - 60_000_000n), formatTimestamp(now + 14n * 24n * 3600n * 1_000_000n)]);
+    const r = await reissued(await reissueBill(w, 'owner', a.id, reissueBody('Retail', [line(a.piece, '450.00')], { bill_date: '2026-12-15' })));
+    expect(r.new_bill.bill_date, 'the new bill keeps the date the owner gave').toBe('2026-12-15');
+    expect(r.new_bill.bill_no, 'but its number is the number of the year it is saved in').toBe('NUM2-2027-0001');
+    expect(await counterOf(w, 'bill:NUM2:2027')).toBe(1);
+    expect(await counterOf(w, 'bill:NUM2:2026'), 'the series of 2026 is closed: it gave no number').toBe(1);
+    expect((await rows(w, 'SELECT bill_no FROM bills WHERE id = ?', [a.id]))[0].bill_no, 'the cancelled bill keeps its number').toBe('NUM2-2026-0001');
+    await setEstimate(w, { prefix: 'JV' });
   });
 });

@@ -343,17 +343,22 @@ describe('T-B22 tie-breaks: allocation goes by bill date, then created time, the
     ]);
   });
 
-  it('an advance the customer already holds is applied oldest receipt first by the rebalance of the same call (Y6), after the payment\'s own allocation', async () => {
+  it('an advance the customer already holds is applied oldest receipt first by the rebalance of the same call (Y6), after the payment\'s own allocation; oldest is by paid_on, then created_at, never by created_at alone (PT-RV2b, RV2-3)', async () => {
     const c = await addCustomer(w);
-    // a state the import can leave behind: 500 pending and 400 of unspent money (two receipts, typed newest first); a payment of 100 then has the rebalance spend the old money, oldest first
-    const bill = await addBill(w, c, '500.00', '2026-10-01');
+    // a state the import can leave behind: 700 pending and 600 of unspent money (four receipts, typed in no order); a payment of 100 then has the rebalance spend the old money, oldest first.
+    // addMoney makes created_at the day of paid_on, so for r5 and r2 both orders agree; the two back-dated receipts (Y8: the owner dates a receipt up to today) are typed on another day than they are dated
+    const bill = await addBill(w, c, '700.00', '2026-10-01');
     const r5 = await addMoney(w, c, '200.00', '2026-10-05');
     const r2 = await addMoney(w, c, '200.00', '2026-10-02');
+    const r2late = await addMoney(w, c, '100.00', '2026-10-02', { created_at: stamp('2026-10-06', 1), updated_at: stamp('2026-10-06', 1) }); // paid 2 Oct, typed 6 Oct
+    const r5early = await addMoney(w, c, '100.00', '2026-10-05', { created_at: stamp('2026-10-03', 1), updated_at: stamp('2026-10-03', 1) }); // paid 5 Oct, typed 3 Oct
     const r = await paid(await pay(w, 'owner', c, money('100.00')));
     expect(r.allocations.map((x) => [x.receipt_id === r.receipt.id ? 'new' : x.receipt_id, x.bill_id, x.amount])).toEqual([
       ['new', bill, '100.00'], // the payment's own allocation comes first (X2: allocates, then rebalances)
-      [r2, bill, '200.00'], // then the oldest receipt (2 Oct)
-      [r5, bill, '200.00'], // then the next (5 Oct)
+      [r2, bill, '200.00'], // then the oldest receipt: paid 2 Oct, typed 2 Oct
+      [r2late, bill, '100.00'], // paid 2 Oct too, typed later: second by created_at (by created_at alone it would be last)
+      [r5early, bill, '100.00'], // paid 5 Oct, typed 3 Oct: after both receipts of 2 Oct although typed before r2late (by created_at alone it would be second), and before r5 of the same day
+      [r5, bill, '200.00'], // paid 5 Oct, typed 5 Oct
     ]);
     expect(r.advance_remaining).toBe('0.00');
     expect(await figures(w, c)).toEqual({ outstanding: '0.00', advance: '0.00', fine_outstanding: '0.000', fine_advance: '0.000' });
