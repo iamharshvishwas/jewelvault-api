@@ -197,7 +197,7 @@ T("PH07", "PH", "WITH-HARSH: the decisions he may veto (every open item with a d
 
 T("PH08", "PH", "WITH-HARSH: go-live day steps in Vercel, hPanel and on his Mac",
   who="WITH-HARSH", lead=(0, 1), deps=["QA04"], reqs=[], tests=[],
-  do="Needed from Harsh on the cut-over day, each in the checklist: make sure the last work of `api-web` is merged into `main` of `jewelvault-app` by pull request (since 18 Oct `main` already holds the work up to WEB11, and every merge into it is a production deploy that stays a sample-data preview while `NEXT_PUBLIC_PREVIEW_MODE=1` is set on Production; to roll back he promotes the previous deployment in Vercel); then set `NEXT_PUBLIC_API_URL` to the production API in the "
+  do="Needed from Harsh on the cut-over day, each in the checklist: make sure the last work of `api-web` is merged into `main` of `jewelvault-app` by pull request, and then the branch `api-web15` (WEB15: it removes the preview mode and the Supabase pieces, so it is merged only now, never earlier) (since 18 Oct `main` already holds the work up to WEB11, and every merge into it is a production deploy that stays a sample-data preview while `NEXT_PUBLIC_PREVIEW_MODE=1` is set on Production; to roll back he promotes the previous deployment in Vercel); then set `NEXT_PUBLIC_API_URL` to the production API in the "
      "Vercel project and REMOVE `NEXT_PUBLIC_PREVIEW_MODE` there (preview mode must not exist in the live build; WEB15 "
      "removed the code, this removes the variable), redeploy and wait; switch Remote MySQL OFF again after the import "
      "window; remove `JV_ADMIN_TOKEN_HASH` from the production environment once the first owner exists (O41 default); check "

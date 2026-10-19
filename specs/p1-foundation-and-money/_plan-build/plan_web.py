@@ -316,7 +316,7 @@ T("WEB14", "WEB", "Hosting headers (vercel.json), build checks, no source maps, 
 T("WEB15", "WEB", "Remove the Supabase pieces and preview mode; leave one clean app",
   agent="B", repo=APP, grp="web", pd=0.6, deps=["WEB12b", "WEB13", "WEB14", "WEB16", "WEB17"],
   reqs=[], tests=[],
-  note="Empty `TOLERATED` in scripts/check-build.mjs (the Supabase and preview variable names the build check still tolerates, from WEB14) so that only NEXT_PUBLIC_API_URL is left (H4).",
+  note="**DO NOT MERGE BEFORE GO-LIVE (found on 19 Oct 2026, after Harsh began merging `api-web` into the app's `main` by pull request): the live site is a sample-data preview only because `NEXT_PUBLIC_PREVIEW_MODE=1` is set on Production; WEB15 removes that mode, so a build of it always opens the login screen and needs `NEXT_PUBLIC_API_URL`. It is built and verified on its own branch `api-web15` and is merged into `main` by Harsh on the go-live day, in PH08, after the Vercel variables are ready.** Empty `TOLERATED` in scripts/check-build.mjs (the Supabase and preview variable names the build check still tolerates, from WEB14) so that only NEXT_PUBLIC_API_URL is left (H4).",
   ptests=["PT-W15 a production build with NEXT_PUBLIC_PREVIEW_MODE=1 opens the login screen exactly like a build without it; no file mentions supabase"],
   do="Delete `src/lib/supabase/client.ts`, the `@supabase/supabase-js` and `supabase` and `pg` dependencies, `supabase/` "
      "(the old migrations and seeds that are frozen, including `0016_write_prologue_customer.sql` of DB09a, commit 6b68285), `scripts/lane.mjs`, `scripts/check-migrations.sh` and their tests "
