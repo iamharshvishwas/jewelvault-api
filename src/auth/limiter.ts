@@ -35,9 +35,9 @@ export const THROTTLES = Object.freeze({
   adminPauseMs: 15 * MINUTE,
   /** Admin door, an address that cannot be trusted: no pause, but at most 5 wrong tokens an hour for the whole API (API09). */
   adminWrongUntrusted: Object.freeze({ limit: 5, windowMs: HOUR }),
-  /** Job tick: 6 a minute for each address ... (API33) */
+  /** Job tick: 6 wrong tokens a minute for each address ... (API33; RV1-10: a right token is counted nowhere) */
   jobPerAddress: Object.freeze({ limit: 6, windowMs: MINUTE }),
-  /** ... and 20 a minute in all, so that a wrong token does not get a fresh bucket each time (API33). */
+  /** ... and 20 wrong tokens a minute in all, so that a wrong token does not get a fresh bucket each time (API33, RV1-10). */
   jobTotal: Object.freeze({ limit: 20, windowMs: MINUTE }),
   /** Change of password: 5 in 15 minutes for each user (API08). */
   changePassword: Object.freeze({ limit: 5, windowMs: 15 * MINUTE }),

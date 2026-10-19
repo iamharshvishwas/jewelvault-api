@@ -88,8 +88,10 @@ interface LoginRow {
 }
 // RV1-5: the e-mail is looked up by an exact compare of the lower-cased text. `users.email` has the collation utf8mb4_unicode_ci, which takes `é` for `e` and ignores some invisible characters
 // (a zero-width space), so `email = ?` alone would find the user for spellings whose counter slot (D24: the lower-cased, trimmed text) is another one, and those tries would never wait. The first
-// condition is the unique index (uq_users_email); the second, in the binary collation, drops every row that is not the same text. The admin door stores the e-mail in lower case.
-const LOGIN_SQL = 'SELECT id, email, full_name, role, active, password_hash, must_change_password FROM users WHERE email = ? AND email COLLATE utf8mb4_bin = ?';
+// condition is the unique index (uq_users_email); the second, in the binary collation, drops every row that is not the same text.
+// RV1-11: the second condition compares the STORED e-mail in lower case too, so a user typed in by hand with capitals (phpMyAdmin, a repair; D1) can log in with its own spelling and with lower case,
+// while an accent or an invisible character is still another text. The admin door stores lower case, and so should any hand-made row (that line is in the handoff).
+const LOGIN_SQL = 'SELECT id, email, full_name, role, active, password_hash, must_change_password FROM users WHERE email = ? AND LOWER(email) COLLATE utf8mb4_bin = ?';
 const LOCK_USER_SQL = 'SELECT password_hash, active FROM users WHERE id = ? FOR UPDATE';
 const SET_PASSWORD_SQL = 'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?';
 

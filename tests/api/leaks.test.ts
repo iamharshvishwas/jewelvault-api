@@ -187,7 +187,7 @@ describe('PT-RV1b T-D28 (RV1-6) an address with a broken percent sign, or a segm
         expect(parsed.request_id, label).toBe(String(res.headers['x-request-id']));
         expect(res.body, label).not.toMatch(/FST_ERR|Bad Request|url component|param length|statusCode|fastify/i);
         expect(res.body, label).not.toContain('zz');
-        expect(res.body, label).not.toContain('aaaa');
+        expect(res.body.replace(/"request_id":"[^"]*"/, ''), label).not.toContain('aaaa'); // not the random request id, which can hold 'aaaa' by chance
       }
     });
   });
