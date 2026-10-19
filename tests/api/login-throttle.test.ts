@@ -511,3 +511,84 @@ describe('PT-RV1b T-D24 (RV1-5) another spelling of an e-mail (an accent, an inv
     expect(sleeps.splice(0)).toEqual([1000]);
   });
 });
+
+// ------------------------------------------------------------------------------------------------ PT-RV1d (RV1-11): an e-mail stored with capitals
+
+describe('PT-RV1d T-D24 (RV1-11, impl-review-1 attack J) a user inserted by hand with capitals in the e-mail logs in with its own spelling and with lower case; an accent, an invisible character or a look-alike letter still does not (D1, U3)', () => {
+  let next = 90_000;
+  const fresh = () => addr(++next);
+  const raw = (email: string, password: string) => world.app.inject({ method: 'POST', url: '/v1/auth/login', headers: { ...csrfHeaders(), 'x-real-ip': fresh() }, payload: { email, password } });
+  const sessionsOf = async (userId: string) => Number((await world.sql.query<any[]>('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?', [userId]))[0][0].n);
+  const lastStored = () => vi.mocked(passwords.verify).mock.calls.at(-1)?.[1];
+
+  /** A user typed into phpMyAdmin, not made by the admin door: capitals in the local part and in the domain. */
+  async function userWithCapitals() {
+    const hex = randomUUID().slice(0, 8);
+    const local = `Owner.Caps.${hex}`;
+    const email = `${local}@Example.test`;
+    const user = await world.addUser({ role: 'staff', passwordHash: HASH, email });
+    const lower = email.toLowerCase();
+    const [lowerLocal, lowerDomain] = lower.split('@');
+    const spellings = {
+      accent: `${lowerLocal.replace('o', 'ö')}@${lowerDomain}`,
+      zeroWidth: `${lowerLocal.slice(0, 3)}\u200b${lowerLocal.slice(3)}@${lowerDomain}`,
+      softHyphen: `${lowerLocal}\u00ad@${lowerDomain}`,
+      zeroWidthInDomain: `${lowerLocal}@${lowerDomain}\u200b`,
+      cyrillicDomain: `${lowerLocal}@${lowerDomain.replace('e', '\u0435')}`, // a Cyrillic e
+    };
+    return { user, email, lower, spellings };
+  }
+
+  it('the stored capitals are really there (the fixture is the case), and the right password with its own spelling, with lower case, in capitals and with spaces around it is the user: 200 and one more session', async () => {
+    const { user, email, lower } = await userWithCapitals();
+    const [stored] = await world.sql.query<any[]>('SELECT email FROM users WHERE id = ?', [user.userId]);
+    expect(stored[0].email).toBe(email);
+    expect(email).not.toBe(lower);
+    const before = await sessionsOf(user.userId);
+    const typedForms = [email, lower, email.toUpperCase(), ` ${email} `, ` ${lower}`];
+    for (const typed of typedForms) {
+      const res = await raw(typed, PASSWORD);
+      expect(res.statusCode, JSON.stringify(typed)).toBe(200);
+      expect((res.json() as { user: { id: string } }).user.id).toBe(user.userId);
+      expect(lastStored(), `${JSON.stringify(typed)} was verified against the user's own hash`).toBe(HASH);
+    }
+    expect(await sessionsOf(user.userId)).toBe(before + typedForms.length);
+  });
+
+  it('an accent, a zero-width space, a soft hyphen and a look-alike Cyrillic letter are still unknown e-mails for that user: 401 JV_BAD_LOGIN for the RIGHT password, no cookie, no session, verified against the dummy hash', async () => {
+    const { user, spellings } = await userWithCapitals();
+    for (const name of ['accent', 'zeroWidth'] as const) {
+      const [found] = await world.sql.query<any[]>('SELECT COUNT(*) AS n FROM users WHERE email = ?', [spellings[name]]);
+      expect(Number(found[0].n), `${name}: the collation of users.email takes it for the user (the reason for the exact compare)`).toBe(1);
+    }
+    const dummy = await passwords.dummyHash();
+    const before = await sessionsOf(user.userId);
+    for (const [name, spelling] of Object.entries(spellings)) {
+      const res = await raw(spelling, PASSWORD);
+      expect(res.statusCode, name).toBe(401);
+      expect(res.json().error.code, name).toBe('JV_BAD_LOGIN');
+      expect(res.headers['set-cookie'], name).toBeUndefined();
+      expect(lastStored(), `${name}: verified against the dummy hash, not the user's`).toBe(dummy);
+    }
+    expect(await sessionsOf(user.userId)).toBe(before);
+  });
+
+  it('the statement still has an index to work with (the first condition is the unique key of the e-mail), so the capital-proof compare reads one row and not the table', async () => {
+    const { lower } = await userWithCapitals();
+    world.spy.sent.length = 0;
+    expect((await raw(lower, PASSWORD)).statusCode).toBe(200);
+    const sql = world.spy.sqls().find((s) => /FROM users WHERE email = \?/.test(s) && s.includes('password_hash'));
+    expect(sql, 'the login statement was sent').toBeDefined();
+    const [plan] = await world.sql.query<any[]>(`EXPLAIN ${sql}`, [lower, lower]);
+    expect(plan.map((r: any) => [r.table, r.key])).toEqual([['users', 'uq_users_email']]);
+    expect(Number(plan[0].rows)).toBe(1);
+  });
+
+  it('a stored lower-case e-mail behaves as before (the admin door stores lower case): its own spelling, capitals and spaces are the user, an accent is not', async () => {
+    const lower = `plain.${randomUUID().slice(0, 8)}@example.test`;
+    const user = await world.addUser({ role: 'biller', passwordHash: HASH, email: lower });
+    for (const typed of [lower, lower.toUpperCase(), `  ${lower}  `]) expect((await raw(typed, PASSWORD)).statusCode, JSON.stringify(typed)).toBe(200);
+    expect((await raw(lower.replace('p', 'ṗ'), PASSWORD)).statusCode).toBe(401);
+    expect(await sessionsOf(user.userId)).toBe(1 + 3); // the fixture's session and the three logins
+  });
+});

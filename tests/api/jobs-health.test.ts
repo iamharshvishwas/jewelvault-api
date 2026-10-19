@@ -157,19 +157,19 @@ describe('T-R04 jobs/health: 503 on an export older than 26 hours and on a downl
     expect(post.statusCode).toBe(404);
   });
 
-  it('it is behind the throttle of the tick (A13): the 7th call of a minute from one address is 429 with Retry-After, and the right token does not get round it', async () => {
+  it('PT-RV1d it is behind the throttle of the tick (A13, RV1-10): the 7th wrong token of a minute from one address is 429 with Retry-After, and the right token is counted nowhere, so it is not refused', async () => {
     w.time.time.micros += 5n * MINUTE; // a new window
     const ip = '203.0.113.77';
     const answers: number[] = [];
     let retryAfter: unknown;
     for (let i = 0; i < 7; i++) {
-      const res = await w.health({ ip });
+      const res = await w.health({ ip, token: 'wrong' });
       answers.push(res.statusCode);
       retryAfter = res.headers['retry-after'];
     }
-    expect(answers.slice(0, 6).every((s) => s === 200 || s === 503)).toBe(true);
-    expect(answers[6]).toBe(429);
+    expect(answers).toEqual([401, 401, 401, 401, 401, 401, 429]);
     expect(Number(retryAfter)).toBeGreaterThan(0);
+    for (let i = 0; i < 8; i++) expect([200, 503], `right token ${i + 1}`).toContain((await w.health({ ip })).statusCode);
   });
 });
 
