@@ -89,7 +89,7 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 - OPS04 [O] Staging real-network checks: 10-second hydrate, cold start, three browsers, headers | depends on: OPS03, WEB06, WEB12b, WEB13, WEB14, WEB15, WEB16, PH04 | elapsed 1.00 to 2.00 | tests: T-E10 | extends: T-F03, T-D12
 - OPS05 [O] Backup drills on the real plan: folder checks, restore drill 1, balances from the zip, the pull | depends on: OPS04, API36, API35, WEB12b, API09, PH06a | elapsed 1.00 to 2.00 | tests: T-R01 | extends: T-R02, T-R05, T-R06, T-E09
 - OPS06 [O] The two-page runbook, deploy and rollback sheet, break-glass sheet, morning check routine | depends on: OPS05, OPS03 | elapsed 0.50 to 1.50 | tests: T-R02 | extends: -
-- OPS07 [O] Production: app, database, domain, cron jobs, first owner, the real pair, restore drill 2 | depends on: OPS06, RV1, RV1b, RV1c, RV2, RV3, PH06b, PH04, OPS04, IMP02 | elapsed 1.00 to 2.00 | tests: - | extends: T-D12, T-E10
+- OPS07 [O] Production: app, database, domain, cron jobs, first owner, the real pair, restore drill 2 | depends on: OPS06, RV1, RV1b, RV1c, RV2, RV2b, RV3, PH06b, PH04, OPS04, IMP02 | elapsed 1.00 to 2.00 | tests: - | extends: T-D12, T-E10
 
 ## Import of Siddhi's data
 
@@ -99,7 +99,7 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 
 ## Acceptance, training, go-live (lane O)
 
-- QA01 [A] Full regression on both repositories and the QA critical themes re-run | depends on: RV2, RV3, WEB12b, WEB13, WEB14, WEB15, WEB16, API36, OPS05 | 0.8 plan-days, elapsed 0.10 to 0.32 | tests: - | extends: -
+- QA01 [A] Full regression on both repositories and the QA critical themes re-run | depends on: RV2, RV2b, RV3, WEB12b, WEB13, WEB14, WEB15, WEB16, API36, OPS05 | 0.8 plan-days, elapsed 0.10 to 0.32 | tests: - | extends: -
 - QA02 [O] Acceptance by Siddhi's two testers and the fix loop - gate G-UAT | depends on: QA01, IMP02, OPS04, PS07, PS01, WEB15, WEB16 | elapsed 1.50 to 3.50 | tests: - | extends: -
 - QA03 [O] Training: one 45-minute session, one-page guides, the paper break-glass sheet | depends on: QA02, OPS06, PS06 | elapsed 0.50 to 1.50 | tests: - | extends: T-R01
 - QA04 [O] Go or no-go checklist - gate G-GO | depends on: QA03, OPS07, OPS08, PH06b, PS06, PS01, RV4, WEB15 | elapsed 0.30 to 0.80 | tests: - | extends: -
@@ -114,8 +114,9 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 - RV1c [C] Fixes from implementation review 1, website side (RV1-8: the build check pins its variable list and its raw-HTML names) | depends on: RV1, WEB14, RV1b | elapsed 0.20 to 0.50 | tests: - | extends: -
 - RV1d [A] Fixes from the re-check of implementation review 1, API side (RV1-10 the job door, RV1-11 capitals in stored e-mails) | depends on: RV1b, API33 | elapsed 0.20 to 0.50 | tests: - | extends: -
 - RV2 [A] Implementation review 2: the money core with a mutation check (fresh agent) - gate G-M | depends on: API29, API30, API31, RV1d | elapsed 1.00 to 2.00 | tests: - | extends: -
+- RV2b [A] Fixes from implementation review 2 (RV2-1 a test that depends on its neighbours, RV2-2 and RV2-3 two missing tests, RV2-4 the test config ignores the lane namespace) | depends on: RV2 | elapsed 0.20 to 0.50 | tests: - | extends: -
 - RV3 [C] Implementation review 3: jobs, backups and restore (fresh agent) - gate G-B | depends on: API33, API33b, API34, API35, API36, OPS05 | elapsed 0.50 to 1.00 | tests: - | extends: -
-- RV4 [A] Implementation review 4: end to end on staging (fresh agent) - gate G-E | depends on: WEB12b, WEB13, WEB14, WEB15, WEB16, OPS04, RV1, RV1b, RV1c, RV2, RV3 | elapsed 0.50 to 1.00 | tests: - | extends: -
+- RV4 [A] Implementation review 4: end to end on staging (fresh agent) - gate G-E | depends on: WEB12b, WEB13, WEB14, WEB15, WEB16, OPS04, RV1, RV1b, RV1c, RV2, RV2b, RV3 | elapsed 0.50 to 1.00 | tests: - | extends: -
 
 ## Harsh
 
@@ -881,6 +882,17 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 - **Done when:** `impl-review-2.md` has no open Critical or High; all A, B and C tests pass three times in a row; each mutation failed at least one test.
 - **Rollback:** Nothing to roll back (a review only reads; fixes are separate commits).
 
+### RV2b Fixes from implementation review 2 (RV2-1 a test that depends on its neighbours, RV2-2 and RV2-3 two missing tests, RV2-4 the test config ignores the lane namespace)
+
+- **Who:** A   **Repository:** jewelvault-api   **Size:** elapsed 0.20 to 0.50 working days   **Depends on:** RV2
+- **Gate:** G-M
+- **Spec lines:** -   **Also touches:** L4, Y6, X10, Y8
+- **Tests first written here:** -   **Extends:** -   **Plan tests:** PT-RV2b the gaps of review 2 are closed: a re-issue dated into another year takes the number of the day it is saved; an advance is applied to the receipt that is oldest by paid_on and not by created_at; the namespace variables reach the test config and never resolve to the real lanes 33311 to 33313; the plan's selection command passes
+- **Do:** RV2-1: `npm test -- -t "T-A|T-B|T-C"` selects two tests named 'T-B18 in miniature' in `tests/schema/s8-workload.test.ts` (plain schema and with the audit triggers) that damage a piece which the neighbouring workload tests ('seed 1: 8 workers x 120 operations ...', no `T-` in their names) were to leave on an active bill, so under the selection they fail (the file alone passes): make the test build its own sold piece and active bill before it damages them, or give the workload tests a `T-B18` word. RV2-2: add one case to `x10-reissue-bill.test.ts`: clock on 2 January 2027, re-issue with `bill_date` in December 2026, expect the number `...-2027-nnnn` (L4: the year is the Asia/Kolkata year of the day the bill is saved; the mutation that takes it from `bill_date` survived all tests). RV2-3: in the test 'an advance the customer already holds is applied oldest receipt first' (`x02-record-payment.test.ts`) add a receipt with `paid_on` 2 October but `created_at` 6 October and another with `paid_on` 5 October but `created_at` 3 October and expect the `paid_on` order (Y6, T-B22; the mutation that orders by `created_at` survived all tests). RV2-4: `vitest.config.ts` calls `laneEnv(lane)` and `selectedLane` without the namespace, so `JV_LANE_NAMESPACE=x JV_LANE_PORT_BASE=y JV_LANE=a npm test` runs the database tests against the real lane a container (port 33311); pass `{ namespace: process.env.JV_LANE_NAMESPACE ?? '', portBase: Number(process.env.JV_LANE_PORT_BASE ?? 33310) }` to both, and add a test that a set namespace never resolves to the real lanes (ports 33311 to 33313). Starting points: the review's evidence in /Users/harshvishwas/Desktop/Harsh Vishwas/Client/jewelvault-api-design/impl-review-2/ (impl-review-2.md sections 4 and 6, attacks/, evidence/). The observations O-1 (the code of three refusals the spec does not name) and O-2 (X1 and X10 read the day before the customer lock) are NOT built here: O-1 is a choice for Harsh and the spec session.
+- **Note:** DONE-GATE: gate G-M PASSED on 19 Oct 2026 (`impl-review-2.md` in jewelvault-api-design/impl-review-2: Critical 0, High 0, Medium 1, Low 3; 111 mutations, 106 caught, 3 of the 5 survivors equivalent). These four are small and are fixed before go-live; the reviewer confirms later without a new review.
+- **Done when:** `npm test -- -t PT-RV2b` passes; the plan's selection command `npm test -- -t "T-A|T-B|T-C"` has no failure; the three mutations of the review (the year taken from `bill_date` in X10, receipts ordered by `created_at` only, the namespace dropped from vitest.config.ts) each fail a test; `npm run verify` green.
+- **Rollback:** Nothing to roll back (a review only reads; fixes are separate commits).
+
 ### RV3 Implementation review 3: jobs, backups and restore (fresh agent) - gate G-B
 
 - **Who:** C   **Repository:** jewelvault-api   **Size:** elapsed 0.50 to 1.00 working days   **Depends on:** API33, API33b, API34, API35, API36, OPS05
@@ -893,7 +905,7 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 
 ### RV4 Implementation review 4: end to end on staging (fresh agent) - gate G-E
 
-- **Who:** A   **Repository:** jewelvault-api   **Size:** elapsed 0.50 to 1.00 working days   **Depends on:** WEB12b, WEB13, WEB14, WEB15, WEB16, OPS04, RV1, RV1b, RV1c, RV2, RV3
+- **Who:** A   **Repository:** jewelvault-api   **Size:** elapsed 0.50 to 1.00 working days   **Depends on:** WEB12b, WEB13, WEB14, WEB15, WEB16, OPS04, RV1, RV1b, RV1c, RV2, RV2b, RV3
 - **Gate:** G-E
 - **Spec lines:** -   **Also touches:** -
 - **Tests first written here:** -   **Extends:** -   **Plan tests:** -
@@ -1161,7 +1173,7 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 
 ### OPS07 Production: app, database, domain, cron jobs, first owner, the real pair, restore drill 2
 
-- **Who:** O (orchestrator with Harsh or Siddhi)   **[WITH-HARSH]**   **Repository:** jewelvault-api   **Size:** elapsed 1.00 to 2.00 working days   **Depends on:** OPS06, RV1, RV1b, RV1c, RV2, RV3, PH06b, PH04, OPS04, IMP02
+- **Who:** O (orchestrator with Harsh or Siddhi)   **[WITH-HARSH]**   **Repository:** jewelvault-api   **Size:** elapsed 1.00 to 2.00 working days   **Depends on:** OPS06, RV1, RV1b, RV1c, RV2, RV2b, RV3, PH06b, PH04, OPS04, IMP02
 - **Spec lines:** -   **Also touches:** -
 - **Tests first written here:** -   **Extends:** T-D12, T-E10   **Plan tests:** -
 - **Do:** With Harsh at hPanel, in a closing-time window: the production Node app (branch `main`) and database with exactly the ten boxes; the domain connected first, then the environment variables typed by Harsh (never in chat; `JV_BACKUP_DIR` and the cron commands only after the domain is connected); migrations through Remote MySQL, then Remote MySQL OFF; the seeds of D20 only; the first owner by the admin command; both Custom cron jobs and the workflow; the real domain connected; the Vercel production project pointed at the production API; **the real pair is tested once: T-D12 (headers by `curl -I`) and T-E10 (three browsers) on the website on Vercel and the API on Hostinger under the real domain (H5, a go-live condition)**. **Restore DRILL 2 is done with real data**: after the staging rehearsal (IMP02) the staging export with her real data and photos is restored into a SECOND Hostinger database through Remote MySQL (the path production would use) and timed; it is repeated on the cut-over eve after IMP03 if time allows; the second database is left for Harsh to remove. Production holds no customer data until the import (IMP03), so a drill on an empty production export would prove nothing.
@@ -1200,7 +1212,7 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 
 ### QA01 Full regression on both repositories and the QA critical themes re-run
 
-- **Who:** A   **Repository:** jewelvault-api   **Size:** 0.8 plan-days (pure), elapsed 0.10 to 0.32 working days   **Depends on:** RV2, RV3, WEB12b, WEB13, WEB14, WEB15, WEB16, API36, OPS05
+- **Who:** A   **Repository:** jewelvault-api   **Size:** 0.8 plan-days (pure), elapsed 0.10 to 0.32 working days   **Depends on:** RV2, RV2b, RV3, WEB12b, WEB13, WEB14, WEB15, WEB16, API36, OPS05
 - **Spec lines:** -   **Also touches:** -
 - **Tests first written here:** -   **Extends:** -   **Plan tests:** -
 - **Do:** Every suite of `jewelvault-api` (`npm run verify` three times) and of `jewelvault-app` (`E2E=1 npm run verify`) green; the 13 QA critical themes of `QA-Report-2026-10-02/findings.json` re-run on staging; every QA Critical and High finding listed as closed, M1-elsewhere, M2, open-with-reason or [CA] against spec section 14, with the test that proves each closed one.

@@ -70,6 +70,16 @@ T("RV2", "RV", "Implementation review 2: the money core with a mutation check (f
   files=[], done="`impl-review-2.md` has no open Critical or High; all A, B and C tests pass three times in a row; each mutation failed at least one "
                  "test.", rollback=RBR)
 
+T("RV2b", "RV", "Fixes from implementation review 2 (RV2-1 a test that depends on its neighbours, RV2-2 and RV2-3 two missing tests, RV2-4 the test config ignores the lane namespace)",
+  agent="A", repo="api", lo=0.2, hi=0.5, grp="review", deps=["RV2"], reqs=[], tests=[], gate="G-M",
+  uses=["L4", "Y6", "X10", "Y8"],
+  ptests=["PT-RV2b the gaps of review 2 are closed: a re-issue dated into another year takes the number of the day it is saved; an advance is applied to the receipt that is oldest by paid_on and not by created_at; the namespace variables reach the test config and never resolve to the real lanes 33311 to 33313; the plan's selection command passes"],
+  note="DONE-GATE: gate G-M PASSED on 19 Oct 2026 (`impl-review-2.md` in jewelvault-api-design/impl-review-2: Critical 0, High 0, Medium 1, Low 3; 111 mutations, 106 caught, 3 of the 5 survivors equivalent). These four are small and are fixed before go-live; the reviewer confirms later without a new review.",
+  do="RV2-1: `npm test -- -t \"T-A|T-B|T-C\"` selects two tests named 'T-B18 in miniature' in `tests/schema/s8-workload.test.ts` (plain schema and with the audit triggers) that damage a piece which the neighbouring workload tests ('seed 1: 8 workers x 120 operations ...', no `T-` in their names) were to leave on an active bill, so under the selection they fail (the file alone passes): make the test build its own sold piece and active bill before it damages them, or give the workload tests a `T-B18` word. RV2-2: add one case to `x10-reissue-bill.test.ts`: clock on 2 January 2027, re-issue with `bill_date` in December 2026, expect the number `...-2027-nnnn` (L4: the year is the Asia/Kolkata year of the day the bill is saved; the mutation that takes it from `bill_date` survived all tests). RV2-3: in the test 'an advance the customer already holds is applied oldest receipt first' (`x02-record-payment.test.ts`) add a receipt with `paid_on` 2 October but `created_at` 6 October and another with `paid_on` 5 October but `created_at` 3 October and expect the `paid_on` order (Y6, T-B22; the mutation that orders by `created_at` survived all tests). RV2-4: `vitest.config.ts` calls `laneEnv(lane)` and `selectedLane` without the namespace, so `JV_LANE_NAMESPACE=x JV_LANE_PORT_BASE=y JV_LANE=a npm test` runs the database tests against the real lane a container (port 33311); pass `{ namespace: process.env.JV_LANE_NAMESPACE ?? '', portBase: Number(process.env.JV_LANE_PORT_BASE ?? 33310) }` to both, and add a test that a set namespace never resolves to the real lanes (ports 33311 to 33313). Starting points: the review's evidence in /Users/harshvishwas/Desktop/Harsh Vishwas/Client/jewelvault-api-design/impl-review-2/ (impl-review-2.md sections 4 and 6, attacks/, evidence/). The observations O-1 (the code of three refusals the spec does not name) and O-2 (X1 and X10 read the day before the customer lock) are NOT built here: O-1 is a choice for Harsh and the spec session.",
+  files=[],
+  done="`npm test -- -t PT-RV2b` passes; the plan's selection command `npm test -- -t \"T-A|T-B|T-C\"` has no failure; the three mutations of the review (the year taken from `bill_date` in X10, receipts ordered by `created_at` only, the namespace dropped from vitest.config.ts) each fail a test; `npm run verify` green.",
+  rollback=RBR)
+
 T("RV3", "RV", "Implementation review 3: jobs, backups and restore (fresh agent) - gate G-B",
   agent="C", repo="api", lo=0.5, hi=1.0, grp="review",
   deps=["API33", "API33b", "API34", "API35", "API36", "OPS05"],
@@ -82,7 +92,7 @@ T("RV3", "RV", "Implementation review 3: jobs, backups and restore (fresh agent)
 
 T("RV4", "RV", "Implementation review 4: end to end on staging (fresh agent) - gate G-E",
   agent="A", repo="api", lo=0.5, hi=1.0, grp="review",
-  deps=["WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "OPS04", "RV1", "RV1b", "RV1c", "RV2", "RV3"],
+  deps=["WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "OPS04", "RV1", "RV1b", "RV1c", "RV2", "RV2b", "RV3"],
   reqs=[], tests=[], gate="G-E",
   do="A fresh agent runs a hand billing day on the staging pair: create a customer, a bill (with the worked example), a part "
      "payment, a fine settlement, a cancel, a re-issue, a void, a refund, an opening balance; reads the nightly check and the "
@@ -399,7 +409,7 @@ T("OPS06", "OPS", "The two-page runbook, deploy and rollback sheet, break-glass 
   rollback=RBN)
 
 T("OPS07", "OPS", "Production: app, database, domain, cron jobs, first owner, the real pair, restore drill 2",
-  agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS06", "RV1", "RV1b", "RV1c", "RV2", "RV3", "PH06b", "PH04", "OPS04", "IMP02"],
+  agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS06", "RV1", "RV1b", "RV1c", "RV2", "RV2b", "RV3", "PH06b", "PH04", "OPS04", "IMP02"],
   reqs=[], tests=[], extends=["T-D12", "T-E10"],
   do="With Harsh at hPanel, in a closing-time window: the production Node app (branch `main`) and database with exactly the ten "
      "boxes; the domain connected first, then the environment variables typed by Harsh (never in chat; `JV_BACKUP_DIR` and the cron commands only after the domain is connected); migrations through Remote MySQL, then Remote MySQL OFF; the "
@@ -453,7 +463,7 @@ T("IMP03", "IMP", "Production import on the cut-over eve and Siddhi's signature"
 
 # =============================================================================================== QUALITY AND GO-LIVE
 T("QA01", "QA", "Full regression on both repositories and the QA critical themes re-run",
-  agent="A", repo="api", grp="pure", pd=0.8, deps=["RV2", "RV3", "WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "API36", "OPS05"],
+  agent="A", repo="api", grp="pure", pd=0.8, deps=["RV2", "RV2b", "RV3", "WEB12b", "WEB13", "WEB14", "WEB15", "WEB16", "API36", "OPS05"],
   reqs=[], tests=[],
   do="Every suite of `jewelvault-api` (`npm run verify` three times) and of `jewelvault-app` (`E2E=1 npm run verify`) green; the "
      "13 QA critical themes of `QA-Report-2026-10-02/findings.json` re-run on staging; every QA Critical and High finding listed "
