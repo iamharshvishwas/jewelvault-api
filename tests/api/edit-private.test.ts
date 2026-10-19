@@ -241,7 +241,8 @@ describe('T-D02 (API13c) the weight rules of D7: a plain 3-decimal text within t
     const res = await put('owner', piece, { original_net_weight: value });
     expect([res.statusCode, codeOf(res)], res.body).toEqual([422, 'JV_INVALID_INPUT']);
     expect(detailsOf(res)).toEqual({ field: 'original_net_weight' });
-    if (typeof value === 'string' && value.length > 1) expect(res.body).not.toContain(value);
+    // the random request id in the body is left out: a UUID can contain 'abc' by chance
+    if (typeof value === 'string' && value.length > 1) expect(res.body.replace(/"request_id":"[^"]*"/, '')).not.toContain(value);
     expect(await privateRow(piece)).toBeUndefined();
   });
 
