@@ -47,9 +47,19 @@ T("RV1c", "RV", "Fixes from implementation review 1, website side (RV1-8: the bu
   done="`npm test -- -t PT-RV1c` passes; the break A18 fails a test; `npm run check:build` still passes on the real build.",
   rollback=RBR)
 
+T("RV1d", "RV", "Fixes from the re-check of implementation review 1, API side (RV1-10 the job door, RV1-11 capitals in stored e-mails)",
+  agent="A", repo="api", lo=0.2, hi=0.5, grp="review", deps=["RV1b", "API33"], reqs=[], tests=[], gate="G-A",
+  uses=["A13", "I8", "D1", "U3", "D24"],
+  ptests=["PT-RV1d the job door counts only wrong tokens: wrong tokens from 4 addresses at 20 a minute never make the scheduler's right token get 429; a user stored with capitals logs in with its own spelling and with lower case, and an accent or an invisible character still does not"],
+  note="Found by the re-check of gate G-A (the Addendum at the end of `impl-review-1.md`, 19 Oct 2026): RV1-10 (Medium) and RV1-11 (Low). The gate G-A itself PASSED on 19 Oct; these two are new and small, and the reviewer will confirm them later without a new review. RV1-9 (the formula guard) stays in WEB12b.",
+  do="RV1-10: the job door (`src/jobs/door.ts`, `/internal/jobs/tick` and `/internal/jobs/health`, API33) counts every call, the right token too, in the 20 a minute in all, before it looks at the token, so wrong tokens from 4 addresses (6 a minute each) fill the 20 and the scheduler's right token gets 429 for the rest of the minute and the hourly tick (nightly check, housekeeping, photo copy) does not run. Judge it as RV1-7 judged the admin door: look at the token first; a right token passes and is counted nowhere; only a wrong token is counted, against the per-address row (6 a minute) and the total (20 a minute); the Origin refusal stays first. Add the case to the T-D24 test of the job door. RV1-11: after the RV1-5 fix the login compares the stored e-mail byte for byte, so a user inserted by hand with capitals cannot log in; compare the stored side in lower case too: `WHERE email = ? AND LOWER(email) COLLATE utf8mb4_bin = ?` (ASCII behaves the same; accents and invisible characters stay refused), with a test for a user inserted with capitals (both spellings log in) and the old accent and zero-width cases still refused; add the line 'e-mails are stored in lower case by the admin door' to the handoff. The reviewer's attacks `attacks/k-job-door.test.ts` and `attacks/j-spelling-fix.test.ts` (in /Users/harshvishwas/Desktop/Harsh Vishwas/Client/jewelvault-api-design/impl-review-1/attacks, read-only) are the starting points.",
+  files=[],
+  done="`npm test -- -t PT-RV1d` passes; the reviewer's attacks K and J fail on the old code and pass now (the run is attached to the report); `npm run verify` green.",
+  rollback=RBR)
+
 T("RV2", "RV", "Implementation review 2: the money core with a mutation check (fresh agent) - gate G-M",
   agent="A", repo="api", lo=1.0, hi=2.0, grp="review",
-  deps=["API29", "API30", "API31"],
+  deps=["API29", "API30", "API31", "RV1d"],
   reqs=[], tests=[], gate="G-M",
   do="A fresh agent re-derives the money rules from spec Part B (not from the code), runs the A, B and C suites three times in a "
      "row, and applies its own mutations one rule at a time: a rebalance that rewrites an old allocation, a cancel that skips a "
@@ -94,26 +104,26 @@ T("PH02", "PH", "WITH-HARSH: private GitHub repository for the API, pushed by Ha
   do="Needed from Harsh (he pushes; Claude never does): make `iamharshvishwas/jewelvault-api` a PRIVATE repository from GitHub Desktop "
      "and push `main` and, from the same commit, a branch `staging` (PH05b creates the staging app from it); check that Hostinger's GitHub app (one GitHub account per plan, all Node sites share it) can see it; "
      "later pushes of the staging and production branches are his too. The website repository `jewelvault-app` is already on "
-     "GitHub and Vercel: until PH08 Harsh pushes only the work branch `api-web` of it (never `main`), so that Vercel's production site keeps showing what it shows today and a half-built login cannot reach it; "
-     "Vercel makes a preview for the branch. Latest day: before OPS03a (the first staging deploy).",
+     "GitHub and Vercel. **Rule changed on 19 Oct 2026, in Harsh's words (he merged into `main` on purpose on 18 Oct):** `api-web` stays the work branch; Harsh merges it into `main` by GitHub pull request when he chooses (since 18 Oct `main` holds the work of WEB00 to WEB11); every merge into `main` is a Vercel PRODUCTION deploy, which stays a sample-data preview, not a live shop, while `NEXT_PUBLIC_PREVIEW_MODE=1` is set on the Production environment of the Vercel project (that variable is removed only at go-live, PH08, and stays on Production until then); "
+     "Vercel makes a preview for the branch. **Status on 19 Oct:** the API repository is private and pushed (`main` and the lane branches) and Harsh merged pull request #1 into its `main`; still open: the branch `staging` (he cuts it from `main` in GitHub Desktop and pushes it) and the check that Hostinger's GitHub app sees the repository. Latest day: before OPS03a (the first staging deploy).",
   done="The repository is visible in hPanel's 'Add website, Node.js web app' list.", rollback=RBN)
 
 T("PH03", "PH", "WITH-HARSH: remove the failed Hostinger test app and find the unlisted test cron job (keep the two named proof apps for now)",
   who="WITH-HARSH", lead=(1, 4), deps=["PH01"], reqs=[], tests=[],
   do="Needed from Harsh in hPanel (names as of 17 Oct, after the domain was connected; the temporary `*.hostingersite.com` addresses now answer 403): "
-     "remove the failed app `skyblue-rat-675449`. **Do not remove the two proof apps yet:** the runtime proof app sits under `billing-api-staging.jaishrigoldpalace.com` "
+     "remove the failed app `skyblue-rat-675449` and look in hPanel's database list for the old database `proof2` (it is removed with the proof apps by PH05b; PH03 only finds it and writes its exact name down). **Do not remove the two proof apps yet:** the runtime proof app sits under `billing-api-staging.jaishrigoldpalace.com` "
      "(formerly `deepskyblue-hare-853248`) and carries the cookie page that passed in Chrome; OPS01 reuses it, by zip upload, for the API skeleton, and the database proof app "
      "(formerly `floralwhite-wombat-443130`, with the test folder `jv-backup-test`) keeps `billing-staging.` until PH04 points that name at Vercel. PH05b removes both proof apps "
-     "and the database `u992795260_proof` once OPS01 and OPS02a are done (**removing an app frees its domain name, so the real staging app can take `billing-api-staging`**, "
+     "and the databases `u992795260_proof` and the older `proof2` once OPS01 and OPS02a are done (**removing an app frees its domain name, so the real staging app can take `billing-api-staging`**, "
      "HOSTINGER-SPIKE section 6). **Never touch `flybytheway.com`: it is the live site in the same account.** The Node.js-type cron job made for the proof is not listed in hPanel "
      "and cannot be deleted from the screen: if it does not vanish with its website, ask Hostinger support. The plan has 5 Node app slots; staging and production need two; "
      "nothing is assumed done until Harsh has done it. Latest day: before PH05b.",
   done="hPanel no longer lists `skyblue-rat-675449`; the two proof apps are still there; the support answer about the cron job is written down.", rollback=RBN)
 
 T("PH04", "PH", "WITH-HARSH: the domain's DNS for Vercel, and (after go-live) the hand-over of the domain to Siddhi",
-  who="WITH-HARSH", lead=(0, 2), deps=["PH01"], reqs=["O38"], tests=[],
+  who="WITH-HARSH", lead=(0, 2), deps=["PH01", "OPS02a"], reqs=["O38"], tests=[],
   do="**Corrected on 17 Oct 2026, in Harsh's words: `jaishrigoldpalace.com` is SIDDHI's domain (her name and her money); it is registered in HARSH's own Hostinger account (API-00C-RESULTS.md section 5) and stays there until hand-over.** So the old plan of "
-     "asking Siddhi for a domain is gone because she has already supplied the name (`MESSAGE-FOR-SIDDHI-domain.md` stays marked not needed). The names are fixed: production `billing.jaishrigoldpalace.com` (the website, "
+     "asking Siddhi for a domain is gone because she has already supplied the name (`MESSAGE-FOR-SIDDHI-domain.md` stays marked not needed). **Order (found by the staging guide of 19 Oct): the DNS step that points `billing-staging.` at Vercel takes that name away from the Hostinger database proof app, which OPS02a still uses, so PH04 comes AFTER OPS02a.** The names are fixed: production `billing.jaishrigoldpalace.com` (the website, "
      "on Vercel) and `billing-api.jaishrigoldpalace.com` (the API, Hostinger); staging `billing-staging.` and `billing-api-staging.`. Two staging names are already connected "
      "to the proof apps, with Let's Encrypt certificates (17 Oct to 15 Jan 2027), and the cookie, CORS and image flow passed in Chrome 155. **Needed from Harsh:** (1) in "
      "Hostinger's DNS for the domain, the record that Vercel asks for, for `billing-staging` (a Vercel preview project) and later for `billing` (production), "
@@ -133,12 +143,12 @@ T("PH05", "PH", "WITH-HARSH: staging database and a scratch database created in 
 
 T("PH05b", "PH", "WITH-HARSH: remove the two proof apps, then create the staging Node app from the private repository under the two staging names",
   who="WITH-HARSH", lead=(0, 1), deps=["PH02", "PH03", "PH05", "OPS01", "OPS02a"], reqs=[], tests=[],
-  do="Needed from Harsh, after OPS01 and OPS02a are done (the proof apps are still needed until then): remove the runtime proof app, the database proof app and the database "
-     "`u992795260_proof` (**removing an app frees its domain name**); add a Node.js web app for staging from the private repository (branch `staging`) and give it "
+  do="Needed from Harsh, after OPS01 and OPS02a are done (the proof apps are still needed until then): remove the runtime proof app, the database proof app and the databases "
+     "`u992795260_proof` and `proof2` (**removing an app frees its domain name**); add a Node.js web app for staging from the private repository (branch `staging`) and give it "
      "`billing-api-staging.jaishrigoldpalace.com`; `billing-staging.` stays with Vercel (PH04). **Connecting a domain renames the site's folder** (API-00C-RESULTS section 7), so "
      "`JV_BACKUP_DIR` and the cron commands are typed only AFTER the domain is connected, with `JV_BACKUP_DIR` at the default `/home/<user>/jv-backup` outside `domains/`. "
      "Latest day: before OPS03a.",
-  done="hPanel shows the staging app under its name; no proof app and no `u992795260_proof` is left.", rollback=RBN)
+  done="hPanel shows the staging app under its name; no proof app and no `u992795260_proof` or `proof2` database is left.", rollback=RBN)
 
 T("PH06a", "PH", "WITH-HARSH: the backup key pair, the token hashes and the Actions secret (needed for the first full staging deploy)",
   who="WITH-HARSH", lead=(1, 4), deps=["PH01", "API09"], reqs=["O40"], tests=[],
@@ -177,7 +187,7 @@ T("PH07", "PH", "WITH-HARSH: the decisions he may veto (every open item with a d
 
 T("PH08", "PH", "WITH-HARSH: go-live day steps in Vercel, hPanel and on his Mac",
   who="WITH-HARSH", lead=(0, 1), deps=["QA04"], reqs=[], tests=[],
-  do="Needed from Harsh on the cut-over day, each in the checklist: merge `api-web` into `main` of `jewelvault-app` in GitHub Desktop and push, so that Vercel builds production from the new code (a redeploy of the old `main` would ship the old demo; to roll back he promotes the previous deployment); set `NEXT_PUBLIC_API_URL` to the production API in the "
+  do="Needed from Harsh on the cut-over day, each in the checklist: make sure the last work of `api-web` is merged into `main` of `jewelvault-app` by pull request (since 18 Oct `main` already holds the work up to WEB11, and every merge into it is a production deploy that stays a sample-data preview while `NEXT_PUBLIC_PREVIEW_MODE=1` is set on Production; to roll back he promotes the previous deployment in Vercel); then set `NEXT_PUBLIC_API_URL` to the production API in the "
      "Vercel project and REMOVE `NEXT_PUBLIC_PREVIEW_MODE` there (preview mode must not exist in the live build; WEB15 "
      "removed the code, this removes the variable), redeploy and wait; switch Remote MySQL OFF again after the import "
      "window; remove `JV_ADMIN_TOKEN_HASH` from the production environment once the first owner exists (O41 default); check "
