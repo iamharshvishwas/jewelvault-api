@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SEED_PLANS, type SeedPlan, type SequenceReport, runSequence } from './api/x31-sequence';
+import { MAIN_KINDS, OPERATIONS, SEED_PLANS, type SeedPlan, type SequenceReport, runSequence } from './api/x31-sequence';
 
 // API31, T-B14 (I9, Y6, V3, I1 to I7, I10, I13) and the T-B26 clause (Y6, I10): random sequences of 200 operations through the REAL routes for three seeds (and, when JV_SEQUENCE_SEED names one, a
 // fourth, run once: `JV_SEQUENCE_SEED=4 npm test -- -t T-B14`). The generator, the oracle and the checks after every operation are in tests/api/x31-sequence.ts (read its header first).
@@ -28,19 +28,21 @@ function runOnce(seed: number): Promise<SequenceReport> {
 function summary(r: SequenceReport): string {
   return JSON.stringify({
     seed: r.seed, ops: r.ops, seconds: Math.round(r.seconds * 10) / 10, days: `${r.firstDay} .. ${r.lastDay}`, saved: r.ok, refused: r.refused, voided: r.voided,
+    forced: r.forced, digest: r.digest.slice(0, 16),
     repeats: r.replays, midnights: r.midnights, newYears: r.newYears, backDated: r.backdated, walkin: r.walkin, invariantRuns: r.invariantRuns, allocationsCompared: r.allocationsCompared, ledgersChecked: r.ledgersChecked,
     nightly: r.nightly ? { runs: r.nightly.runs, ok: r.nightly.ok } : null,
     ...(r.problems.length > 0 ? { firstProblem: r.problems[0] } : {}),
   });
 }
 
-/** What a sequence must have covered, or it proves nothing about the thing it is named for (the mix of T-B14). */
+/**
+ * What a sequence must have covered, or it proves nothing about the thing it is named for (the mix of T-B14). Every counter starts at 0, so a kind that did not happen is a number in the message, and the
+ * schedule of x31-sequence.ts makes sure the four kinds of void happen (a draw is not a promise).
+ */
 function expectCovered(r: SequenceReport): void {
   expect(r.ops).toBe(200);
-  for (const op of ['create_bill', 'record_payment', 'settle_fine', 'void_receipt', 'cancel_bill', 'reissue_bill', 'issue_refund', 'add_opening_balance']) {
-    expect(r.ok[op], `no ${op} was saved in 200 operations`).toBeGreaterThan(0);
-  }
-  for (const kind of ['money', 'fine_silver', 'fine_cash', 'refund']) expect(r.voided[kind], `no receipt of kind ${kind} was voided`).toBeGreaterThan(0);
+  for (const op of OPERATIONS) expect(r.ok[op], `no ${op} was saved in 200 operations (saved: ${JSON.stringify(r.ok)})`).toBeGreaterThan(0);
+  for (const kind of MAIN_KINDS) expect(r.voided[kind], `no receipt of kind ${kind} was voided (voided: ${JSON.stringify(r.voided)}, forced by the schedule: ${r.forced})`).toBeGreaterThan(0);
   expect(Object.keys(r.refused).length, 'no refusal was provoked').toBeGreaterThan(0);
   expect(r.replays, 'no repeat of a saved request').toBeGreaterThan(0);
   expect(r.midnights, 'the clock never crossed an Indian midnight').toBeGreaterThan(0);
@@ -73,4 +75,31 @@ describe('T-B26 (API31 clause) after each operation of the random sequences no e
       expect(r.ok.cancel_bill + r.ok.reissue_bill + r.ok.void_receipt, 'no cancel, re-issue or void to be the exception').toBeGreaterThan(0);
     }, 900_000);
   }
+});
+
+describe('T-B14 a seed is a sequence: the same seed gives the same operations, answers and figures every time; the schedule voids every kind of receipt', () => {
+  it('seed 2 run twice (80 operations): the log of operations (day, operation, caller, answer, the figures of the answer) and the figures of the customers at the end have one digest', async () => {
+    const a = await runSequence(planOf(2), { ops: 80, label: 'x31repa' });
+    const b = await runSequence(planOf(2), { ops: 80, label: 'x31repb' });
+    expect(a.problems).toEqual([]);
+    expect(b.problems).toEqual([]);
+    const at = a.log.findIndex((line, i) => line !== b.log[i]);
+    expect(at < 0 ? 'the same log' : `the logs differ at line ${at}: ${a.log[at]}  ||  ${b.log[at]}`).toBe('the same log');
+    expect(a.log.length).toBe(b.log.length);
+    expect(a.digest).toBe(b.digest);
+    expect(a.log.length, 'the log has a line for every operation').toBeGreaterThanOrEqual(80);
+  }, 600_000);
+
+  it('NEGATIVE CONTROL: another seed gives another digest (the digest sees the sequence)', async () => {
+    const a = await runSequence(planOf(2), { ops: 30, label: 'x31dga' });
+    const b = await runSequence(planOf(3), { ops: 30, label: 'x31dgb' });
+    expect(a.digest).not.toBe(b.digest);
+  }, 600_000);
+
+  it('with no void drawn at random, the schedule alone voids a receipt of each of the four kinds (a payment, silver, cash for silver, a refund) and the books stay right', async () => {
+    const r = await runSequence(planOf(2), { ops: 70, forceFrom: 10, noRandomVoids: true, label: 'x31sched' });
+    expect(r.problems).toEqual([]);
+    expect(r.forced, 'the schedule forced nothing').toBeGreaterThan(0);
+    for (const kind of MAIN_KINDS) expect(r.voided[kind], `the schedule did not void a ${kind} receipt (voided: ${JSON.stringify(r.voided)}, forced ${r.forced})`).toBeGreaterThan(0);
+  }, 600_000);
 });

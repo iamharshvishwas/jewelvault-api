@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { runInvariants } from '../../scripts/invariants.mjs';
 import { formatTimestamp } from '../../src/clock';
 import { fromUnits, toUnits } from '../../src/domain/rebalance';
@@ -77,7 +77,18 @@ export interface SequenceReport {
   /** the dates the sequence lived on, first and last */
   firstDay: string;
   lastDay: string;
+  /** one line for each operation (day, operation, caller, answer, the figures of the answer; no id) and the SHA-256 of those lines and of the customers' figures at the end: a seed gives the same digest every time */
+  log: string[];
+  digest: string;
+  /** operations the schedule forced because a kind of void had not happened by then (normally 0) */
+  forced: number;
 }
+
+/** The operations a sequence is made of, and the kinds of receipt a void can end (the opening ones are the same kinds with `is_opening`): their counters start at 0, so a missing one is a number and not `undefined`. */
+export const OPERATIONS = ['create_bill', 'record_payment', 'settle_fine', 'void_receipt', 'cancel_bill', 'reissue_bill', 'issue_refund', 'add_opening_balance'] as const;
+export const VOID_KINDS = ['money', 'fine_silver', 'fine_cash', 'refund', 'money:opening', 'fine_silver:opening'] as const;
+/** The four kinds T-B14 names ("voids of every receipt kind"); a sequence that has not voided one by the time `forceFrom` is reached is made to. */
+export const MAIN_KINDS = ['money', 'fine_silver', 'fine_cash', 'refund'] as const;
 
 // ------------------------------------------------------------------ small things
 
@@ -91,6 +102,8 @@ const rupees = (p: bigint): string => fromUnits(p, 2);
 const grams = (mg: bigint): string => fromUnits(mg, 3);
 const MIN = (a: bigint, b: bigint): bigint => (a < b ? a : b);
 const MS_DAY = 86_400_000;
+/** A DATETIME(6) text with its six decimals (the prepared protocol leaves a zero fraction out), so that texts of stamps sort as the instants do. */
+const stampKey = (s: string): string => `${s.slice(0, 19)}.${(s.split('.')[1] ?? '').padEnd(6, '0')}`;
 
 /** The Asia/Kolkata calendar date of a DATETIME(6) text in UTC. */
 export function kolkataDate(utc: string): string {
@@ -109,6 +122,8 @@ interface PieceInfo {
   kind: Kind;
   /** a Per Piece piece's price, in rupees */
   price: number;
+  /** the order the test made the pieces in: the only order of pieces the generator uses (ids are random) */
+  seq: number;
 }
 
 const RATES: Record<Exclude<Kind, 'pp'>, { metal: string; labour: string }> = {
@@ -223,7 +238,18 @@ const DOCUMENTED: Record<string, readonly (string | undefined)[]> = {
 
 // ------------------------------------------------------------------ the sequence
 
-export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: string; keepGoing?: boolean; onProgress?: (n: number) => void } = {}): Promise<SequenceReport> {
+export interface SequenceOptions {
+  ops?: number;
+  label?: string;
+  keepGoing?: boolean;
+  onProgress?: (n: number) => void;
+  /** from this operation on, a kind of receipt that has not been voided yet is voided by the schedule (made first when there is none). Default 120 of 200. */
+  forceFrom?: number;
+  /** no void is drawn at random (the schedule alone must then void every kind: a test of the schedule) */
+  noRandomVoids?: boolean;
+}
+
+export async function runSequence(plan: SeedPlan, o: SequenceOptions = {}): Promise<SequenceReport> {
   const t0 = performance.now();
   const nOps = o.ops ?? 200;
   const rand = rng(plan.seed * 7919 + 17);
@@ -233,9 +259,9 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
     seed: plan.seed,
     ops: 0,
     problems,
-    ok: {},
+    ok: Object.fromEntries(OPERATIONS.map((op) => [op, 0])),
     refused: {},
-    voided: {},
+    voided: Object.fromEntries(VOID_KINDS.map((k) => [k, 0])),
     replays: 0,
     midnights: 0,
     newYears: 0,
@@ -249,6 +275,9 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
     seconds: 0,
     firstDay: '',
     lastDay: '',
+    log: [],
+    digest: '',
+    forced: 0,
   };
   let stop = false;
   let current = 'setup';
@@ -288,7 +317,7 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
         } else if (kind === 'gold') id = await piece(w, d.gold22, { nw: fromUnits(BigInt(int(rand, 3000, 15000)), 3), retail: '250.00' });
         else if (kind === 'silver') id = await piece(w, d.silver999, { nw: fromUnits(BigInt(int(rand, 20000, 120000)), 3), retail: '8.00' });
         else id = await piece(w, d.silver925, { nw: fromUnits(BigInt(int(rand, 20000, 80000)), 3), retail: '12.50' });
-        info.set(id, { id, kind, price });
+        info.set(id, { id, kind, price, seq: info.size });
       }
     };
     await restock(24);
@@ -298,13 +327,18 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
 
     // ---- reading the books
     const snapshot = async (): Promise<Snap> => {
-      const stock = (await q("SELECT id FROM skus WHERE status = 'In Stock' ORDER BY id")).map((r) => String(r.id));
+      // THE ORDER OF EVERY LIST THE GENERATOR PICKS FROM IS A KEY THE TEST OWNS, never a random id: pieces by the order they were made, bills by their number, receipts by the stamp of the call and then by their own
+      // figures (customer, kind, amount, silver, day, mode). Two receipts that agree on all of those are the same receipt to every later choice. Without this a seed gave another sequence every run.
+      const stock = (await q("SELECT id FROM skus WHERE status = 'In Stock'")).map((r) => String(r.id)).sort((a, b) => (info.get(a)?.seq ?? 0) - (info.get(b)?.seq ?? 0));
       const bills = (await q(`SELECT b.id, b.customer_id, b.status, b.doc_type, b.sale_type, bill_summary.pending, bill_summary.fine_pending, bill_summary.received FROM bills b JOIN ${T.bill_summary} ON bill_summary.id = b.id ORDER BY b.bill_no`)).map((r) => ({
         id: String(r.id), customer_id: String(r.customer_id), status: String(r.status), doc_type: String(r.doc_type), sale_type: String(r.sale_type), pending: paise(r.pending), fine_pending: milli(r.fine_pending), received: paise(r.received),
       }));
-      const receipts = (await q('SELECT id, customer_id, kind, status, is_opening, amount, fine_grams FROM receipts ORDER BY created_at, id')).map((r) => ({
-        id: String(r.id), customer_id: String(r.customer_id), kind: String(r.kind), status: String(r.status), is_opening: Number(r.is_opening), amount: paise(r.amount), fine_grams: milli(r.fine_grams),
-      }));
+      const receiptKey = (r: { created_at: string; customer_id: string; kind: string; is_opening: number; amount: string; fine_grams: string; paid_on: string; mode: string | null }): string =>
+        [stampKey(r.created_at), customers.indexOf(r.customer_id), r.kind, r.is_opening, r.amount, r.fine_grams, r.paid_on, r.mode ?? ''].join('|');
+      const receipts = (await q('SELECT id, customer_id, kind, status, is_opening, amount, fine_grams, created_at, paid_on, mode FROM receipts'))
+        .map((r) => ({ key: receiptKey(r as never), id: String(r.id), customer_id: String(r.customer_id), kind: String(r.kind), status: String(r.status), is_opening: Number(r.is_opening), amount: paise(r.amount), fine_grams: milli(r.fine_grams) }))
+        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+        .map(({ key: _key, ...r }) => r);
       const figures = new Map<string, Figures>();
       for (const r of await q(`SELECT customer_balances.id, customer_balances.outstanding, customer_balances.advance, customer_balances.fine_outstanding, customer_balances.fine_advance FROM ${T.customer_balances}`)) {
         figures.set(String(r.id), { outstanding: paise(r.outstanding), advance: paise(r.advance), fine_outstanding: milli(r.fine_outstanding), fine_advance: milli(r.fine_advance) });
@@ -316,6 +350,16 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
     const dayRows = async (): Promise<Map<string, string>> => new Map((await q(`SELECT business_date, mode, money_in, money_out FROM ${T.daily_totals}`)).map((r) => [`${r.business_date}|${r.mode}`, `${r.money_in}|${r.money_out}`]));
     const counters = async (): Promise<string> => String((await q('SELECT COALESCE(SUM(last_value), 0) AS n FROM sys_counters'))[0].n);
     const fingerprint = async (): Promise<string> => JSON.stringify([await trace(w), await counters()]);
+    /** The figures of an answer that a second run of the same seed must repeat (no id, no stamp): the totals of the bills, the receipts, the number and sum of the allocations. */
+    const factsOf = (json: any): string => {
+      const sumOf = (xs: any[], k: string): string => rupees(xs.reduce((n: bigint, x: any) => n + paise(x[k]), 0n));
+      const parts: string[] = [];
+      for (const b of ['bill', 'new_bill', 'old_bill']) if (json?.[b]) parts.push(`${b}=${json[b].grand_total}`);
+      if (json?.receipt) parts.push(`receipt=${json.receipt.kind}:${json.receipt.amount}:${json.receipt.fine_grams}`);
+      if (Array.isArray(json?.receipts)) parts.push(`receipts=${json.receipts.map((r: any) => `${r.kind}:${r.amount}:${r.fine_grams}`).join('+')}`);
+      for (const k of ['allocations', 'released_allocations']) if (Array.isArray(json?.[k])) parts.push(`${k}=${json[k].length}:${sumOf(json[k], 'amount')}`);
+      return parts.join(',');
+    };
 
     // ---- the calls
     const send = async (p: { caller: CallerName; url: string; payload?: unknown; key?: string }): Promise<Answer> => {
@@ -339,20 +383,18 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
     /** A cart for X1 / X10 / X7 from pieces: the sale type, the lines, and (sometimes) a discount and extra charges. */
     const cartOf = (ids: string[], saleType: string): { saleType: string; items: Item[] } => ({ saleType, items: ids.map((id) => lineOf(rand, info.get(id) as PieceInfo, chance(rand, 0.15) ? pick(rand, [-5, -2, 2, 5]) : 0)) });
 
-    const split = (total: bigint): bigint[] => {
-      if (total <= 100n) return [total];
-      const first = (total * BigInt(int(rand, 20, 80))) / 100n;
-      return first > 0n && first < total ? [first, total - first] : [total];
-    };
+    /**
+     * The payment row of a bill: none (unpaid), part of the total or all of it, and now and then one rupee too much (Y5). ONE row, never two: two receipts made by one call carry one stamp, the rebalance
+     * then orders them by their random ids when a cancel frees both, and which of them pays which bill would differ from run to run. T-B03 (several rows) is x01-payments.test.ts; this
+     * sequence makes the split payment of a customer as two calls of X2.
+     */
     const paymentRows = (total: bigint, floor = 0n): Record<string, unknown>[] => {
-      // unpaid, part paid or paid in full; a few calls pay one rupee too much (Y5)
       const scenario = pick(rand, ['none', 'none', 'none', 'part', 'part', 'full', 'full', 'full', 'over'] as const);
       if (scenario === 'none' || total <= floor) return [];
       let sum = scenario === 'part' ? (total * BigInt(pick(rand, [10, 30, 50, 80]))) / 100n : scenario === 'full' ? total : total + 100n;
       sum = sum - floor > 0n ? sum - floor : 0n;
       if (sum <= 0n) return [];
-      const parts = split(sum);
-      return parts.map((a) => ({ mode: pick(rand, MODES), amount: rupees(a) }));
+      return [{ mode: pick(rand, MODES), amount: rupees(sum) }];
     };
 
     const planBill = async (s: Snap): Promise<Plan | null> => {
@@ -444,6 +486,7 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
     };
 
     const receiptKind = (r: ReceiptRow): string => (r.is_opening ? `${r.kind}:opening` : r.kind);
+    const voidPlan = (target: ReceiptRow): Plan => ({ name: 'void_receipt', caller: 'owner', url: `/v1/receipts/${target.id}/void`, payload: { reason: 'entered on the wrong customer' }, key: randomUUID(), voids: target, walkin: target.customer_id === WALKIN });
     const planVoid = (s: Snap): Plan | null => {
       const live = s.receipts.filter((r) => r.status === 'active');
       if (live.length === 0) return null;
@@ -457,7 +500,7 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
         const kind = missing.length > 0 && chance(rand, 0.8) ? pick(rand, missing) : pick(rand, kinds);
         target = pick(rand, live.filter((r) => receiptKind(r) === kind));
       }
-      return { name: 'void_receipt', caller: 'owner', url: `/v1/receipts/${target.id}/void`, payload: { reason: 'entered on the wrong customer' }, key: randomUUID(), voids: target, walkin: target.customer_id === WALKIN };
+      return voidPlan(target);
     };
 
     const planCancel = (s: Snap): Plan | null => {
@@ -512,7 +555,44 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
       return { name: 'add_opening_balance', caller: 'owner', url: `/v1/customers/${customer}/opening-balance`, payload: { ...figures, as_of: date }, key: randomUUID(), backdated: date !== today(), walkin: customer === WALKIN };
     };
 
-    const WEIGHTS: [string, number][] = [['bill', 27], ['pay', 20], ['fine', 9], ['void', 9], ['cancel', 6], ['reissue', 6], ['refund', 6], ['opening', 6]];
+    /**
+     * THE SCHEDULE. T-B14 names a void of every receipt kind; the draw of planVoid favours a kind that has not been voided, but a seed is only a draw. From `forceFrom` on, the first of the four kinds that
+     * has not been voided is voided now (a receipt of that kind that was not tried before), and when there is none the operation that makes one comes first: a payment, a refund out of an advance, a
+     * settlement of silver in silver or in cash against a bill that owes silver (a wholesale silver bill is made when none does). Nothing here is drawn: the schedule is a function of the books.
+     */
+    const forcedTried = new Set<string>();
+    const planForced = async (s: Snap): Promise<Plan | null> => {
+      const kind = MAIN_KINDS.find((k) => !report.voided[k]);
+      if (kind === undefined) return null;
+      const live = s.receipts.find((r) => r.status === 'active' && !r.is_opening && r.kind === kind && !forcedTried.has(r.id));
+      if (live) {
+        forcedTried.add(live.id);
+        return voidPlan(live);
+      }
+      const make = (name: string, caller: CallerName, url: string, payload: unknown, walkin = false): Plan => ({ name, caller, url, payload, key: randomUUID(), walkin });
+      if (kind === 'money') return make('record_payment', 'owner', `/v1/customers/${A}/payments`, { amount: '1000.00', mode: 'UPI' });
+      if (kind === 'refund') {
+        const holder = [A, B].find((c) => (s.figures.get(c)?.advance ?? 0n) > 0n);
+        if (holder) return make('issue_refund', 'owner', `/v1/customers/${holder}/refunds`, { amount: rupees(MIN(s.figures.get(holder)?.advance ?? 0n, 10_000n)), mode: 'UPI' });
+        return make('record_payment', 'owner', `/v1/customers/${A}/payments`, { amount: '500000.00', mode: 'UPI' });
+      }
+      const owing = s.bills.find((b) => b.status === 'active' && b.fine_pending > 0n);
+      if (owing) {
+        const payload: Record<string, unknown> = { grams: grams(MIN(1_000n, owing.fine_pending)), mode: kind === 'fine_cash' ? 'Cash' : 'Silver', bill_id: owing.id };
+        if (kind === 'fine_cash') payload.silver_rate = '85.00';
+        return make('settle_fine', 'owner', `/v1/customers/${owing.customer_id}/fine-settlements`, payload, owing.customer_id === WALKIN);
+      }
+      // nobody owes silver: a wholesale silver bill for B, left unpaid
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const stock = (await q("SELECT id FROM skus WHERE status = 'In Stock'")).map((r) => String(r.id)).sort((a, b) => (info.get(a)?.seq ?? 0) - (info.get(b)?.seq ?? 0));
+        const silver = stock.find((id) => info.get(id)?.kind === 'silver');
+        if (silver) return make('create_bill', 'owner', '/v1/bills', billBody(B, 'Wholesale', [lineOf(rand, info.get(silver) as PieceInfo)]));
+        await restock(8);
+      }
+      return null;
+    };
+
+    const WEIGHTS: [string, number][] = [['bill', 27], ['pay', 20], ['fine', 9], ['void', o.noRandomVoids ? 0 : 9], ['cancel', 6], ['reissue', 6], ['refund', 6], ['opening', 6]];
     const planOne = async (s: Snap): Promise<Plan> => {
       const total = WEIGHTS.reduce((n, [, wgt]) => n + wgt, 0);
       for (let attempt = 0; attempt < 12; attempt++) {
@@ -693,11 +773,14 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
         if (again.status !== last.answer.status || !again.replayed || again.text !== last.answer.text) fail(`the repeat was not the stored answer: ${again.status} replayed=${again.replayed} ${again.text.slice(0, 120)}`);
         if ((await fingerprint()) !== before) fail('the repeat wrote rows');
         report.replays++;
+        report.log.push(`${n}|${today()}|repeat of ${last.plan.name}|${again.status}|${again.replayed}`);
         continue;
       }
 
       const snap = await snapshot();
-      const p = await planOne(snap);
+      const scheduled = n >= (o.forceFrom ?? 120) ? await planForced(snap) : null;
+      if (scheduled) report.forced++;
+      const p = scheduled ?? (await planOne(snap));
       if (stop) break;
       current = p.name;
       const beforeFp = await fingerprint();
@@ -714,6 +797,7 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
           fail(`answered ${answer.status} ${code ?? ''} ${JSON.stringify(answer.json?.error?.details ?? '')} ${String(answer.json?.error?.message ?? '').slice(0, 160)} for ${JSON.stringify(p.payload).slice(0, 300)}`);
         }
         report.refused[refusal] = (report.refused[refusal] ?? 0) + 1;
+        report.log.push(`${n}|${today()}|${p.name}|${p.caller}|${answer.status}|${code ?? ''}|${answer.json?.error?.details?.reason ?? ''}`);
         if ((await fingerprint()) !== beforeFp) fail(`refused (${refusal}) but the books changed`);
         if (code === 'JV_NOT_ALLOWED' || code === 'JV_OVERPAYMENT') {
           // a refusal leaves the claim unused: the same key is still free (X0, K2)
@@ -731,6 +815,7 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
         report.voided[k] = (report.voided[k] ?? 0) + 1;
       }
       last = { plan: p, answer };
+      report.log.push(`${n}|${today()}|${p.name}|${p.caller}|${answer.status}|${factsOf(answer.json)}`);
 
       checkAllocations(beforeAllocs, await allocations(), p);
       await checkAnswer(answer.json);
@@ -754,6 +839,9 @@ export async function runSequence(plan: SeedPlan, o: { ops?: number; label?: str
       if (bad.length > 0) fail(`the log holds ${bad.length} error or busy line(s): ${JSON.stringify(bad[0]).slice(0, 300)}`);
     }
     report.lastDay = today();
+    const end = await snapshot();
+    const figures = customers.map((c, i) => `${i}:${[...Object.values(end.figures.get(c) ?? {})].join('/')}`).join(' ');
+    report.digest = createHash('sha256').update(`${report.log.join('\n')}\n${figures}`).digest('hex');
   } finally {
     report.seconds = (performance.now() - t0) / 1000;
     await w.world.close();
