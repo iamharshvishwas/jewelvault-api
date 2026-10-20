@@ -199,6 +199,7 @@ function formatRestoreReport({ status, report, file, target, ms, photoRows, samp
   out.push('Tables (rows in the export, rows restored, content against the manifest):');
   const width = Math.max(10, ...report.tables.map((t) => t.name.length)) + 2;
   for (const t of report.tables) out.push(`  ${t.name.padEnd(width)}${String(t.rows_expected).padStart(9)}${String(t.rows_restored).padStart(9)}  ${t.hash_ok ? 'same' : 'DIFFERENT'}`);
+  for (const n of report.notes ?? []) out.push(`  note: ${n}`);
   out.push(`Triggers applied last: ${report.triggers}`, `Foreign-key orphans: ${report.fk_orphans.length === 0 ? 'none' : report.fk_orphans.map((o) => `${o.rows} in ${o.table}`).join(', ')}`, '');
   const tomb = report.photos.tombstoned;
   out.push(`Photos: ${report.photos.live_expected} live in the export, ${report.photos.restored} restored with their bytes, ${tomb.length} tombstoned`);

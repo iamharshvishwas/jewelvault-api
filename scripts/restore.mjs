@@ -15,7 +15,7 @@
 //     sha256 inside the database, and the nightly check run on the copy.
 // The report says ok only if all of that is clean and no photo had to be tombstoned. A failed restore leaves a partly filled database: drop it and start again.
 import { createHash } from 'node:crypto';
-import { FORMAT, exportDatabase, memoryStore, one, q } from './backup.mjs';
+import { FILTERED, FORMAT, exportDatabase, memoryStore, one, q } from './backup.mjs';
 import { runInvariants } from './invariants.mjs';
 import { listMigrations, migrate } from './migrate.mjs';
 
@@ -161,8 +161,26 @@ export async function restoreDatabase(conn, source, photos, opts = {}) {
   const orphans = await findOrphans(conn);
   for (const o of orphans) problems.push(`${o.rows} row(s) of ${o.table} point nowhere (${o.constraint})`);
 
+  // A table the export kept only in part (FILTERED) is read again under the export's OWN cutoff, which is in its manifest: working "younger than 90 days" out again at the restore would drop a row
+  // that was inside the window at the export and is outside it now, and a correct restore would be called a failure (RV3a-F2). An export from before the cutoff was recorded has none: the
+  // restored table holds exactly the rows of the export, so it is read again whole, and the report says so.
+  const notes = [];
+  const cutoffs = {};
+  for (const table of Object.keys(FILTERED)) {
+    if (!byName.has(table)) continue;
+    const recorded = manifest.filter_cutoffs?.[table];
+    if (recorded === undefined || recorded === null) {
+      cutoffs[table] = null;
+      notes.push(`table ${table}: the manifest of this export records no cutoff (it was made before the cutoff was written down), so the restored table was compared as a whole, without the 90-day filter; that is exact, because a restore loads exactly the rows of the export`);
+    } else if (typeof recorded === 'string' && /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{1,6})?$/.test(recorded)) {
+      cutoffs[table] = recorded;
+    } else {
+      cutoffs[table] = null;
+      problems.push(`table ${table}: the cutoff in the manifest (${JSON.stringify(recorded).slice(0, 40)}) is not a date, so the manifest is damaged`);
+    }
+  }
   const again = memoryStore();
-  const reread = await exportDatabase(conn, again.sink, { pageSize: 1000 });
+  const reread = await exportDatabase(conn, again.sink, { pageSize: 1000, filterCutoffs: cutoffs });
   const reByName = new Map(reread.tables.map((t) => [t.name, t]));
   const tables = manifest.tables.map((t) => {
     const r = reByName.get(t.name);
@@ -193,6 +211,7 @@ export async function restoreDatabase(conn, source, photos, opts = {}) {
     fk_orphans: orphans,
     invariants,
     problems,
+    notes,
     ms: Date.now() - t0,
   };
 }

@@ -35,6 +35,11 @@ export interface Manifest {
   omitted: Record<string, string>;
   /** Tables exported in part, and which part. */
   filtered: Record<string, string>;
+  /**
+   * RV3a-F2: for each table in `filtered`, the instant its rule came to (UTC, DATETIME(6) text 'YYYY-MM-DD HH:MM:SS.ffffff'): the rows kept are those created at or after it. The restore reads the
+   * restored copy again under this cutoff. Absent in an export made before RV3a.
+   */
+  filter_cutoffs?: Record<string, string>;
   tables: TableMeta[];
   /** Live photos (removed_at IS NULL) the export refers to; a restore needs the bytes of each. */
   live_photos: number;
@@ -47,12 +52,17 @@ export interface ExportOptions {
   pageSize?: number;
   /** Test seam: called after each table is read, so a test can commit a change while the export is in progress. */
   between?: (table: string) => Promise<void>;
+  /** The cutoff to use for a table of the manifest's `filtered` instead of "now minus its days" (the restore passes the export's own); null = no filter for that table. */
+  filterCutoffs?: Record<string, string | null>;
 }
 /**
  * B2: a full export of the data without the photo bytes, inside ONE read-only snapshot (REPEATABLE READ, START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT).
- * Left out: sessions, sys_login_attempts, the rows of sys_idempotency older than 90 days, and the table definitions. The connection must not be inside a transaction.
+ * Left out: sessions, sys_login_attempts, the rows of sys_idempotency older than 90 days (the cutoff is worked out once and written to the manifest as `filter_cutoffs`), and the table definitions. The connection must not be inside a transaction.
  */
 export function exportDatabase(conn: Connection, sink: Sink, opts?: ExportOptions): Promise<Manifest>;
+
+/** Tables exported in part: the column the rule reads, how many days back, and what it means (the manifest's `filtered`). */
+export const FILTERED: Record<string, { column: string; days: number; text: string }>;
 
 export function memoryStore(): { files: Map<string, string>; sink: Sink; source: Source };
 export function directoryStore(dir: string): { sink: Sink; source: Source };

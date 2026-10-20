@@ -21,6 +21,8 @@ export interface RestoreReport {
   fk_orphans: { constraint: string; table: string; rows: number }[];
   invariants: { ok: boolean; counts: Record<string, number> } | null;
   problems: string[];
+  /** Things the report says that are not problems: for example that a table of an older export was compared without a cutoff (RV3a-F2). */
+  notes: string[];
   ms: number;
 }
 /**

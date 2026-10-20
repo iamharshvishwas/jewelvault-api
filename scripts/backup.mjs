@@ -6,7 +6,7 @@
 // The export is ONE consistent read-only snapshot (REPEATABLE READ and START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT, the first set for the next transaction only), every table
 // read in keyset pages, newline-delimited JSON: one object per row, every value text (DECIMAL and dates exactly as the server prints them, binary columns as hex, NULL as null).
 // Nothing depends on how the connection was configured. It holds NO table definitions (the migration files are the schema, B4), and it leaves out sessions, the login counters and the
-// idempotency rows older than 90 days. The connection must not be inside a transaction (START TRANSACTION commits one that is open).
+// idempotency rows older than 90 days (the cutoff is in the manifest). The connection must not be inside a transaction (START TRANSACTION commits one that is open).
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, mkdirSync } from 'node:fs';
 import { link, open, readFile, stat, unlink } from 'node:fs/promises';
@@ -23,9 +23,13 @@ export const OMITTED = {
   sessions: 'login sessions are not worth restoring: everyone signs in again',
   sys_login_attempts: 'login counters are rebuilt by use and never grow',
 };
-/** Tables exported in part: the condition on the alias src, and what it means. */
+/**
+ * Tables exported in part: the column the rule reads, how many days, and what it means. "Younger than 90 days" is worked out ONCE, for the whole export, and the instant it came to (the CUTOFF) goes
+ * into the manifest as `filter_cutoffs` (RV3a-F2): the restore exports the restored copy again to prove it equal, and that re-export must use the export's cutoff, not its own "now" (a row 3 seconds
+ * inside the window at the export is outside it at the restore, and a correct restore used to be reported as a failure).
+ */
 export const FILTERED = {
-  sys_idempotency: { where: 'src.`created_at` >= UTC_TIMESTAMP(6) - INTERVAL 90 DAY', text: 'only rows younger than 90 days; older ones are expired (L6)' },
+  sys_idempotency: { column: 'created_at', days: 90, text: 'only rows younger than 90 days; older ones are expired (L6)' },
 };
 const BINARY_TYPES = new Set(['binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob']);
 
@@ -61,8 +65,8 @@ export async function readTableMeta(conn) {
 
 const selectList = (meta) => meta.columns.map((c) => `${c.binary ? `HEX(src.${q(c.name)})` : `CAST(src.${q(c.name)} AS CHAR)`} AS ${q(c.name)}`).join(', ');
 
-/** Every row of one table, in primary-key order, by keyset pages. Yields arrays of row objects. */
-export async function* tablePages(conn, meta, pageSize) {
+/** Every row of one table, in primary-key order, by keyset pages. Yields arrays of row objects. `cutoff` is the instant of the table's rule in FILTERED (DATETIME(6) text, UTC): null = every row. */
+export async function* tablePages(conn, meta, pageSize, cutoff = null) {
   if (meta.primary_key.length === 0) throw new Error(`table ${meta.name} has no primary key: it cannot be read in keyset pages`);
   const binaryPk = new Set(meta.columns.filter((c) => c.binary).map((c) => c.name));
   const keyExpr = (k) => (binaryPk.has(k) ? 'UNHEX(?)' : '?');
@@ -70,12 +74,15 @@ export async function* tablePages(conn, meta, pageSize) {
   // while WHERE means the column: for a UUID key the two orders differ (the UUID type has its own order), and the pages would overlap or skip rows.
   const key = (k) => `src.${q(k)}`;
   const order = meta.primary_key.map(key).join(', ');
-  const filter = FILTERED[meta.name]?.where;
+  const filter = FILTERED[meta.name];
   let after = null;
   for (;;) {
     const params = [];
     const conditions = [];
-    if (filter) conditions.push(`(${filter})`);
+    if (filter && cutoff !== null) {
+      conditions.push(`(src.${q(filter.column)} >= ?)`);
+      params.push(cutoff);
+    }
     if (after) {
       const parts = meta.primary_key.map((k, i) => {
         const eq = meta.primary_key.slice(0, i).map((e) => {
@@ -107,6 +114,12 @@ export async function exportDatabase(conn, sink, opts = {}) {
   await conn.query('START TRANSACTION READ ONLY, WITH CONSISTENT SNAPSHOT');
   try {
     const info = await one(conn, "SELECT DATABASE() AS db, VERSION() AS v, DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:%i:%s') AS now");
+    // The cutoff of each table in FILTERED, worked out once. opts.filterCutoffs gives one by hand (the restore passes the export's own); null there means no filter for that table.
+    const cutoffs = {};
+    for (const [table, f] of Object.entries(FILTERED)) {
+      if (opts.filterCutoffs && Object.hasOwn(opts.filterCutoffs, table)) cutoffs[table] = opts.filterCutoffs[table];
+      else cutoffs[table] = (await one(conn, `SELECT DATE_FORMAT(UTC_TIMESTAMP(6) - INTERVAL ${Number(f.days)} DAY, '%Y-%m-%d %H:%i:%s.%f') AS c`)).c;
+    }
     const metas = await readTableMeta(conn);
     const tables = [];
     for (const meta of metas) {
@@ -114,7 +127,7 @@ export async function exportDatabase(conn, sink, opts = {}) {
       const out = sink.file(file);
       const hash = createHash('sha256');
       let rows = 0;
-      for await (const page of tablePages(conn, meta, pageSize)) {
+      for await (const page of tablePages(conn, meta, pageSize, cutoffs[meta.name] ?? null)) {
         const text = page.map((r) => JSON.stringify(r) + '\n').join('');
         hash.update(text);
         await out.write(text);
@@ -137,6 +150,8 @@ export async function exportDatabase(conn, sink, opts = {}) {
       excluded: EXCLUDED,
       omitted: OMITTED,
       filtered: Object.fromEntries(Object.entries(FILTERED).map(([t, f]) => [t, f.text])),
+      // the instant each rule in `filtered` came to (UTC, DATETIME(6)): the rows kept are those created at or after it. A restore compares its re-export under the same cutoff (RV3a-F2).
+      filter_cutoffs: Object.fromEntries(Object.entries(cutoffs).filter(([, c]) => c !== null && c !== undefined)),
       tables,
       live_photos: Number(live.n),
       has_triggers: Number(triggers.n) > 0,
