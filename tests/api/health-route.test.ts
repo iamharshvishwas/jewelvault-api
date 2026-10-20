@@ -81,8 +81,9 @@ describe('T-D18 GET /v1/dashboard/health: the owner\'s line in one call', () => 
     expect(h.db_size.red_line_bytes).toBe(DB_RED_LINE_BYTES);
     expect(h.db_size.bytes).toBeGreaterThan(0);
     expect(h.db_size.bytes).toBeLessThan(DB_RED_LINE_BYTES);
-    expect(Object.keys(h).sort()).toEqual(['check', 'db_dump', 'db_size', 'download', 'folder', 'folder_probe', 'level', 'now', 'photo_copy', 'photo_files', 'pull', 'reasons', 'rights'].sort());
+    expect(Object.keys(h).sort()).toEqual(['check', 'clock_ahead', 'db_dump', 'db_size', 'download', 'folder', 'folder_probe', 'level', 'now', 'photo_copy', 'photo_files', 'pull', 'reasons', 'rights'].sort());
     expect(h.folder_probe).toBeNull();
+    expect(h.clock_ahead).toBeNull();
   });
 
   it('RV3a-F3 and F1: the folder signal and the photo copies reach the wire: a failed probe is red with its figure on the wire format; a repair is amber', async () => {
@@ -97,6 +98,15 @@ describe('T-D18 GET /v1/dashboard/health: the owner\'s line in one call', () => 
     expect([amber.level, amber.reasons]).toEqual(['amber', ['backup_photos_repaired']]);
     expect(amber.photo_files).toEqual({ repaired: 2, repaired_at: '2026-10-17T08:00:00.000000Z', damaged: 0, damaged_at: null });
     expect(amber.folder_probe).toBeNull();
+  });
+
+  it('RV3a-F4: a good export dated in the future is red on the wire (backup_clock_ahead) and the age of the export is the newest run that is not in the future', async () => {
+    await healthy();
+    await backup('2026-10-24 10:00:00.000000', 'db_dump', { folder: { files: 7, bytes: 7000, free_bytes: 4999000 } }); // a week ahead of the API's clock
+    const h = await line();
+    expect([h.level, h.reasons]).toEqual(['red', ['backup_clock_ahead']]);
+    expect(h.clock_ahead).toEqual({ last_at: '2026-10-24T10:00:00.000000Z', hours: 168 });
+    expect(h.db_dump).toEqual({ last_at: '2026-10-17T07:00:00.000000Z', age_hours: 3 });
   });
 
   it('a check that says Problem turns it red', async () => {

@@ -2,7 +2,7 @@ import type { Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '../../scripts/migrate.mjs';
 import { readHealth as original } from '../../scripts/health.mjs';
-import { DB_RED_LINE_BYTES, FOLDER_FALL_WINDOW_DAYS, DOWNLOAD_AMBER_DAYS, DOWNLOAD_RED_DAYS, PULL_AMBER_DAYS, RED_AFTER_HOURS, readHealth as twin } from '../../src/reads/health';
+import { CLOCK_SKEW_MINUTES, DB_RED_LINE_BYTES, FOLDER_FALL_WINDOW_DAYS, DOWNLOAD_AMBER_DAYS, DOWNLOAD_RED_DAYS, PULL_AMBER_DAYS, RED_AFTER_HOURS, readHealth as twin } from '../../src/reads/health';
 import { type Scratch, scratchDatabase } from '../helpers';
 
 // T-D18 (API12), the dashboard line of spec section 12 and I12: src/reads/health.ts is the TypeScript twin of readHealth in scripts/health.mjs (src cannot import scripts/*.mjs: tsconfig.build.json
@@ -54,13 +54,14 @@ async function both(opts: Parameters<typeof original>[1] = SIZE, conn: Connectio
 describe('T-D18 the TypeScript twin of readHealth gives the answer of scripts/health.mjs on every state of the database', () => {
   it('the constants are the original\'s', async () => {
     const m = await import('../../scripts/health.mjs');
-    expect({ RED_AFTER_HOURS, DB_RED_LINE_BYTES, DOWNLOAD_AMBER_DAYS, DOWNLOAD_RED_DAYS, PULL_AMBER_DAYS, FOLDER_FALL_WINDOW_DAYS }).toEqual({
+    expect({ RED_AFTER_HOURS, DB_RED_LINE_BYTES, DOWNLOAD_AMBER_DAYS, DOWNLOAD_RED_DAYS, PULL_AMBER_DAYS, FOLDER_FALL_WINDOW_DAYS, CLOCK_SKEW_MINUTES }).toEqual({
       RED_AFTER_HOURS: m.RED_AFTER_HOURS,
       DB_RED_LINE_BYTES: m.DB_RED_LINE_BYTES,
       DOWNLOAD_AMBER_DAYS: m.DOWNLOAD_AMBER_DAYS,
       DOWNLOAD_RED_DAYS: m.DOWNLOAD_RED_DAYS,
       PULL_AMBER_DAYS: m.PULL_AMBER_DAYS,
       FOLDER_FALL_WINDOW_DAYS: m.FOLDER_FALL_WINDOW_DAYS,
+      CLOCK_SKEW_MINUTES: m.CLOCK_SKEW_MINUTES,
     });
   });
 
@@ -273,5 +274,49 @@ describe('RV3a-F3 the twin and the original agree on the folder signal: backup_f
     await backup('photo_copy', 3, { verify: { damaged_total: 1, damaged: [{ id: 'a', kind: 'full', reason: 'size' }] } }, 0);
     await probe(0.5, { ok: false, code: 'ENOENT', where: 'folder' });
     expect((await both()).reasons).toEqual(['backup_files_fell', 'backup_folder_unusable', 'backup_photos_damaged']);
+  });
+});
+
+describe('RV3a-F4 the twin and the original agree on a good run dated in the future: the age ignores it, it is red by itself, a skew of 5 minutes is fine', () => {
+  const inFuture = (minutes: number) => -minutes / 60; // ago() of a negative number of hours is a time after NOW
+
+  it('a dead export (5 days old) with a good export and photo copy 40 days ahead: stale as it really is, plus backup_clock_ahead; the figure says how far ahead', async () => {
+    await clean();
+    await check(1);
+    await backup('db_dump', 24 * 5, { folder: { files: 7 } });
+    await backup('photo_copy', 24 * 5, { folder: { files: 7 } });
+    await backup('db_dump', inFuture(40 * 24 * 60), { folder: { files: 7 } });
+    await backup('photo_copy', inFuture(40 * 24 * 60), { folder: { files: 7 } });
+    const h = await both();
+    expect(h.reasons).toEqual(['dump_stale', 'photo_copy_stale', 'backup_clock_ahead']);
+    expect(h.db_dump.age_hours).toBe(120);
+    expect(h.clock_ahead).toEqual({ last_at: ago(inFuture(40 * 24 * 60)), hours: 960 });
+  });
+
+  it('a failed run or a restore drill in the future is not a good run; a good run 5 minutes ahead is skew and counts as fresh, 6 minutes is a fault', async () => {
+    await healthy();
+    await backup('db_dump', inFuture(60 * 24), { phase: 'failed' }, 0);
+    await backup('restore_drill', inFuture(60 * 24), {});
+    expect((await both()).reasons).toEqual([]);
+    await backup('db_dump', inFuture(5), { folder: { files: 7 } });
+    const skew = await both();
+    expect(skew.reasons).toEqual([]);
+    expect(skew.db_dump.age_hours).toBe(-0.08);
+    await backup('db_dump', inFuture(6), { folder: { files: 7 } });
+    const over = await both();
+    expect(over.reasons).toEqual(['backup_clock_ahead']);
+    expect(over.db_dump.last_at).toBe(ago(inFuture(5)));
+    expect(over.clock_ahead).toEqual({ last_at: ago(inFuture(6)), hours: 0.1 });
+  });
+
+  it('a run in the future does not heal the folder signal, does not become the folder figure, and does not clear a damaged copy', async () => {
+    await healthy();
+    await backup('db_dump', 1, { phase: 'folder_probe', folder_probe: { ok: false, code: 'ENOENT', where: 'folder' } }, 0);
+    await backup('photo_copy', 0.8, { folder: { files: 7 }, verify: { damaged_total: 1, damaged: [{ id: 'a', kind: 'full', reason: 'size' }] } }, 0);
+    await backup('photo_copy', inFuture(24 * 60), { folder: { files: 1 }, verify: { damaged_total: 0, damaged: [] } });
+    const h = await both();
+    expect(h.reasons).toEqual(['backup_folder_unusable', 'backup_photos_damaged', 'backup_clock_ahead']);
+    expect(h.folder?.files).toBe(7);
+    expect(h.folder?.fell).toBe(false);
   });
 });

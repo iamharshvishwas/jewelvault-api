@@ -8,7 +8,8 @@
 // size of the other tables after ANALYZE TABLE, plus the live photos, plus 12 percent), the backup folder as the last good run recorded it (B2), the days since the owner's last Download
 // everything (B3, O53) and since Harsh's last weekly pull (O54), and what the database user may do (Delete and Drop stay unticked, S7). Red: the last check says Problem or is older than 26 hours or
 // never ran, the last good export or photo copy is older than 26 hours or never was, the folder's file count fell without a prune, the backup folder cannot be used (the dump's folder probe says so and
-// no good run is newer: RV3a-F3), a photo copy in the folder is damaged and still waiting for somebody (RV3a-F1), the database is above 2 GB, the download is more than 35 days old.
+// no good run is newer: RV3a-F3), a photo copy in the folder is damaged and still waiting for somebody (RV3a-F1), a good export or photo copy is dated in the future (a wrong clock on the cron host
+// would hide a dead export: RV3a-F4), the database is above 2 GB, the download is more than 35 days old.
 // Amber: nothing is red but the download is 28 days old or more, the pull is more than 10 days old, the nightly check wrote a vanished photo copy again in the last 7 days (RV3a-F1), or the user has
 // a Delete or Drop right. Days are whole Asia/Kolkata calendar dates.
 //
@@ -28,6 +29,7 @@ export const DOWNLOAD_AMBER_DAYS = 28; // amber at this many days or more (O53)
 export const DOWNLOAD_RED_DAYS = 35; // red above this many days (O53)
 export const PULL_AMBER_DAYS = 10; // amber above this many days (O54)
 export const FOLDER_FALL_WINDOW_DAYS = 7; // a fall of the folder's file count stays red for this long, so it is not gone before anyone looked
+export const CLOCK_SKEW_MINUTES = 5; // a good run dated up to this long after "now" is the difference between the clock of the app and of cron, not a fault (RV3a-F4)
 
 export interface Age {
   last_at: string | null;
@@ -45,6 +47,8 @@ export interface Health {
   download: { state: 'ok' | 'amber' | 'red' | 'unknown'; from: 'last_download' | 'first_night' | null; reference_date: string | null; age_days: number | null };
   pull: { state: 'ok' | 'amber' | 'unknown'; from: 'last_pulled' | 'first_export' | null; reference_date: string | null; age_days: number | null };
   folder: { files: number; bytes: number; free_bytes: number | null; previous_files: number | null; recorded_at: string; fell: boolean; fell_at: string | null } | null;
+  /** RV3a-F4: the newest GOOD export or photo copy dated more than CLOCK_SKEW_MINUTES after "now" (a wrong clock on the cron host), and how many hours ahead it is; null when there is none. The ages above ignore such a run. */
+  clock_ahead: { last_at: string; hours: number } | null;
   /** RV3a-F3, the folder signal of the dump (API34): the newest folder probe, or null when there never was one. ok false = the folder could not be used (code ENOENT, EACCES, ENOTDIR ..., or CONFIG; where = folder, a sub-folder or JV_BACKUP_DIR); ok true = the heal row. */
   folder_probe: { ok: boolean; code: string | null; where: string | null; at: string } | null;
   /** RV3a-F1, the nightly check of the photo copies: copies written again in the last 7 days (and when last), and copies found damaged and not yet fixed (and when they were found). */
@@ -80,6 +84,8 @@ const parseJson = (v: unknown): any => {
     return null;
   }
 };
+/** The instant as DATETIME(6) text in UTC. */
+const stampMs = (ms: number): string => `${new Date(ms).toISOString().slice(0, 23).replace('T', ' ')}000`;
 const hoursBetween = (nowStr: string, thenStr: string): number => Math.round(((Date.parse(`${nowStr.replace(' ', 'T')}Z`) - Date.parse(`${thenStr.replace(' ', 'T')}Z`)) / 3600_000) * 100) / 100;
 
 // The 18 boxes of hPanel's Change Permissions (A3). Ten are ticked; Delete, Drop and these six are not.
@@ -118,12 +124,18 @@ export async function readHealth(conn: HealthConnection, opts: HealthOptions = {
   const now = opts.now ?? String((await rows(`SELECT DATE_FORMAT(UTC_TIMESTAMP(6), '${FMT}') AS t`))[0].t);
 
   const chk = (await rows(`SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, ok FROM check_runs ORDER BY ran_at DESC, id DESC LIMIT 1`))[0];
+  // RV3a-F4: the dump stamps ran_at from the clock of the cron host. A good run dated AFTER "now" (more than the skew between two clocks) would make a negative age, which is never stale, and a dead
+  // export would look fresh until the future arrived. So the age is taken from the newest good run that is not in the future, and a good run in the future is red by itself (backup_clock_ahead).
+  // The rows the line reads about the folder and the photo copies leave the future out too: it must not heal the folder signal or become "the last run".
+  const horizon = stampMs(utcMs(now) + CLOCK_SKEW_MINUTES * 60_000);
   const lastGood = async (kind: string): Promise<string | null> => {
-    const r = await rows(`SELECT DATE_FORMAT(MAX(ran_at), '${FMT}') AS at FROM backup_runs WHERE kind = ? AND ok = 1`, [kind]);
+    const r = await rows(`SELECT DATE_FORMAT(MAX(ran_at), '${FMT}') AS at FROM backup_runs WHERE kind = ? AND ok = 1 AND ran_at <= ?`, [kind, horizon]);
     return (r[0].at as string | null) ?? null;
   };
   const dumpAt = await lastGood('db_dump');
   const photoAt = await lastGood('photo_copy');
+  const aheadAt = ((await rows(`SELECT DATE_FORMAT(MAX(ran_at), '${FMT}') AS at FROM backup_runs WHERE ok = 1 AND kind IN ('db_dump', 'photo_copy') AND ran_at > ?`, [horizon]))[0].at as string | null) ?? null;
+  const clock_ahead: Health['clock_ahead'] = aheadAt ? { last_at: aheadAt, hours: hoursBetween(aheadAt, now) } : null;
 
   // P5: DATA_LENGTH + INDEX_LENGTH of the other tables after ANALYZE TABLE of each (the user may run it), plus SUM(byte_size) of the live photos, plus 12 percent for InnoDB overhead.
   // information_schema alone lags badly for a table of few large rows: it said 0.0 MB after 65 MB of photos were inserted and 69.5 MB after ANALYZE TABLE.
@@ -175,7 +187,8 @@ export async function readHealth(conn: HealthConnection, opts: HealthOptions = {
   // B2: the backup folder as the good runs recorded it (backup_runs.detail.folder = {files, bytes, free_bytes}; detail.pruned = how many files that run removed on purpose).
   // The file count FALLING by more than was pruned, between two consecutive recorded runs, is red; the flag stays for FOLDER_FALL_WINDOW_DAYS so a night's fall is still visible the day after.
   const folderRows = await rows(
-    `SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, detail FROM backup_runs WHERE ok = 1 AND kind IN ('db_dump', 'photo_copy') AND JSON_VALUE(detail, '$.folder.files') IS NOT NULL ORDER BY ran_at DESC, id DESC LIMIT 60`,
+    `SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, detail FROM backup_runs WHERE ok = 1 AND kind IN ('db_dump', 'photo_copy') AND ran_at <= ? AND JSON_VALUE(detail, '$.folder.files') IS NOT NULL ORDER BY ran_at DESC, id DESC LIMIT 60`,
+    [horizon],
   );
   const seen = folderRows.reverse().map((r) => ({ at: r.at as string, detail: parseJson(r.detail) }));
   let folder: Health['folder'] = null;
@@ -220,7 +233,7 @@ export async function readHealth(conn: HealthConnection, opts: HealthOptions = {
   }
   let folderUnusable = false;
   if (folder_probe && folder_probe.ok === false) {
-    const healed = await rows("SELECT 1 AS n FROM backup_runs WHERE ok = 1 AND kind IN ('db_dump', 'photo_copy') AND ran_at > ? LIMIT 1", [folder_probe.at]);
+    const healed = await rows("SELECT 1 AS n FROM backup_runs WHERE ok = 1 AND kind IN ('db_dump', 'photo_copy') AND ran_at > ? AND ran_at <= ? LIMIT 1", [folder_probe.at, horizon]);
     folderUnusable = healed.length === 0;
   }
 
@@ -228,7 +241,8 @@ export async function readHealth(conn: HealthConnection, opts: HealthOptions = {
   // repairs of the last FOLDER_FALL_WINDOW_DAYS days are amber (a copy that vanished from the folder was written again); the NEWEST row that has a `verify` says whether a damaged copy is still
   // waiting for somebody (never overwritten, B2): red until a newer row has none, and the phase cannot end ok while a copy is damaged.
   const verifyRows = await rows(
-    `SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, JSON_VALUE(detail, '$.verify.repaired') AS repaired, JSON_VALUE(detail, '$.verify.damaged_total') AS damaged FROM backup_runs WHERE kind = 'photo_copy' AND JSON_CONTAINS_PATH(detail, 'one', '$.verify') ORDER BY ran_at DESC, id DESC LIMIT 60`,
+    `SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, JSON_VALUE(detail, '$.verify.repaired') AS repaired, JSON_VALUE(detail, '$.verify.damaged_total') AS damaged FROM backup_runs WHERE kind = 'photo_copy' AND ran_at <= ? AND JSON_CONTAINS_PATH(detail, 'one', '$.verify') ORDER BY ran_at DESC, id DESC LIMIT 60`,
+    [horizon],
   );
   const photo_files: Health['photo_files'] = { repaired: 0, repaired_at: null, damaged: 0, damaged_at: null };
   const repairsFrom = utcMs(now) - FOLDER_FALL_WINDOW_DAYS * 86_400_000;
@@ -263,6 +277,7 @@ export async function readHealth(conn: HealthConnection, opts: HealthOptions = {
   if (folder?.fell) reasons.push('backup_files_fell');
   if (folderUnusable) reasons.push('backup_folder_unusable');
   if (photo_files.damaged > 0) reasons.push('backup_photos_damaged');
+  if (clock_ahead) reasons.push('backup_clock_ahead');
   if (db_size.bytes > DB_RED_LINE_BYTES) reasons.push('db_size');
   if (download.state === 'red') reasons.push('download_red');
   const red = reasons.length > 0;
@@ -271,7 +286,7 @@ export async function readHealth(conn: HealthConnection, opts: HealthOptions = {
   if (photo_files.repaired > 0) reasons.push('backup_photos_repaired');
   if (rights.delete || rights.drop) reasons.push('delete_or_drop_right');
 
-  return { level: red ? 'red' : reasons.length > 0 ? 'amber' : 'green', reasons, check, db_dump, photo_copy, folder, folder_probe, photo_files, download, pull, db_size, rights, now };
+  return { level: red ? 'red' : reasons.length > 0 ? 'amber' : 'green', reasons, check, db_dump, photo_copy, folder, folder_probe, photo_files, clock_ahead, download, pull, db_size, rights, now };
 }
 
 // ------------------------------------------------------------------ the wire
@@ -286,6 +301,7 @@ export function wireHealth(h: Health): Health {
     db_dump: { ...h.db_dump, last_at: stamp(h.db_dump.last_at) },
     photo_copy: { ...h.photo_copy, last_at: stamp(h.photo_copy.last_at) },
     folder: h.folder === null ? null : { ...h.folder, recorded_at: timestampToWire(h.folder.recorded_at), fell_at: stamp(h.folder.fell_at) },
+    clock_ahead: h.clock_ahead === null ? null : { ...h.clock_ahead, last_at: timestampToWire(h.clock_ahead.last_at) },
     folder_probe: h.folder_probe === null ? null : { ...h.folder_probe, at: timestampToWire(h.folder_probe.at) },
     photo_files: { ...h.photo_files, repaired_at: stamp(h.photo_files.repaired_at), damaged_at: stamp(h.photo_files.damaged_at) },
     now: timestampToWire(h.now),
