@@ -3,8 +3,10 @@
 // Everything is measured from one "now": the database's own UTC clock unless a test passes one in.
 //
 // Red: the last check says Problem, the last check is older than 26 hours (or none exists), the last GOOD export or photo copy is older than 26 hours
-// (or none exists), the backup folder's file count fell without a prune (B2), the database is above 2 GB, or the owner's last Download everything is more than 35 days old (B3, O53).
-// Amber: nothing is red but the owner's download is 28 days old or more, Harsh's weekly pull (O54) is more than 10 days old, or the user has a Delete or Drop right (S11). Otherwise green.
+// (or none exists), the backup folder's file count fell without a prune (B2), a photo copy in the folder is damaged and still waiting for somebody (RV3a-F1), the database is above 2 GB, or the
+// owner's last Download everything is more than 35 days old (B3, O53).
+// Amber: nothing is red but the owner's download is 28 days old or more, Harsh's weekly pull (O54) is more than 10 days old, the nightly check wrote a vanished photo copy again in the last 7 days
+// (RV3a-F1), or the user has a Delete or Drop right (S11). Otherwise green.
 // "Never ran" is red on purpose: on a new shop nothing is backed up until the first tick has run, and the owner should see that.
 // Days are whole Asia/Kolkata calendar dates (the shop's day, B3), not 24-hour spans.
 
@@ -169,6 +171,25 @@ export async function readHealth(conn, opts = {}) {
       fell_at: fellAt,
     };
   }
+
+  // RV3a-F1: the nightly check of the photo copies (src/jobs/photoVerify.ts) writes backup_runs.detail.verify = { repaired, damaged_total, ... } on every photo_copy row it ends, good or failed. The
+  // repairs of the last FOLDER_FALL_WINDOW_DAYS days are amber (a copy that vanished from the folder was written again); the NEWEST row that has a `verify` says whether a damaged copy is still
+  // waiting for somebody (never overwritten, B2): red until a newer row has none, and the phase cannot end ok while a copy is damaged.
+  const [verifyRows] = await conn.query(
+    `SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, JSON_VALUE(detail, '$.verify.repaired') AS repaired, JSON_VALUE(detail, '$.verify.damaged_total') AS damaged FROM backup_runs WHERE kind = 'photo_copy' AND JSON_CONTAINS_PATH(detail, 'one', '$.verify') ORDER BY ran_at DESC, id DESC LIMIT 60`
+  );
+  const photo_files = { repaired: 0, repaired_at: null, damaged: 0, damaged_at: null };
+  const repairsFrom = utcMs(now) - FOLDER_FALL_WINDOW_DAYS * 86_400_000;
+  verifyRows.forEach((r, i) => {
+    if (i === 0 && Number(r.damaged) > 0) {
+      photo_files.damaged = Number(r.damaged);
+      photo_files.damaged_at = r.at;
+    }
+    if (Number(r.repaired) > 0 && utcMs(r.at) >= repairsFrom) {
+      photo_files.repaired += Number(r.repaired);
+      photo_files.repaired_at ??= r.at;
+    }
+  });
   const [nameRows] = await conn.query('SELECT DATABASE() AS name');
   const dbRow = nameRows[0];
 
@@ -189,12 +210,14 @@ export async function readHealth(conn, opts = {}) {
   if (photo_copy.age_hours === null) reasons.push('photo_copy_never');
   else if (photo_copy.age_hours > RED_AFTER_HOURS) reasons.push('photo_copy_stale');
   if (folder?.fell) reasons.push('backup_files_fell');
+  if (photo_files.damaged > 0) reasons.push('backup_photos_damaged');
   if (db_size.bytes > DB_RED_LINE_BYTES) reasons.push('db_size');
   if (download.state === 'red') reasons.push('download_red');
   const red = reasons.length > 0;
   if (download.state === 'amber') reasons.push('download_amber');
   if (pull.state === 'amber') reasons.push('pulled_amber');
+  if (photo_files.repaired > 0) reasons.push('backup_photos_repaired');
   if (rights.delete || rights.drop) reasons.push('delete_or_drop_right');
 
-  return { level: red ? 'red' : reasons.length > 0 ? 'amber' : 'green', reasons, check, db_dump, photo_copy, folder, download, pull, db_size, rights, now };
+  return { level: red ? 'red' : reasons.length > 0 ? 'amber' : 'green', reasons, check, db_dump, photo_copy, folder, photo_files, download, pull, db_size, rights, now };
 }

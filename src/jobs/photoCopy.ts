@@ -19,6 +19,12 @@
 // the PhotoStore of API17, the one place in src/ that selects them: T-F10); tests/api/backup-twins.test.ts
 // keeps the two equal on a real database. What the twin adds is the way to stop (`shouldStop`, asked before each photo) and a statement context for each photo: a TxContext keeps the 12 seconds of
 // S12 from the moment it is made, and a slice runs longer than that.
+//
+// THE NIGHTLY CHECK OF THE COPIES (RV3a-F1, src/jobs/photoVerify.ts). Once the list of photos still to copy has been read to its end, the same phase looks at EVERY copy already recorded: the file
+// exists and has the recorded size; a bounded rolling sample is hashed; a missing copy is written again from the database's bytes (after those were checked against the recorded sha256); a copy
+// that exists with other bytes or another size is never overwritten and fails the phase (the line is red until the file is removed by hand). The counts are in the job's `detail` and in
+// `backup_runs.detail.verify`, which readHealth reads (`backup_photos_repaired`, `backup_photos_damaged`). The check shares the slice's 25 seconds: if it runs out, the row stays `running`, the
+// position is in `detail.verify_state`, and the next tick goes on from there.
 import { createHash } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -27,6 +33,7 @@ import type { TxContext } from '../db/tx.js';
 import { type PhotoKind, createDbPhotoStore } from '../photos/photoStore.js';
 import { type PhotoFiles, assertFolderUsable, directoryPhotos, folderStats, resolveBackupDir } from './backupFolder.js';
 import { recordBackupRun } from './backupRuns.js';
+import { VERIFY_LIMITS, type VerifyLimits, type VerifyMemory, type VerifyResult, type VerifySummary, readMemory, readState, summarize, verifyCopies } from './photoVerify.js';
 import { JOB_LIMITS } from './schedule.js';
 import type { Phase, PhaseContext } from './types.js';
 
@@ -119,6 +126,8 @@ export interface PhotoCopyOptions {
   sliceMs?: number;
   /** Photos taken from the list in one slice (default JOB_LIMITS.photoRowsPerSlice). A test seam. */
   limit?: number;
+  /** The bounds of the nightly check of the copies (default VERIFY_LIMITS). A test seam. */
+  verify?: Partial<VerifyLimits>;
 }
 
 interface Totals {
@@ -138,10 +147,14 @@ export function createPhotoCopyPhase(options: PhotoCopyOptions = {}): Phase {
   const sliceMicros = BigInt(Math.round((options.sliceMs ?? JOB_LIMITS.photoSliceSeconds * 1000) * 1000));
   const limit = options.limit ?? JOB_LIMITS.photoRowsPerSlice;
   const makeStore = options.store ?? directoryPhotos;
+  const verifyLimits: VerifyLimits = { cycleNights: VERIFY_LIMITS.cycleNights, minFiles: VERIFY_LIMITS.minFiles, maxBytes: VERIFY_LIMITS.maxBytes, ...options.verify };
 
-  /** D17: a failed phase is a row with ok false, once for the business date (a retry of a failed row does not write another). */
-  async function recordFailure(ctx: PhaseContext, detail: Record<string, unknown>): Promise<void> {
-    if (ctx.previous?.status === 'failed') return;
+  /**
+   * D17: a failed phase is a row with ok false, once for the business date (a retry of a failed row does not write another). `always` writes it again: the check of the copies found a damaged copy
+   * that the last failed row does not name, and the next nights must be told about it (they hash every copy named in the newest row that has a `verify`).
+   */
+  async function recordFailure(ctx: PhaseContext, detail: Record<string, unknown>, always = false): Promise<void> {
+    if (ctx.previous?.status === 'failed' && !always) return;
     try {
       await recordBackupRun(ctx.txContext(), { kind: 'photo_copy', ok: false, detail: { date: ctx.runDate, ...detail }, ranAt: ctx.app.clock.read().timestamp });
     } catch {
@@ -154,8 +167,12 @@ export function createPhotoCopyPhase(options: PhotoCopyOptions = {}): Phase {
     due: 'nightly',
     async run(ctx) {
       const before = totalsBefore(ctx.previous);
+      const carried = ctx.previous?.status === 'running' ? readState(ctx.previous.detail) : null;
       let dir: string;
       let result: CopyResult;
+      let memory: VerifyMemory | null = null;
+      let check: VerifyResult | null = null;
+      let shouldStop: () => boolean;
       try {
         dir = resolveBackupDir(ctx.app.config.backupDir);
         await assertFolderUsable(dir);
@@ -165,8 +182,14 @@ export function createPhotoCopyPhase(options: PhotoCopyOptions = {}): Phase {
         });
         const clock = ctx.app.clock;
         const start = clock.read().micros;
-        const shouldStop = () => ctx.signal.aborted || clock.read().micros - start >= sliceMicros;
-        result = await copyPhotos(ctx.txContext, makeStore(photosDir), { limit, shouldStop });
+        shouldStop = () => ctx.signal.aborted || clock.read().micros - start >= sliceMicros;
+        const store = makeStore(photosDir);
+        result = await copyPhotos(ctx.txContext, store, { limit, shouldStop });
+        if (!result.stopped && !result.more) {
+          // the list of photos still to copy was read to its end: now the copies that are already there
+          memory = await readMemory(ctx.txContext());
+          check = await verifyCopies(ctx.txContext, store, { limits: verifyLimits, memory, carried, shouldStop });
+        }
       } catch (e) {
         const err = e as Error & { code?: string };
         await recordFailure(ctx, { error: { name: err.name, code: err.code ?? null, message: String(err.message).slice(0, 300) } });
@@ -175,28 +198,64 @@ export function createPhotoCopyPhase(options: PhotoCopyOptions = {}): Phase {
 
       // A photo the owner removed while the slice ran is not a fault: it is not in the list any more (a tombstone is never copied) and the night goes on.
       const faults = result.failed.filter((f) => f.error !== REMOVED_WHILE_COPYING);
-      if (faults.length > 0) {
-        await recordFailure(ctx, { failed: faults.length, copied: result.copied, first_error: faults[0].error.slice(0, 300) });
-        throw new PhotoCopyError(`${faults.length} of ${result.copied + faults.length} photo objects could not be copied (the first: ${faults[0].error.slice(0, 200)})`);
-      }
-
       const totals: Totals = { slices: before.slices + 1, copied: before.copied + result.copied, bytes: before.bytes + result.bytes };
       const facts = { copied: result.copied, bytes: result.bytes, slices: totals.slices };
+
       if (result.stopped || result.more) {
+        if (faults.length > 0) {
+          await recordFailure(ctx, { failed: faults.length, copied: result.copied, first_error: faults[0].error.slice(0, 300) });
+          throw new PhotoCopyError(`${faults.length} of ${result.copied + faults.length} photo objects could not be copied (the first: ${faults[0].error.slice(0, 200)})`);
+        }
         // the slice ended early: where it stopped is in `sys_photo_copies`; the totals are here. No heartbeat: never an `ok` for a partial slice (D17).
-        return { complete: false, detail: { date: ctx.runDate, ...totals, stopped: result.stopped ? (ctx.signal.aborted ? 'signal' : 'time') : 'limit' }, facts };
+        return {
+          complete: false,
+          detail: { date: ctx.runDate, ...totals, ...(carried ? { repaired: carried.repaired, verify_state: carried } : {}), stopped: result.stopped ? (ctx.signal.aborted ? 'signal' : 'time') : 'limit' },
+          facts: { ...facts, ...(carried ? { repaired: carried.repaired } : {}) },
+        };
       }
 
-      // complete: the list was read to its end and every photo is in the folder. The heartbeat of I12, with the folder as it is now (the dashboard compares its file count from night to night).
+      const verified = check as VerifyResult;
+      if (!verified.done) {
+        // the check of the copies ran out of the slice's time or the call went: it goes on at the next tick from `verify_state`. (A photo that could not be copied is tried again then and is reported
+        // when the check is complete.)
+        const stopped = ctx.signal.aborted ? 'signal' : 'time';
+        return {
+          complete: false,
+          detail: { date: ctx.runDate, ...totals, repaired: verified.state.repaired, verify_state: verified.state, stopped },
+          facts: { ...facts, repaired: verified.state.repaired },
+        };
+      }
+
+      const summary: VerifySummary = summarize(verified.state);
+      if (faults.length > 0 || summary.damaged_total > 0) {
+        // everything that could be done was done (the others copied, the missing copies written again); a failure is loud, and the damaged copies are named for the nights to come
+        const parts: string[] = [];
+        if (faults.length > 0) parts.push(`${faults.length} of ${result.copied + faults.length} photo objects could not be copied (the first: ${faults[0].error.slice(0, 200)})`);
+        if (summary.damaged_total > 0) {
+          const first = summary.damaged[0];
+          parts.push(`${summary.damaged_total} photo copies in the backup folder are damaged and were not overwritten (the first: ${first.id}-${first.kind}, ${first.reason}); remove the file and the next run writes it again`);
+        }
+        const namedBefore = new Set((memory as VerifyMemory).known.map((k) => `${k.id}/${k.kind}`));
+        const namedNow = new Set(summary.damaged.map((k) => `${k.id}/${k.kind}`));
+        const changed = namedBefore.size !== namedNow.size || [...namedNow].some((k) => !namedBefore.has(k));
+        await recordFailure(
+          ctx,
+          { failed: faults.length, copied: result.copied, ...(faults.length > 0 ? { first_error: faults[0].error.slice(0, 300) } : {}), verify: summary },
+          summary.damaged_total > 0 && changed,
+        );
+        throw new PhotoCopyError(parts.join('; '));
+      }
+
+      // complete: the list was read to its end, every photo is in the folder and every copy was looked at. The heartbeat of I12, with the folder as it is now (the dashboard compares its file count from night to night).
       const folder = await folderStats(dir);
       const run = await recordBackupRun(ctx.txContext(), {
         kind: 'photo_copy',
         ok: true,
         bytes: totals.bytes,
-        detail: { date: ctx.runDate, ...totals, failed: 0, folder },
+        detail: { date: ctx.runDate, ...totals, failed: 0, folder, verify: summary },
         ranAt: ctx.app.clock.read().timestamp,
       });
-      return { complete: true, detail: { date: ctx.runDate, ...totals, backup_run_id: run.id }, facts: { ...facts, backup_run_id: run.id } };
+      return { complete: true, detail: { date: ctx.runDate, ...totals, repaired: summary.repaired, verify: summary, backup_run_id: run.id }, facts: { ...facts, repaired: summary.repaired, backup_run_id: run.id } };
     },
   };
 }

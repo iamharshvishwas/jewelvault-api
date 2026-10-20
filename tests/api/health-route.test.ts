@@ -81,7 +81,7 @@ describe('T-D18 GET /v1/dashboard/health: the owner\'s line in one call', () => 
     expect(h.db_size.red_line_bytes).toBe(DB_RED_LINE_BYTES);
     expect(h.db_size.bytes).toBeGreaterThan(0);
     expect(h.db_size.bytes).toBeLessThan(DB_RED_LINE_BYTES);
-    expect(Object.keys(h).sort()).toEqual(['check', 'db_dump', 'db_size', 'download', 'folder', 'level', 'now', 'photo_copy', 'pull', 'reasons', 'rights'].sort());
+    expect(Object.keys(h).sort()).toEqual(['check', 'db_dump', 'db_size', 'download', 'folder', 'level', 'now', 'photo_copy', 'photo_files', 'pull', 'reasons', 'rights'].sort());
   });
 
   it('a check that says Problem turns it red', async () => {

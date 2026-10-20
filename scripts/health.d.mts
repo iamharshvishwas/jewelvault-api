@@ -9,7 +9,7 @@ export interface Age { last_at: string | null; age_hours: number | null }
 export interface Health {
   /** 'red' (something is wrong), 'amber' (the database user may delete or drop), or 'green'. */
   level: 'red' | 'amber' | 'green';
-  /** Why it is red or amber, in the order of the dashboard: check_problem, check_stale, check_never, dump_stale, dump_never, photo_copy_stale, photo_copy_never, backup_files_fell, db_size, download_red, download_amber, pulled_amber, delete_or_drop_right. */
+  /** Why it is red or amber, in the order of the dashboard: check_problem, check_stale, check_never, dump_stale, dump_never, photo_copy_stale, photo_copy_never, backup_files_fell, backup_photos_damaged (RV3a-F1), db_size, download_red, download_amber, pulled_amber, backup_photos_repaired (RV3a-F1), delete_or_drop_right. */
   reasons: string[];
   /** The last nightly check of any result (check_runs), and whether that last run said the books are fine. */
   check: Age & { ok: boolean | null };
@@ -24,6 +24,8 @@ export interface Health {
   pull: { state: 'ok' | 'amber' | 'unknown'; from: 'last_pulled' | 'first_export' | null; reference_date: string | null; age_days: number | null };
   /** B2: the backup folder as the latest good run recorded it in backup_runs.detail.folder = {files, bytes, free_bytes}. fell is true when, between two consecutive good runs in the last 7 days, the file count dropped by more than the later run's detail.pruned; fell_at is that run's time. null when no run recorded the folder. */
   folder: { files: number; bytes: number; free_bytes: number | null; previous_files: number | null; recorded_at: string; fell: boolean; fell_at: string | null } | null;
+  /** RV3a-F1, the nightly check of the photo copies (backup_runs.detail.verify of the photo_copy rows): `repaired` = copies written again in the last 7 days (amber `backup_photos_repaired`), `repaired_at` = the newest such row; `damaged` = copies found with another size or other bytes that nobody has fixed yet (never overwritten; red `backup_photos_damaged` until a newer row has none), `damaged_at` = the row that found them. */
+  photo_files: { repaired: number; repaired_at: string | null; damaged: number; damaged_at: string | null };
   /** What the database user may do: S11/S7 say Delete and Drop stay unticked. */
   rights: { delete: boolean; drop: boolean; /** boxes of A3 that are on although they should be off (besides Delete and Drop, which have their own flags and the amber level), sorted */ extra: string[] };
   now: string;

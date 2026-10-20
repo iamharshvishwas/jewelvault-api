@@ -252,6 +252,12 @@ describe("T-R04 the photo copy in slices of 25 seconds: where it stopped, the ne
       path.join(w.backupDir!, "photos", nameOf(leftOver)),
       leftOver.bytes,
     ); // the earlier run died after the file and before the row
+    // RV3a-F1: the nightly check looks at every recorded copy, so a copy that is recorded must be IN the folder for "not written again" to be what is meant (a recorded copy that is missing from
+    // the folder is written again: tests/api/rv3a-photo-verify.test.ts)
+    await writeFile(
+      path.join(w.backupDir!, "photos", nameOf(recorded)),
+      recorded.bytes,
+    );
     puts = [];
     set(w, "2026-10-20T20:30:00Z"); // 02:00 on 21 Oct
     cost = 0n;
@@ -264,7 +270,7 @@ describe("T-R04 the photo copy in slices of 25 seconds: where it stopped, the ne
     const names = await photosOf(w);
     expect(names).toContain(nameOf(live1));
     expect(names).not.toContain(nameOf(removedOne));
-    expect(names).not.toContain(nameOf(recorded)); // it was said to be copied: nothing was written
+    expect(names).toContain(nameOf(recorded)); // it was said to be copied, and it is there: nothing was written (it is not in `puts` above)
     expect(names.some((n) => n.endsWith(".partial"))).toBe(false);
     expect(
       (await readFile(path.join(w.backupDir!, "photos", nameOf(live1)))).equals(

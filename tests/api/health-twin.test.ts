@@ -168,3 +168,62 @@ describe('T-D18 the TypeScript twin of readHealth gives the answer of scripts/he
     expect((await both()).rights).toEqual({ delete: false, drop: false, extra: [] });
   });
 });
+
+describe('RV3a-F1 the twin and the original agree on the nightly check of the photo copies: a repair is amber for seven days, a damaged copy is red until a newer row says none', () => {
+  const verify = (detail: Record<string, unknown>, files = 6) => ({ folder: { files, bytes: 6000, free_bytes: 900000 }, verify: { checked: 6, missing: 0, repaired: 0, damaged_total: 0, damaged: [], ...detail } });
+
+  it('a repair within the last seven days is amber and adds up over the nights; one older than seven days is history; the figure says how many and when', async () => {
+    await healthy();
+    await backup('photo_copy', 30, verify({ repaired: 2 }));
+    await backup('photo_copy', 54, verify({ repaired: 1 }));
+    const h = await both();
+    expect(h.reasons).toEqual(['backup_photos_repaired']);
+    expect(h.level).toBe('amber');
+    expect(h.photo_files).toEqual({ repaired: 3, repaired_at: ago(30), damaged: 0, damaged_at: null });
+
+    await healthy();
+    await backup('photo_copy', 24 * 7 + 1, verify({ repaired: 4 })); // seven days and an hour ago: out of the window
+    const old = await both();
+    expect(old.reasons).toEqual([]);
+    expect(old.photo_files).toEqual({ repaired: 0, repaired_at: null, damaged: 0, damaged_at: null });
+  });
+
+  it('negative control: rows without a verify (before RV3a), or a verify with nothing repaired and nothing damaged, add no reason and no figure', async () => {
+    await healthy();
+    await backup('photo_copy', 30, verify({}));
+    await backup('photo_copy', 40, { folder: { files: 6 } });
+    const h = await both();
+    expect(h.reasons).toEqual([]);
+    expect(h.level).toBe('green');
+    expect(h.photo_files).toEqual({ repaired: 0, repaired_at: null, damaged: 0, damaged_at: null });
+  });
+
+  it('a damaged copy is red (and the line says how many and when) until a NEWER row that has a verify says none; a newer failed row without a verify does not clear it', async () => {
+    await healthy();
+    await backup('photo_copy', 5, verify({ damaged_total: 2, damaged: [{ id: 'a', kind: 'full', reason: 'sha256' }] }), 0);
+    const red = await both();
+    expect(red.reasons).toEqual(['backup_photos_damaged']);
+    expect(red.level).toBe('red');
+    expect(red.photo_files).toMatchObject({ damaged: 2, damaged_at: ago(5) });
+
+    await backup('photo_copy', 1, { error: { name: 'Error', code: 'ENOENT' } }, 0); // the folder was gone: says nothing about the copies
+    expect((await both()).reasons).toContain('backup_photos_damaged');
+
+    await backup('photo_copy', 0.5, verify({ repaired: 1 }, 7)); // the damaged file was removed by hand and written again: the newest verify says none
+    const cleared = await both();
+    expect(cleared.reasons).toEqual(['backup_photos_repaired']);
+    expect(cleared.photo_files).toMatchObject({ damaged: 0, damaged_at: null });
+  });
+
+  it('the order of the reasons: the damaged copy is red after the fallen file count, the repair is amber after the pull', async () => {
+    await clean();
+    await check(1);
+    await backup('db_dump', 30, { folder: { files: 10 } });
+    await backup('db_dump', 5, { folder: { files: 7 } });
+    await backup('photo_copy', 4, verify({ repaired: 1, damaged_total: 1, damaged: [{ id: 'a', kind: 'thumb', reason: 'size' }] }));
+    await setting('last_pulled', '2026-10-01T05:00:00.000Z');
+    await setting('last_download', '2026-09-01T05:00:00.000Z');
+    const h = await both();
+    expect(h.reasons).toEqual(['backup_files_fell', 'backup_photos_damaged', 'download_red', 'pulled_amber', 'backup_photos_repaired']);
+  });
+});
