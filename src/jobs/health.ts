@@ -2,12 +2,14 @@
 // turns red after 26 hours, but only when she opens it, which is not an alarm; this answers `503` when
 //
 //   - the last GOOD export (backup_runs, kind db_dump, ok) is older than 26 hours, or there never was one (dump_stale, dump_never), or
+//   - the backup folder cannot be used (backup_folder_unusable, RV3a-F3: the dump's folder probe says so and no good run is newer; B2 "a missing folder turns the dashboard red", and the outside check
+//     must not wait 26 hours for the export to go stale to say the same), or
 //   - the owner's last Download everything is more than 35 days old (download_red: whole Asia/Kolkata days, B3, counted from settings.last_download or, with none, from the first night the system
 //     ran), and the workflow then fails: GitHub e-mails the owner of the repository about a failed run at no cost.
 //
-// Those two figures are the ones readHealth (src/reads/health.ts, the line of I12) works out, and the thresholds are its: this route repeats them and decides nothing of its own. Only these two
+// These figures are the ones readHealth (src/reads/health.ts, the line of I12) works out, and the thresholds are its: this route repeats them and decides nothing of its own. Only these
 // reasons decide: the owner's other red lights (a stale check, no photo copy, a fallen file count, a full database) are for the dashboard, and a stale NIGHTLY CHECK or a stuck photo copy would show
-// there; spec I8 names the export and the download. "Never ran" is red here as it is on the line: a new shop is not backed up until the first dump has run, and the outside check should say so.
+// there; spec I8 names the export and the download, and RV3a-F3 adds the unusable folder (B2, I12). "Never ran" is red here as it is on the line: a new shop is not backed up until the first dump has run, and the outside check should say so.
 //
 // READ ONLY: no statement that writes, no ANALYZE TABLE (readHealth is asked not to), no event row. The answer holds the reasons and two figures, no name of a customer, a user or a path.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -16,7 +18,7 @@ import { readHealth } from '../reads/health.js';
 import { timestampToWire } from '../wire/format.js';
 
 /** The reasons of readHealth that make the outside check fail, in the order readHealth lists them. */
-export const JOB_HEALTH_REASONS: readonly string[] = ['dump_never', 'dump_stale', 'download_red'];
+export const JOB_HEALTH_REASONS: readonly string[] = ['dump_never', 'dump_stale', 'backup_folder_unusable', 'download_red'];
 
 export interface JobHealthAnswer {
   status: 200 | 503;

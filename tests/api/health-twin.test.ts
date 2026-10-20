@@ -227,3 +227,51 @@ describe('RV3a-F1 the twin and the original agree on the nightly check of the ph
     expect(h.reasons).toEqual(['backup_files_fell', 'backup_photos_damaged', 'download_red', 'pulled_amber', 'backup_photos_repaired']);
   });
 });
+
+describe('RV3a-F3 the twin and the original agree on the folder signal: backup_folder_unusable is red until a good run is newer than the failed probe, and the figure folder_probe says what the newest probe found', () => {
+  const probe = (hours: number, p: Record<string, unknown>) => backup('db_dump', hours, { phase: 'folder_probe', folder_probe: p }, 0);
+
+  it('no probe ever: the figure is null and nothing is red', async () => {
+    await healthy();
+    const h = await both();
+    expect(h.folder_probe).toBeNull();
+    expect(h.reasons).toEqual([]);
+  });
+
+  it('a failed probe newer than the good runs: red, the figure names code, where and when; a good export or photo copy newer than it clears the reason, an older one or a failed run does not', async () => {
+    await healthy(); // the photo copy is 3 hours old, the export 2 hours
+    await probe(1, { ok: false, code: 'ENOENT', where: 'folder' });
+    const red = await both();
+    expect(red.reasons).toEqual(['backup_folder_unusable']);
+    expect(red.level).toBe('red');
+    expect(red.folder_probe).toEqual({ ok: false, code: 'ENOENT', where: 'folder', at: ago(1) });
+
+    await backup('photo_copy', 0.75, null, 0); // a failed run is no proof that the folder works
+    expect((await both()).reasons).toEqual(['backup_folder_unusable']);
+
+    await backup('photo_copy', 0.5, { folder: { files: 7, bytes: 7000, free_bytes: 800000 } }); // a good run after the probe
+    const healed = await both();
+    expect(healed.reasons).toEqual([]);
+    expect(healed.folder_probe).toMatchObject({ ok: false, code: 'ENOENT' }); // the figure is still the newest probe: it is the reason that went
+  });
+
+  it('the heal row is the newest probe: ok true, not red; JSON false is the text 0 (or false) for the reader, JSON true anything else', async () => {
+    await healthy();
+    await probe(5, { ok: false, code: 'EACCES', where: 'photos' });
+    await probe(1, { ok: true });
+    const h = await both();
+    expect(h.reasons).toEqual([]);
+    expect(h.folder_probe).toEqual({ ok: true, code: null, where: null, at: ago(1) });
+  });
+
+  it('the reason follows backup_files_fell and comes before backup_photos_damaged', async () => {
+    await clean();
+    await check(1);
+    await backup('db_dump', 30, { folder: { files: 10 } });
+    await backup('db_dump', 5, { folder: { files: 7 } });
+    await backup('photo_copy', 4, { folder: { files: 7 } });
+    await backup('photo_copy', 3, { verify: { damaged_total: 1, damaged: [{ id: 'a', kind: 'full', reason: 'size' }] } }, 0);
+    await probe(0.5, { ok: false, code: 'ENOENT', where: 'folder' });
+    expect((await both()).reasons).toEqual(['backup_files_fell', 'backup_folder_unusable', 'backup_photos_damaged']);
+  });
+});

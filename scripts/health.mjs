@@ -3,8 +3,8 @@
 // Everything is measured from one "now": the database's own UTC clock unless a test passes one in.
 //
 // Red: the last check says Problem, the last check is older than 26 hours (or none exists), the last GOOD export or photo copy is older than 26 hours
-// (or none exists), the backup folder's file count fell without a prune (B2), a photo copy in the folder is damaged and still waiting for somebody (RV3a-F1), the database is above 2 GB, or the
-// owner's last Download everything is more than 35 days old (B3, O53).
+// (or none exists), the backup folder's file count fell without a prune (B2), the backup folder cannot be used (the dump's folder probe says so and no good run is newer: RV3a-F3), a photo copy in
+// the folder is damaged and still waiting for somebody (RV3a-F1), the database is above 2 GB, or the owner's last Download everything is more than 35 days old (B3, O53).
 // Amber: nothing is red but the owner's download is 28 days old or more, Harsh's weekly pull (O54) is more than 10 days old, the nightly check wrote a vanished photo copy again in the last 7 days
 // (RV3a-F1), or the user has a Delete or Drop right (S11). Otherwise green.
 // "Never ran" is red on purpose: on a new shop nothing is backed up until the first tick has run, and the owner should see that.
@@ -190,6 +190,25 @@ export async function readHealth(conn, opts = {}) {
       photo_files.repaired_at ??= r.at;
     }
   });
+
+  // RV3a-F3: the folder signal of API34 (scripts/dump-job.mjs recordFolderProbe, twin src/jobs/backupProbe.ts). A probe that fails is a backup_runs row of kind db_dump, ok 0, detail
+  // {phase: 'folder_probe', folder_probe: {ok: false, code, where}}; a probe that passes after a failure writes the heal row {ok: true}. The NEWEST such row (by id, the order it was written in, as the
+  // writer reads it) is the state of the folder; a failure is red until a good db_dump or photo_copy row is NEWER than it, which proves the folder was written to afterwards. JSON_VALUE gives a JSON
+  // false as the text '0' on MariaDB 11.8 (another version may say 'false'), and the writer reads anything else as ok, so the reader does too.
+  const [probeRows] = await conn.query(
+    `SELECT DATE_FORMAT(ran_at, '${FMT}') AS at, JSON_VALUE(detail, '$.folder_probe.ok') AS ok, JSON_VALUE(detail, '$.folder_probe.code') AS code, JSON_VALUE(detail, '$.folder_probe.where') AS wh FROM backup_runs WHERE kind = 'db_dump' AND JSON_CONTAINS_PATH(detail, 'one', '$.folder_probe') ORDER BY id DESC LIMIT 1`
+  );
+  let folder_probe = null;
+  if (probeRows.length > 0) {
+    const p = probeRows[0];
+    const failed = p.ok === '0' || p.ok === 'false';
+    folder_probe = failed ? { ok: false, code: p.code ?? null, where: p.wh ?? null, at: p.at } : { ok: true, code: null, where: null, at: p.at };
+  }
+  let folderUnusable = false;
+  if (folder_probe && folder_probe.ok === false) {
+    const [healed] = await conn.query("SELECT 1 AS n FROM backup_runs WHERE ok = 1 AND kind IN ('db_dump', 'photo_copy') AND ran_at > ? LIMIT 1", [folder_probe.at]);
+    folderUnusable = healed.length === 0;
+  }
   const [nameRows] = await conn.query('SELECT DATABASE() AS name');
   const dbRow = nameRows[0];
 
@@ -210,6 +229,7 @@ export async function readHealth(conn, opts = {}) {
   if (photo_copy.age_hours === null) reasons.push('photo_copy_never');
   else if (photo_copy.age_hours > RED_AFTER_HOURS) reasons.push('photo_copy_stale');
   if (folder?.fell) reasons.push('backup_files_fell');
+  if (folderUnusable) reasons.push('backup_folder_unusable');
   if (photo_files.damaged > 0) reasons.push('backup_photos_damaged');
   if (db_size.bytes > DB_RED_LINE_BYTES) reasons.push('db_size');
   if (download.state === 'red') reasons.push('download_red');
@@ -219,5 +239,5 @@ export async function readHealth(conn, opts = {}) {
   if (photo_files.repaired > 0) reasons.push('backup_photos_repaired');
   if (rights.delete || rights.drop) reasons.push('delete_or_drop_right');
 
-  return { level: red ? 'red' : reasons.length > 0 ? 'amber' : 'green', reasons, check, db_dump, photo_copy, folder, photo_files, download, pull, db_size, rights, now };
+  return { level: red ? 'red' : reasons.length > 0 ? 'amber' : 'green', reasons, check, db_dump, photo_copy, folder, folder_probe, photo_files, download, pull, db_size, rights, now };
 }

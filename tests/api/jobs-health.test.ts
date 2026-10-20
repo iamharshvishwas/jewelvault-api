@@ -6,8 +6,8 @@ import { timestampToWire } from '../../src/wire/format';
 import { JOB_HASH, JOB_TOKEN, type TickWorld, body, freshIp, tickWorld } from './tick-support';
 
 // T-R04 (I8, B3, O44): `GET /internal/jobs/health`, the read-only call of the GitHub Actions workflow (same token as the tick): "answers 503 when the last good export is older than 26 hours or the owner's
-// last Download everything is more than 35 days old (B3), and the workflow then fails". Only those two decide; the owner's other red lights (a stale check, no photo copy, a fallen file count) are for
-// the dashboard line (I12). It is behind the same door as the tick: no Origin, the tick's throttle, the job token, no CORS; and it writes nothing.
+// last Download everything is more than 35 days old (B3), and the workflow then fails". Only those two decide (and, since RV3a-F3, the backup folder that cannot be used); the owner's other red lights
+// (a stale check, no photo copy, a fallen file count) are for the dashboard line (I12). It is behind the same door as the tick: no Origin, the tick's throttle, the job token, no CORS; and it writes nothing.
 
 // The throttle of the door counts in the API's clock, 20 calls a minute in all: every test starts two minutes after the last one, and what is "now" is read from the clock each time.
 const WRITES = /^\s*(INSERT|UPDATE|DELETE|REPLACE|ANALYZE|ALTER|CREATE|DROP|TRUNCATE)\b/i;
@@ -104,6 +104,24 @@ describe('T-R04 jobs/health: 503 on an export older than 26 hours and on a downl
     const old = await get();
     expect(old.res.statusCode).toBe(503);
     expect(old.json.failing).toEqual(['download_red']);
+  });
+
+  it('RV3a-F3 the backup folder cannot be used (the dump\'s folder probe, B2, I12): 503 naming backup_folder_unusable although the export is fresh; the heal row, or a good run after the probe, makes it 200 again', async () => {
+    await good();
+    const probe = (at: bigint, p: Record<string, unknown>) =>
+      w.sql.query("INSERT INTO backup_runs (ran_at, kind, ok, bytes, detail) VALUES (?, 'db_dump', 0, 0, ?)", [formatTimestamp(at), JSON.stringify({ phase: 'folder_probe', folder_probe: p })]);
+    expect((await get()).res.statusCode).toBe(200);
+    await probe(now() - 30n * MINUTE, { ok: false, code: 'ENOENT', where: 'folder' });
+    const red = await get();
+    expect(red.res.statusCode, red.res.body).toBe(503);
+    expect(red.json).toMatchObject({ ok: false, failing: ['backup_folder_unusable'], dump: { age_hours: 1 } }); // the export is only an hour old: this is not dump_stale
+    expect(red.res.body).not.toMatch(/ENOENT|jv-backup|\/home/); // the answer names the reason and no path
+    await probe(now() - 10n * MINUTE, { ok: true }); // the folder is there again
+    expect((await get()).res.statusCode).toBe(200);
+    await probe(now() - 5n * MINUTE, { ok: false, code: 'EACCES', where: 'photos' });
+    expect((await get()).res.statusCode).toBe(503);
+    await w.sql.query("INSERT INTO backup_runs (ran_at, kind, ok, bytes, detail) VALUES (?, 'photo_copy', 1, 1, ?)", [formatTimestamp(now() - MINUTE), JSON.stringify({ folder: { files: 7, bytes: 7000 } })]);
+    expect((await get()).res.statusCode, 'a good photo copy after the probe proves the folder was written to').toBe(200);
   });
 
   it('both lapses are named together; and only those two decide: a stale check, a photo copy that never ran, a fallen file count and a full database leave the answer at 200', async () => {
