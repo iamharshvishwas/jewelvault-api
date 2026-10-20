@@ -115,7 +115,8 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 - RV1d [A] Fixes from the re-check of implementation review 1, API side (RV1-10 the job door, RV1-11 capitals in stored e-mails) | depends on: RV1b, API33 | elapsed 0.20 to 0.50 | tests: - | extends: -
 - RV2 [A] Implementation review 2: the money core with a mutation check (fresh agent) - gate G-M | depends on: API29, API30, API31, RV1d | elapsed 1.00 to 2.00 | tests: - | extends: -
 - RV2b [A] Fixes from implementation review 2 (RV2-1 a test that depends on its neighbours, RV2-2 and RV2-3 two missing tests, RV2-4 the test config ignores the lane namespace) | depends on: RV2 | elapsed 0.20 to 0.50 | tests: - | extends: -
-- RV3 [C] Implementation review 3: jobs, backups and restore (fresh agent) - gate G-B | depends on: API33, API33b, API34, API35, API36, OPS05 | elapsed 0.50 to 1.00 | tests: - | extends: -
+- RV3a [A] Fixes from the early code review of RV3 (F1 a vanished photo copy goes green after 7 days, F2 a correct restore reads CHECKS FAILED, F3 the folder signal is not read, F4 a future-dated run hides a dead export) | depends on: API33, API33b, API34, API35, API36 | elapsed 0.30 to 0.80 | tests: - | extends: -
+- RV3 [C] Implementation review 3: jobs, backups and restore (fresh agent) - gate G-B | depends on: API33, API33b, API34, API35, API36, RV3a, OPS05 | elapsed 0.50 to 1.00 | tests: - | extends: -
 - RV4 [A] Implementation review 4: end to end on staging (fresh agent) - gate G-E | depends on: WEB12b, WEB13, WEB14, WEB15, WEB16, OPS04, RV1, RV1b, RV1c, RV2, RV2b, RV3 | elapsed 0.50 to 1.00 | tests: - | extends: -
 
 ## Harsh
@@ -893,13 +894,24 @@ Generated on 2026-10-17 from `_plan-build/plan_*.py` by `build_plan.py`, which a
 - **Done when:** `npm test -- -t PT-RV2b` passes; the plan's selection command `npm test -- -t "T-A|T-B|T-C"` has no failure; the three mutations of the review (the year taken from `bill_date` in X10, receipts ordered by `created_at` only, the namespace dropped from vitest.config.ts) each fail a test; `npm run verify` green.
 - **Rollback:** Nothing to roll back (a review only reads; fixes are separate commits).
 
+### RV3a Fixes from the early code review of RV3 (F1 a vanished photo copy goes green after 7 days, F2 a correct restore reads CHECKS FAILED, F3 the folder signal is not read, F4 a future-dated run hides a dead export)
+
+- **Who:** A   **Repository:** jewelvault-api   **Size:** elapsed 0.30 to 0.80 working days   **Depends on:** API33, API33b, API34, API35, API36
+- **Gate:** G-B
+- **Spec lines:** -   **Also touches:** B2, B4, I12, D25, D26
+- **Tests first written here:** -   **Extends:** -   **Plan tests:** PT-RV3a the four findings of the early review fail a named test on the old code and pass now: a photo copy that vanishes from the folder is re-copied from the database and the line says so, a copy with the wrong bytes keeps the line red until it is removed, a correct restore of an export with request rows near the 90-day edge reports no failed check, a missing backup folder turns the line red at once and the outside check answers 503, and a run dated in the future never makes a dead export look fresh
+- **Do:** Tests first, one commit per finding. F1: every night check all recorded photo copies by existence and size, hash a bounded rolling sample, re-copy a missing copy from the database (bytes checked against the recorded sha256), and show the repair (job detail and an amber reason); a copy with the wrong size or hash is not overwritten (B2) and keeps the line red until the file is removed by hand. F2: the export records the cutoff of its 90-day filter in the manifest and the restore's re-export uses it (an older manifest still restores). F3: `readHealth` and its twin read the folder signal: the red reason `backup_folder_unusable` and the figure `folder_probe`, and the outside check answers 503. F4: the age of the last good run is taken from the newest row that is not in the future, and a future row is a red reason. The new reason codes go into docs/handoffs.md so the website can map them to words.
+- **Note:** NOT A GATE: Harsh asked on 20 Oct 2026 for an early, code-only review of RV3 (report `impl-review-3-early.md` in the orchestrator's side-session notes: Critical 0, High 2, Medium 3, Low 7). These four are the ones that make the backup line lie (F1, F3, F4) or the restore report lie (F2); Harsh approved the fix task in chat the same day. F5 to F12 stay as listed in the report (the database and spec sessions, or later). The real RV3 (gate G-B) still waits for OPS05 and re-runs the review's attacks against the fixes.
+- **Done when:** `npm test -- -t RV3a` passes and each of F1 to F4 failed its test on the old code; `-t T-R` and the health twin test pass; `npm run verify` green on a lane.
+- **Rollback:** Nothing to roll back (a review only reads; fixes are separate commits).
+
 ### RV3 Implementation review 3: jobs, backups and restore (fresh agent) - gate G-B
 
-- **Who:** C   **Repository:** jewelvault-api   **Size:** elapsed 0.50 to 1.00 working days   **Depends on:** API33, API33b, API34, API35, API36, OPS05
+- **Who:** C   **Repository:** jewelvault-api   **Size:** elapsed 0.50 to 1.00 working days   **Depends on:** API33, API33b, API34, API35, API36, RV3a, OPS05
 - **Gate:** G-B
 - **Spec lines:** -   **Also touches:** -
 - **Tests first written here:** -   **Extends:** -   **Plan tests:** -
-- **Do:** A fresh agent reads B1 to B6, I8, I12 and L6 against the code, runs the T-R tests, kills the dump at three points, removes a photo from the folder, fills the folder past the prune count, runs two ticks at once, sets the clock to day 27, 28, 35 and 36, and checks that no secret is in the repository. It repeats the restore on a second lane database. Writes `impl-review-3.md`.
+- **Do:** A fresh agent reads B1 to B6, I8, I12 and L6 against the code, runs the T-R tests, kills the dump at three points, removes a photo from the folder, fills the folder past the prune count, runs two ticks at once, sets the clock to day 27, 28, 35 and 36, and checks that no secret is in the repository. It repeats the restore on a second lane database. It also re-runs the attacks of the early review (F1 to F4, fixed in RV3a) against the fixed code. Writes `impl-review-3.md`.
 - **Done when:** `impl-review-3.md` has no open Critical or High; the restore drill log of OPS05 is checked against the code.
 - **Rollback:** Nothing to roll back (a review only reads; fixes are separate commits).
 
