@@ -6,7 +6,7 @@
 # The orchestrator (the main session) merges, sets nothing else, and runs the "O" tasks with Harsh; those are not agents.
 AGENT_ORDER = {
     "A": ["API01", "API02", "API03", "API14", "API15", "API16", "API20", "API21", "API22", "API23", "API25",
-          "API26", "API29", "API30", "RV1d", "RV2", "RV2b", "API35", "API36", "RV4", "QA01"],
+          "API26", "API29", "API30", "RV1d", "RV2", "RV2b", "API35", "API36", "RV3a", "RV4", "QA01"],
     "B": ["API06", "API10", "WEB00", "WEB01", "WEB02", "WEB03", "WEB04", "WEB05", "WEB07", "WEB06", "WEB08",
           "WEB09", "WEB10", "WEB11", "WEB12", "WEB12b", "WEB16", "WEB13", "WEB17", "WEB15"],
     "C": ["RV0", "API04", "API05", "API09", "API07", "API11", "API13", "API13b", "API13c", "API18", "API19", "API08", "API17",
