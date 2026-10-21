@@ -143,10 +143,10 @@ T("PH03", "PH", "WITH-HARSH: remove the failed Hostinger test app and find the u
 T("PH04", "PH", "WITH-HARSH: the domain's DNS for Vercel, and (after go-live) the hand-over of the domain to Siddhi",
   who="WITH-HARSH", lead=(0, 2), deps=["PH01", "OPS02a"], reqs=["O38"], tests=[],
   do="**Corrected on 17 Oct 2026, in Harsh's words: `jaishrigoldpalace.com` is SIDDHI's domain (her name and her money); it is registered in HARSH's own Hostinger account (API-00C-RESULTS.md section 5) and stays there until hand-over.** So the old plan of "
-     "asking Siddhi for a domain is gone because she has already supplied the name (`MESSAGE-FOR-SIDDHI-domain.md` stays marked not needed). **Order (found by the staging guide of 19 Oct): the DNS step that points `billing-staging.` at Vercel takes that name away from the Hostinger database proof app, which OPS02a still uses, so PH04 comes AFTER OPS02a.** The names are fixed: production `billing.jaishrigoldpalace.com` (the website, "
+     "asking Siddhi for a domain is gone because she has already supplied the name (`MESSAGE-FOR-SIDDHI-domain.md` stays marked not needed). **Order (found by the staging guide of 19 Oct): the DNS step that points `billing-staging.` at Vercel takes that name away from the Hostinger database proof app, which OPS02a still uses, so PH04 comes AFTER OPS02a.** The names are fixed: production `crm.jaishrigoldpalace.com` (the website; Harsh's own choice of 19 Oct, already connected to the Vercel project as a CNAME at Hostinger DNS with a valid certificate; spec O38 still says `billing.`, the spec session aligns it in the next draft; "
      "on Vercel) and `billing-api.jaishrigoldpalace.com` (the API, Hostinger); staging `billing-staging.` and `billing-api-staging.`. Two staging names are already connected "
      "to the proof apps, with Let's Encrypt certificates (17 Oct to 15 Jan 2027), and the cookie, CORS and image flow passed in Chrome 155. **Needed from Harsh:** (1) in "
-     "Hostinger's DNS for the domain, the record that Vercel asks for, for `billing-staging` (a Vercel preview project) and later for `billing` (production), "
+     "Hostinger's DNS for the domain, the record that Vercel asks for, for `billing-staging` (a Vercel preview project); `crm` (production) was already done by Harsh on 19 Oct, "
      "replacing the connection to the proof app (that name is now served by a Hostinger app); (2) the hand-over (O38): after go-live (the plan suggests after the first month, with Siddhi's say) the registrant moves to an account in Siddhi's name; until then "
      "the registrant and the Hostinger hosting stay together in Harsh's one account (a registrant in Siddhi's account while the apps stay in Harsh's "
      "can break the connected names the way `harshvishwas.com` was refused), and the yearly renewal is Siddhi's to pay by default, with the price stated by Harsh in the go or no-go list. Nothing else is hosted on any subdomain of this domain (same-site with the API).",
@@ -165,7 +165,7 @@ T("PH05b", "PH", "WITH-HARSH: remove the two proof apps, then create the staging
   who="WITH-HARSH", lead=(0, 1), deps=["PH02", "PH03", "PH05", "OPS01", "OPS02a"], reqs=[], tests=[],
   do="Needed from Harsh, after OPS01 and OPS02a are done (the proof apps are still needed until then): remove the runtime proof app, the database proof app and the databases "
      "`u992795260_proof` and `proof2` (**removing an app frees its domain name**); add a Node.js web app for staging from the private repository (branch `staging`) and give it "
-     "`billing-api-staging.jaishrigoldpalace.com`; `billing-staging.` stays with Vercel (PH04). **Connecting a domain renames the site's folder** (API-00C-RESULTS section 7), so "
+     "`billing-api-staging.jaishrigoldpalace.com`; `billing-staging.` stays with Vercel (PH04); the staging API's `ALLOWED_ORIGINS` is exactly `https://billing-staging.jaishrigoldpalace.com`. **Connecting a domain renames the site's folder** (API-00C-RESULTS section 7), so "
      "`JV_BACKUP_DIR` and the cron commands are typed only AFTER the domain is connected, with `JV_BACKUP_DIR` at the default `/home/<user>/jv-backup` outside `domains/`. "
      "Latest day: before OPS03a.",
   done="hPanel shows the staging app under its name; no proof app and no `u992795260_proof` or `proof2` database is left.", rollback=RBN)
@@ -207,13 +207,13 @@ T("PH07", "PH", "WITH-HARSH: the decisions he may veto (every open item with a d
 
 T("PH08", "PH", "WITH-HARSH: go-live day steps in Vercel, hPanel and on his Mac",
   who="WITH-HARSH", lead=(0, 1), deps=["QA04"], reqs=[], tests=[],
-  do="Needed from Harsh on the cut-over day, each in the checklist: make sure the last work of `api-web` is merged into `main` of `jewelvault-app` by pull request, and then the branch `api-web15` (WEB15: it removes the preview mode and the Supabase pieces, so it is merged only now, never earlier) (since 18 Oct `main` already holds the work up to WEB11, and every merge into it is a production deploy that stays a sample-data preview while `NEXT_PUBLIC_PREVIEW_MODE=1` is set on Production; to roll back he promotes the previous deployment in Vercel); then set `NEXT_PUBLIC_API_URL` to the production API in the "
+  do="Needed from Harsh on the cut-over day, each in the checklist: make sure the last work of `api-web` is merged into `main` of `jewelvault-app` by pull request, and then the branch `api-web15` (WEB15: it removes the preview mode and the Supabase pieces, so it is merged only now, never earlier) (since 18 Oct `main` already holds the work up to WEB11, and every merge into it is a production deploy that stays a sample-data preview while `NEXT_PUBLIC_PREVIEW_MODE=1` is set on Production; to roll back he promotes the previous deployment in Vercel; the production website is `crm.jaishrigoldpalace.com`, already connected to this Vercel project); then set `NEXT_PUBLIC_API_URL` to the production API in the "
      "Vercel project and REMOVE `NEXT_PUBLIC_PREVIEW_MODE` there (preview mode must not exist in the live build; WEB15 "
      "removed the code, this removes the variable), redeploy and wait; switch Remote MySQL OFF again after the import "
      "window; remove `JV_ADMIN_TOKEN_HASH` from the production environment once the first owner exists (O41 default); check "
      "that both cron jobs show in hPanel's list; start the weekly pull on his Mac (O54) and put the monthly Download "
      "everything in Siddhi's calendar. Latest day: the cut-over morning.",
-  done="The checklist shows each step ticked with the time; the live site opens on the login screen.", rollback="Vercel: promote the previous deployment; hPanel: re-tick Remote MySQL only for the time a fix needs.")
+  done="The checklist shows each step ticked with the time; `https://crm.jaishrigoldpalace.com` opens on the login screen.", rollback="Vercel: promote the previous deployment; hPanel: re-tick Remote MySQL only for the time a fix needs.")
 
 # =============================================================================================== PEOPLE: SIDDHI AND HER CA
 T("PS01", "PS", "WITH-SIDDHI: the data request, items 1, 3 to 8 (how she bills, GST invoices, staff, devices, testers, Order Book, printer, rates)",
@@ -345,7 +345,7 @@ T("OPS03", "OPS", "First staging deploy: migrations, cron jobs, GitHub Actions, 
   agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS02", "OPS03a", "API33", "API33b", "API34", "PH02", "PH05b", "PH06a"],
   reqs=["H5", "O49"], tests=[], extends=["T-R04"],
   do="Harsh pushes the API repository's `staging` branch; Hostinger builds it (`tsc` on its side, entry `dist/server.js`); "
-     "the domain name is connected FIRST (connecting renames the site folder under `~/domains/`), and only then are the environment variables typed by Harsh in hPanel (database host `127.0.0.1`, the allowed origins, the admin token HASH, "
+     "the domain name is connected FIRST (connecting renames the site folder under `~/domains/`), and only then are the environment variables typed by Harsh in hPanel (database host `127.0.0.1`, `ALLOWED_ORIGINS` = `https://billing-staging.jaishrigoldpalace.com` (production: `https://crm.jaishrigoldpalace.com`), the admin token HASH, "
      "the job token hash, the backup public key, `JV_BACKUP_DIR` as one absolute path); the migration files are applied from "
      "Harsh's Mac through Remote MySQL as the ten-box user, paced, with Remote MySQL switched off again afterwards (or pasted in "
      "phpMyAdmin if Remote MySQL fails); the first owner is made with the admin command; the start-up check passes on the real "
@@ -422,9 +422,9 @@ T("OPS07", "OPS", "Production: app, database, domain, cron jobs, first owner, th
   agent="C", repo="api", lo=1.0, hi=2.0, grp="ops", who="WITH-HARSH", deps=["OPS06", "RV1", "RV1b", "RV1c", "RV2", "RV2b", "RV3", "PH06b", "PH04", "OPS04", "IMP02"],
   reqs=[], tests=[], extends=["T-D12", "T-E10"],
   do="With Harsh at hPanel, in a closing-time window: the production Node app (branch `main`) and database with exactly the ten "
-     "boxes; the domain connected first, then the environment variables typed by Harsh (never in chat; `JV_BACKUP_DIR` and the cron commands only after the domain is connected); migrations through Remote MySQL, then Remote MySQL OFF; the "
+     "boxes; the domain connected first, then the environment variables typed by Harsh (never in chat; `ALLOWED_ORIGINS` is exactly `https://crm.jaishrigoldpalace.com`, never `*`; `JV_BACKUP_DIR` and the cron commands only after the domain is connected); migrations through Remote MySQL, then Remote MySQL OFF; the "
      "seeds of D20 only; the first owner by the admin command; both Custom cron jobs and the workflow; the real domain "
-     "connected; the Vercel production project pointed at the production API; **the real pair is tested once: T-D12 (headers "
+     "connected; the Vercel production project (custom domain `crm.jaishrigoldpalace.com`, already connected) pointed at the production API; **the real pair is tested once: T-D12 (headers "
      "by `curl -I`) and T-E10 (three browsers) on the website on Vercel and the API on Hostinger under the real domain "
      "(H5, a go-live condition)**. **Restore DRILL 2 is done with real data**: after the staging rehearsal (IMP02) the staging export with her real data and photos is restored into a "
      "SECOND Hostinger database through Remote MySQL (the path production would use) and timed; it is repeated on the cut-over eve after IMP03 if time allows; the second database is left for Harsh "
