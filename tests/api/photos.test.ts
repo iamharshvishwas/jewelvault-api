@@ -380,10 +380,10 @@ describe('T-D21 photos: upload, read, removal', () => {
       expect((await read(w, id, 'full')).statusCode).toBe(200);
     });
 
-    it('the photo calls are exactly the three rows of the matrix and the two public reads', () => {
+    it('the photo calls are exactly the four rows of the matrix (with the order photo upload of FB-E1) and the two public reads', () => {
       const photo = w.world.app.routeTable.filter((r) => /photo/.test(r.url));
       expect(photo.map((r) => `${r.method} ${r.url} ${r.kind}`).sort()).toEqual(
-        ['GET /v1/photos/:photo_id/full public', 'GET /v1/photos/:photo_id/thumb public', 'POST /v1/photos/:photo_id/remove matrix', 'PUT /v1/designs/:design_id/photos/:photo_id matrix'].sort(),
+        ['GET /v1/photos/:photo_id/full public', 'GET /v1/photos/:photo_id/thumb public', 'POST /v1/photos/:photo_id/remove matrix', 'PUT /v1/designs/:design_id/photos/:photo_id matrix', 'PUT /v1/orders/:order_id/photos/:photo_id matrix'].sort(),
       );
     });
   });

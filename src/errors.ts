@@ -165,6 +165,7 @@ export const INTERNAL_KEYS: readonly string[] = [
   'uq_bill_items_line',
   'uq_bill_items_sku',
   'uq_receipts_id_customer',
+  'uq_orders_no', // FB-E1: an order number comes from the counter alone (X13 takes no imported numbers), so a duplicate is a bug
 ];
 
 /** The name of the key in a duplicate-entry message ("for key 'uq_designs_no'", or "'designs.uq_designs_no'" on other servers), or null. */

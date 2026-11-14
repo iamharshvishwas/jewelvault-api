@@ -83,6 +83,11 @@ const ORACLE: Record<string, readonly [Role[], string]> = {
   'session:logout': [OBS, 'POST /v1/auth/logout'],
   'session:change-password': [OBS, 'POST /v1/auth/change-password'],
   'session:activity': [OBS, 'POST /v1/auth/activity'],
+  // FB-E1 (FB-D8, the feedback plan's Lane E): the Order Book. The owner and a biller create and edit, staff read; photos as for a design, by those who edit
+  'read:orders': [OBS, 'GET /v1/sync/orders'],
+  'edit:orders.update': [OB, 'PATCH /v1/orders/:id'],
+  'fn:create_order': [OB, 'POST /v1/orders'],
+  'photo:upload_order': [OB, 'PUT /v1/orders/:order_id/photos/:photo_id'],
 };
 
 describe('T-D02 the matrix file says what A4 and section 10 say', () => {
@@ -145,8 +150,8 @@ describe('T-D02 the matrix file says what A4 and section 10 say', () => {
     expect(mayCall('owner', 'fn:no_such_function' as Action)).toBe(false);
   });
 
-  it('the field rules of section 10 and A5 are owner-only: cash_override_reason (Z1), original_net_weight (X8), a date other than today (Y8) and removing, reordering or replacing the photo ids of a design (A5, P3)', () => {
-    expect(Object.keys(FIELD_RIGHTS).sort()).toEqual(['back_dates', 'cash_override_reason', 'original_net_weight', 'rewrite_photo_ids']);
+  it('the field rules of section 10 and A5 are owner-only: cash_override_reason (Z1), original_net_weight (X8), a date other than today (Y8), removing, reordering or replacing the photo ids of a design or an order (A5, P3), and the status of a delivered or cancelled order (FB-D8)', () => {
+    expect(Object.keys(FIELD_RIGHTS).sort()).toEqual(['back_dates', 'cash_override_reason', 'change_closed_order', 'original_net_weight', 'rewrite_photo_ids']);
     for (const field of Object.keys(FIELD_RIGHTS) as (keyof typeof FIELD_RIGHTS)[]) {
       expect(mayUseField('owner', field), field).toBe(true);
       expect(mayUseField('biller', field), field).toBe(false);
@@ -382,9 +387,9 @@ async function catalogueProblems(c: Connection, database: string): Promise<strin
 }
 
 describe('T-D01 every table has a primary key and InnoDB', () => {
-  it('the migrated schema: all 26 tables (the 25 of the code and schema_migrations)', async () => {
+  it('the migrated schema: all 27 tables (the 26 of the code, with the orders of FB-E1, and schema_migrations)', async () => {
     const [tables] = await conn.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [scratch.database]);
-    expect(Number(tables[0].n)).toBe(26);
+    expect(Number(tables[0].n)).toBe(27);
     expect(await catalogueProblems(conn, scratch.database)).toEqual([]);
   });
 

@@ -11,6 +11,7 @@ export const REQUIRED_TABLES: readonly string[] = [
   'daily_rates',
   'design_photos',
   'designs',
+  'orders',
   'receipt_allocations',
   'receipts',
   'sessions',

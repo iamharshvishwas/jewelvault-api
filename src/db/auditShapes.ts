@@ -1,4 +1,4 @@
-// L1 mechanism (b): what the Node audit writer (src/db/audit.ts) needs to know about the 13 audited tables, which is what the generated triggers of db/optional/0910 read from the catalogue: the
+// L1 mechanism (b): what the Node audit writer (src/db/audit.ts) needs to know about the 14 audited tables (the 13 of L1 and the orders of FB-E1), which is what the generated triggers of db/optional/0910 read from the catalogue: the
 // columns in table order (generated columns left out, as the triggers leave them out), their types, which hold JSON, the fraction digits of a DATETIME, the primary key, and the exclude list of
 // db/optional/audit-exclude.json (a column that must never be copied into audit_log, such as users.password_hash). It is static because src/ is compiled alone (tsconfig.build.json, rootDir src) and
 // cannot import scripts/audit-triggers.mjs or the JSON file, and because the writer must not ask the catalogue on every change.
@@ -280,6 +280,24 @@ export const AUDIT_SHAPES: Readonly<Record<string, AuditShape>> = {
       { name: 'released_at', type: 'datetime', precision: 6 },
       { name: 'created_at', type: 'datetime', precision: 6 },
       { name: 'updated_at', type: 'datetime', precision: 6 },
+    ],
+  },
+  orders: {
+    primaryKey: ['id'],
+    exclude: [],
+    columns: [
+      { name: 'id', type: 'uuid' },
+      { name: 'order_no', type: 'varchar' },
+      { name: 'customer_id', type: 'uuid' },
+      { name: 'description', type: 'varchar' },
+      { name: 'delivery_date', type: 'date' },
+      { name: 'status', type: 'varchar' },
+      { name: 'photo_ids', type: 'longtext', json: true },
+      { name: 'notes', type: 'varchar' },
+      { name: 'created_at', type: 'datetime', precision: 6 },
+      { name: 'updated_at', type: 'datetime', precision: 6 },
+      { name: 'created_by', type: 'uuid' },
+      { name: 'updated_by', type: 'uuid' },
     ],
   },
 };

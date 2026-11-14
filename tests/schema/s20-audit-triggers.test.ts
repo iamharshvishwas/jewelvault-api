@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import mysql, { type Connection } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -37,6 +38,7 @@ async function fixtures() {
   const user = (await insert(c, 'users', V.user())) as { id: string };
   const sp = (await insert(c, 'sku_private', V.skuPrivate(w.sku.id))) as { sku_id?: string };
   await insert(c, 'settings', { setting_key: 'audit_test_key', value: { a: [1, 2], money: '12.50' } });
+  const order = (await insert(c, 'orders', { id: randomUUID(), order_no: 'ORD-2026-0777', customer_id: w.customer.id, description: 'Audit order', photo_ids: [] })) as { id: string }; // FB-E1
   return [
     { table: 'users', row: user.id, change: ['UPDATE users SET full_name = ? WHERE id = ?', ['Renamed', user.id]] },
     { table: 'settings', row: 'audit_test_key', change: ["UPDATE settings SET value = ? WHERE setting_key = 'audit_test_key'", [JSON.stringify({ a: [3] })]] },
@@ -51,16 +53,17 @@ async function fixtures() {
     { table: 'bill_items', row: w.item.id, change: ['UPDATE bill_items SET design_no = ? WHERE id = ?', ['D-9', w.item.id]] },
     { table: 'receipts', row: w.receipt.id, change: ['UPDATE receipts SET notes = ? WHERE id = ?', ['a receipt note', w.receipt.id]] },
     { table: 'receipt_allocations', row: w.allocation.id, change: ["UPDATE receipt_allocations SET amount = '90.00' WHERE id = ?", [w.allocation.id]] },
+    { table: 'orders', row: order.id, change: ["UPDATE orders SET status = 'ready' WHERE id = ?", [order.id]] },
   ].map((f) => ({ ...f, sp }));
 }
 
 describe('the generated file and the exclude list (L1)', () => {
-  it('there is one AFTER INSERT and one AFTER UPDATE trigger for each of the 13 audited tables, and nothing else is audited', async () => {
-    expect(AUDITED_TABLES).toEqual(['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations']);
+  it('there is one AFTER INSERT and one AFTER UPDATE trigger for each of the 14 audited tables (the 13 of L1 and the orders of FB-E1), and nothing else is audited', async () => {
+    expect(AUDITED_TABLES).toEqual(['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'orders']);
     const names = await auditTriggersInstalled(c);
     expect([...names].sort()).toEqual(AUDITED_TABLES.flatMap((t) => [`trg_audit_${t}_ai`, `trg_audit_${t}_au`]).sort());
     const [rows] = await c.query<any[]>("SELECT TRIGGER_NAME n, EVENT_OBJECT_TABLE t, EVENT_MANIPULATION e, ACTION_TIMING w FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME LIKE 'trg\\_audit\\_%\\_a_'");
-    expect(rows).toHaveLength(26);
+    expect(rows).toHaveLength(28);
     for (const r of rows) {
       expect(r.w).toBe('AFTER');
       expect(r.e).toBe(r.n.endsWith('_ai') ? 'INSERT' : 'UPDATE');
@@ -283,7 +286,7 @@ describe('as the restricted user of A3 (the ten ticked boxes) and re-applying th
     const u = await mysql.createConnection({ host: HOST, port: PORT, user: 'jv_a3c', password: 'spike_a3_only', database: tdb, multipleStatements: true, decimalNumbers: false, supportBigNumbers: true, bigNumberStrings: true, dateStrings: true });
     await migrate(u, { seeds: true, optional: true });
     await migrate(u, { seeds: true, optional: true }); // a second run: every statement is re-runnable
-    expect((await auditTriggersInstalled(u)).length).toBe(26);
+    expect((await auditTriggersInstalled(u)).length).toBe(28);
     await u.query("SET @jv_actor = NULL, @jv_role = 'staff', @jv_request = NULL");
     const cat = V.category();
     await insert(u, 'categories', cat);

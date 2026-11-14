@@ -1,13 +1,14 @@
 // P1, P2, P3, P7, D26 (API17): the PhotoStore. ALL photo code goes through this one interface (put, get, remove, sizes); the routes know nothing of the table. There is one implementation, the table
 // design_photos (createDbPhotoStore), and a second one on an outside bucket could take its place without touching a route if Siddhi's catalogue turns out larger than the budget of P5 (O47).
 // tests/api/photo-store.test.ts runs ONE contract test against the in-database store and against a fake, so the interface is what a second store has to pass.
+// FB-E1: the photos of an order go through the same store, the same table and the same caps (P1, P2); a photo to put names either the design or the order it is for (design_photos.order_id, 0011).
 import { createHash } from 'node:crypto';
 import { withAutocommit } from '../db/autocommit.js';
 import { writeEvent } from '../db/events.js';
 import { type TxContext, withRead, withTx } from '../db/tx.js';
 import { duplicateKeyName } from '../errors.js';
 import { type Limits, limits } from '../limits.js';
-import { P2_INSERT_TEXT, P2_UNATTACHED_TEXT } from './queries.js';
+import { P2_INSERT_ORDER_TEXT, P2_INSERT_TEXT, P2_UNATTACHED_TEXT } from './queries.js';
 
 export type PhotoKind = 'full' | 'thumb';
 export const PHOTO_KINDS: readonly PhotoKind[] = Object.freeze(['full', 'thumb'] as const);
@@ -15,7 +16,7 @@ export type PhotoMime = 'image/jpeg' | 'image/png' | 'image/webp';
 
 /** P2: the caps of one upload. The defaults of the application are `photoCaps`. */
 export interface PhotoCaps {
-  /** fewer than this many DISTINCT live photo ids may already be stored for the design id */
+  /** fewer than this many DISTINCT live photo ids may already be stored for the design id (or the order id: an order has the same 3, FB-E1) */
   perDesign: number;
   /** a design id that is not a design yet: fewer than this many unattached photos ... */
   unattachedPhotos: number;
@@ -27,18 +28,29 @@ export function photoCapsOf(limits: Pick<Limits, 'maxPhotosPerDesign' | 'maxUnat
   return Object.freeze({ perDesign: limits.maxPhotosPerDesign, unattachedPhotos: limits.maxUnattachedPhotos, unattachedBytes: limits.maxUnattachedPhotoBytes });
 }
 
-export interface PhotoToPut {
+interface PhotoObject {
   photoId: string;
   kind: PhotoKind;
-  /** the design the screen will attach the photo to; it need not exist yet (no foreign key, D26) */
-  designId: string;
   mime: PhotoMime;
   bytes: Buffer;
   createdBy: string | null;
 }
 
-/** Why a photo was not stored: the pair is taken (insert-only), the design has its photos, or the unattached photos are at their caps. */
-export type PutRefusal = 'duplicate' | 'design_full' | 'unattached_count' | 'unattached_bytes';
+/** A photo of a design, or (FB-E1) of an order. Neither need exist yet: the screen uploads first (no foreign key, D26). */
+export type PhotoToPut =
+  | (PhotoObject & {
+      /** the design the screen will attach the photo to */
+      designId: string;
+      orderId?: undefined;
+    })
+  | (PhotoObject & {
+      /** the order the screen will attach the photo to (FB-E1): the row's order_id, and its design_id too (0011) */
+      orderId: string;
+      designId?: undefined;
+    });
+
+/** Why a photo was not stored: the pair is taken (insert-only), the design (or the order) has its photos, or the unattached photos are at their caps. */
+export type PutRefusal = 'duplicate' | 'design_full' | 'order_full' | 'unattached_count' | 'unattached_bytes';
 export type PutOutcome = { stored: true; sha256: string; byteSize: number } | { stored: false; reason: PutRefusal };
 
 export interface StoredPhoto {
@@ -95,24 +107,28 @@ function isDuplicatePair(e: unknown): boolean {
   return false;
 }
 
+/** The live photo ids already stored for a design (order_id null) and for an order (order_id set, FB-E1), as the count inside each insert reads them. */
+const DESIGN_PHOTOS_SQL = 'SELECT COUNT(DISTINCT id) AS n FROM design_photos WHERE design_id = ? AND order_id IS NULL AND removed_at IS NULL AND id <> ?';
+const ORDER_PHOTOS_SQL = 'SELECT COUNT(DISTINCT id) AS n FROM design_photos WHERE design_id = ? AND order_id IS NOT NULL AND removed_at IS NULL AND id <> ?';
+
 /** The in-database PhotoStore: one implementation on the table design_photos (D26). It is bound to the context of one call (the deadline and the actor of that request). */
 class DbPhotoStore implements PhotoStore {
   constructor(private readonly ctx: TxContext) {}
 
   async put(photo: PhotoToPut, caps: PhotoCaps = photoCaps): Promise<PutOutcome> {
     const digest = createHash('sha256').update(photo.bytes).digest('hex');
+    const forOrder = photo.orderId !== undefined;
+    const owner = forOrder ? photo.orderId : photo.designId; // design_photos.design_id: the design's id, or the order's (0011)
+    const tail = [owner, photo.photoId, caps.perDesign, owner, photo.photoId, caps.unattachedPhotos, photo.bytes.length, caps.unattachedBytes];
     try {
       return await withAutocommit(this.ctx, async (db): Promise<PutOutcome> => {
-        // P2: the count and the insert are ONE statement (the text of db/queries/P2_insert_photo.sql); zero rows affected means refused, and the reads below say why
-        const done = await db.run(P2_INSERT_TEXT, [
-          photo.photoId, photo.kind, photo.designId, photo.mime, photo.bytes.length, digest, photo.bytes, photo.createdBy,
-          photo.designId, photo.photoId, caps.perDesign,
-          photo.designId,
-          photo.photoId, caps.unattachedPhotos, photo.bytes.length, caps.unattachedBytes,
-        ]);
+        // P2: the count and the insert are ONE statement (the text of db/queries/P2_insert_photo.sql, or P2_insert_order_photo.sql for an order); zero rows affected means refused, and the reads below say why
+        const done = forOrder
+          ? await db.run(P2_INSERT_ORDER_TEXT, [photo.photoId, photo.kind, owner, owner, photo.mime, photo.bytes.length, digest, photo.bytes, photo.createdBy, ...tail])
+          : await db.run(P2_INSERT_TEXT, [photo.photoId, photo.kind, owner, photo.mime, photo.bytes.length, digest, photo.bytes, photo.createdBy, ...tail]);
         if (done.affectedRows === 1) return { stored: true, sha256: digest, byteSize: photo.bytes.length };
-        const [others] = await db.rows<{ n: number | string }>('SELECT COUNT(DISTINCT id) AS n FROM design_photos WHERE design_id = ? AND removed_at IS NULL AND id <> ?', [photo.designId, photo.photoId]);
-        if (Number(others.n) >= caps.perDesign) return { stored: false, reason: 'design_full' };
+        const [others] = await db.rows<{ n: number | string }>(forOrder ? ORDER_PHOTOS_SQL : DESIGN_PHOTOS_SQL, [owner, photo.photoId]);
+        if (Number(others.n) >= caps.perDesign) return { stored: false, reason: forOrder ? 'order_full' : 'design_full' };
         const [unattached] = await db.rows<{ photos: number | string }>(P2_UNATTACHED_TEXT);
         if (Number(unattached.photos) >= caps.unattachedPhotos) return { stored: false, reason: 'unattached_count' };
         return { stored: false, reason: 'unattached_bytes' };
@@ -139,7 +155,7 @@ class DbPhotoStore implements PhotoStore {
 
   async remove(photoId: string, at: string): Promise<RemoveOutcome> {
     return withTx(this.ctx, async (tx): Promise<RemoveOutcome> => {
-      const rows = await tx.rows<{ kind: PhotoKind; design_id: string; removed_at: string | null }>('SELECT kind, design_id, removed_at FROM design_photos WHERE id = ? ORDER BY kind FOR UPDATE', [photoId]);
+      const rows = await tx.rows<{ kind: PhotoKind; design_id: string; order_id: string | null; removed_at: string | null }>('SELECT kind, design_id, order_id, removed_at FROM design_photos WHERE id = ? ORDER BY kind FOR UPDATE', [photoId]);
       if (rows.length === 0) return { state: 'unknown' };
       const kinds = rows.map((r) => r.kind);
       const designId = rows[0].design_id;
@@ -147,7 +163,8 @@ class DbPhotoStore implements PhotoStore {
       if (rows.every((r) => r.removed_at !== null)) return { state: 'already_removed', designId, kinds, removedAt: taken!.removed_at as string };
       // S7: nothing is deleted. The row stays; removed_at is set and the bytes are emptied in the same statement (the CHECK of D26 allows no other state), which frees the space for new photos.
       await tx.run('UPDATE design_photos SET removed_at = ?, bytes = NULL WHERE id = ? AND removed_at IS NULL', [at, photoId]);
-      await writeEvent(tx, { table: 'design_photos', rowId: photoId, facts: { event: 'photo_removed', photo_id: photoId, design_id: designId, kinds } });
+      const of = rows[0].order_id === null ? { design_id: designId } : { order_id: rows[0].order_id }; // an order's photo (FB-E1) is told as the order's
+      await writeEvent(tx, { table: 'design_photos', rowId: photoId, facts: { event: 'photo_removed', photo_id: photoId, ...of, kinds } });
       return { state: 'removed', designId, kinds, removedAt: at };
     });
   }

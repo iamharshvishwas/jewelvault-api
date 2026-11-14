@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { migrate } from '../../scripts/migrate.mjs';
 import { MATRIX } from '../../src/permissions/matrix';
@@ -24,6 +25,8 @@ export async function syncWorld(label: string, options: WorldOptions = {}): Prom
   const data = await ledgerWorld(world.sql);
   await insert(world.sql, 'sku_private', V.skuPrivate(data.skus[0], { original_net_weight: ORIGINAL_WEIGHT }));
   await insert(world.sql, 'daily_rates', V.dailyRate());
+  // FB-E1: one order of the ledger customer, so the Order Book's resource has a row to read
+  await insert(world.sql, 'orders', { id: randomUUID(), order_no: 'ORD-2026-0001', customer_id: data.c1.id, description: 'Gold bangles, pair', delivery_date: '2026-10-20', photo_ids: [] });
   return { world, data: { ...data, skuPrivateFor: data.skus[0] } };
 }
 
