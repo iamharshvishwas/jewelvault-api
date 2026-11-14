@@ -537,33 +537,33 @@ describe('T-B18 the whole check (the SQL half, the Node half of I6 and the revie
 // ------------------------------------------------------------------ R13: the version of the bill
 
 describe('T-B18 (T-A15 clause, R13) a bill is re-priced with the pricing function of ITS pricing_version, the version table is a parameter', () => {
-  /** a test-only version 2: the same rules plus one paisa of labour on every By Weight line */
-  const v2: PricingFunction = (input) => {
-    const b = priceBill(input);
-    return { ...b, pricingVersion: 2, lines: b.lines.map((l) => ({ ...l, labourAmountPaise: l.labourAmountPaise + 1, itemTotalPaise: l.itemTotalPaise + 1 })) };
+  /** a test-only version 3 (1 and 2 are the application's, FB-C3): the rules of version 2 plus one paisa of labour on every By Weight line */
+  const v3: PricingFunction = (input) => {
+    const b = priceBill({ ...input, pricingVersion: 2 });
+    return { ...b, pricingVersion: 3, lines: b.lines.map((l) => ({ ...l, labourAmountPaise: l.labourAmountPaise + 1, itemTotalPaise: l.itemTotalPaise + 1 })) };
   };
 
-  it('a version 2 bill passes with a table that has version 2, version 1 bills still pass beside it, and the same bill is named when the table does not know version 2', async () => {
+  it('a version 3 bill passes with a table that has version 3, version 1 bills still pass beside it, and the same bill is named when the table does not know version 3', async () => {
     const { aB1 } = nw.books.bills;
     const [lines] = await nw.sql.query<any[]>('SELECT id FROM bill_items WHERE bill_id = ? ORDER BY line_no', [aB1.id]);
-    // the lines of the bill as MB02 typed them (labour 100.00, totals 600.00 and 400.00), and as a version 2 that adds a paisa of labour to every line prices them
+    // the lines of the bill as MB02 typed them (labour 100.00, totals 600.00 and 400.00), and as a version 3 that adds a paisa of labour to every line prices them
     const lineSql = (labour: string, totals: [string, string]) => lines.map((l: { id: string }, i: number) => `UPDATE bill_items SET labour_amount = '${labour}', item_total = '${totals[i]}' WHERE id = '${l.id}'`);
-    const version2 = [`UPDATE bills SET pricing_version = 2, subtotal = '1000.02', round_off = '-0.02' WHERE id = '${aB1.id}'`, ...lineSql('100.01', ['600.01', '400.01'])];
+    const version3 = [`UPDATE bills SET pricing_version = 3, subtotal = '1000.02', round_off = '-0.02' WHERE id = '${aB1.id}'`, ...lineSql('100.01', ['600.01', '400.01'])];
     const version1 = [`UPDATE bills SET pricing_version = 1, subtotal = '1000.00', round_off = '0.00' WHERE id = '${aB1.id}'`, ...lineSql('100.00', ['600.00', '400.00'])];
-    for (const s of version2) await nw.sql.query(s);
+    for (const s of version3) await nw.sql.query(s);
     try {
-      const known = await nw.run({ versions: { ...PRICING_VERSIONS, 2: v2 } });
+      const known = await nw.run({ versions: { ...PRICING_VERSIONS, 3: v3 } });
       expect(known.rows, JSON.stringify(known.rows)).toEqual([]);
       const unknown = await nw.run();
       expect(unknown.ok).toBe(false);
       const row = unknown.rows.find((x) => x.invariant === 'I6' && x.row_ref === `bills:${aB1.id}`);
       expect(row, JSON.stringify(unknown.rows)).toBeDefined();
-      expect(row!.detail).toMatch(/pricing version 2/);
+      expect(row!.detail).toMatch(/pricing version 3/);
       expect(unknown.counts.I6, 'one problem for the bill, not one for each of its lines').toBe(1);
-      // the version of the bill decides, not the newest: the same stored amounts, on a bill that says version 2 but was priced as version 1, are wrong under the version 2 function
+      // the version of the bill decides, not the newest: the same stored amounts, on a bill that says version 3 but was priced as version 1, are wrong under the version 3 function
       for (const s of version1) await nw.sql.query(s);
-      await nw.sql.query(`UPDATE bills SET pricing_version = 2 WHERE id = '${aB1.id}'`);
-      const mislabelled = await nw.run({ versions: { ...PRICING_VERSIONS, 2: v2 } });
+      await nw.sql.query(`UPDATE bills SET pricing_version = 3 WHERE id = '${aB1.id}'`);
+      const mislabelled = await nw.run({ versions: { ...PRICING_VERSIONS, 3: v3 } });
       expect(mislabelled.rows.filter((x) => x.invariant === 'I6').map((x) => x.row_ref).sort()).toEqual(lines.map((l: { id: string }) => `bill_items:${l.id}`).sort());
     } finally {
       for (const s of version1) await nw.sql.query(s);

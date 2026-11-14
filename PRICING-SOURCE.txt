@@ -3,12 +3,12 @@
 # To take a new version: change the file in the app first, copy it here, then write the new commit and the new hashes below AND the hash in src/auth/loginRoutes.ts (PRICING_SHA256, what GET /v1/auth/me returns).
 repository: jewelvault-app
 file: src/lib/pricing.ts
-commit: 972472812f89fdd4c58db586b0e138d078d4806c
-sha256: 202482b7bfa9aff7f5cf004a92311253b05aed98f9f86a00d6dc89c29a95fc09
+commit: adcb327c50d518570a24147ef673d482ee037d6d
+sha256: eb2e0deabfb77cdf885505b6ca4b603fcbcbe9009a08dd8dc2b6db770645960d
 # The app's pricing unit tests also run on this copy: tests/pricing.test.ts is the app's tests/unit/pricing.test.ts with ONE line changed (the path the C12 test reads to look at the source of pricing.ts:
 # '../../src/lib/pricing.ts' became '../src/domain/pricing.ts'); its import '@/lib/pricing' is mapped to the copy by vitest.config.ts and tsconfig.json.
 test_file: tests/unit/pricing.test.ts
-test_commit: 972472812f89fdd4c58db586b0e138d078d4806c
-test_sha256: d61a631e21bedb2a9112019c6e3e92e58ef098d1614953f035ef8dadff59c2f0
+test_commit: adcb327c50d518570a24147ef673d482ee037d6d
+test_sha256: 655e5462a87b6bade825f9cbc59a812b2afc1e6a658c97c716cfa02822952ce2
 test_copy: tests/pricing.test.ts
-test_copy_sha256: cbe5c5f9bbfb4ec45f5cec32320005ad2a67cd8b4ec96336ddc901638bdb5499
+test_copy_sha256: cb9be615a5383aaab629e7831c122f7cff36c0714a48d86b2c8e9d3fb114f029

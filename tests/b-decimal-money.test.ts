@@ -9,6 +9,8 @@ import { PricingError as ApiPricingError, priceBill as apiPriceBill } from '../s
 // Spike (b): exact DECIMAL money in MariaDB against the BigInt oracle in oracle/pricing.ts (a snapshot of the app's pricing.ts). Rules R3 to R8 of the spec are written here in SQL, in
 // src/domain/pricing.ts (the file the API runs and the screen previews with) and, since API18, a third time in oracle/exact-decimal.ts, written again from the spec and sharing no line with pricing.ts:
 // T-A14 is that 200 random inputs agree in all three. (The snapshot of oracle/pricing.ts is the same code as pricing.ts and so could only agree with itself; the other two engines are independent.)
+// VERSIONS (R13, FB-C3): each bill row carries its pricing version, and the SQL writes R4 per version from the rule: version 1, fine on the silver By Weight lines of a Wholesale bill; version 2 (FB-D2),
+// of a Wholesale or a Semi-Wholesale bill. T-A14 runs 200 random bills for EACH version.
 
 let db: string;
 let c: Connection;
@@ -18,7 +20,7 @@ beforeAll(async () => {
   c = await appConn(db);
   await c.query(`CREATE TABLE bills (
       id INT PRIMARY KEY, sale_type VARCHAR(20) NOT NULL,
-      discount DECIMAL(14,2) NOT NULL, additional DECIMAL(14,2) NOT NULL
+      discount DECIMAL(14,2) NOT NULL, additional DECIMAL(14,2) NOT NULL, version SMALLINT NOT NULL
     ) ENGINE=InnoDB`);
   await c.query(`CREATE TABLE bill_lines (
       bill_id INT NOT NULL, line_no INT NOT NULL, material VARCHAR(10) NOT NULL, method VARCHAR(10) NOT NULL,
@@ -32,13 +34,16 @@ afterAll(async () => {
   await dropDb(db);
 });
 
+/** R4 by version: the bill's sale type leaves the silver of a By Weight line as fine (version 1: Wholesale; version 2, FB-D2: Wholesale or Semi-Wholesale). */
+const FINE_SALE = `((b.version = 1 AND b.sale_type = 'Wholesale') OR (b.version = 2 AND b.sale_type IN ('Wholesale', 'Semi-Wholesale')))`;
+
 /** R3 to R7 for every stored line. DECIMAL(12,3) x DECIMAL(12,2) is exact (scale 5, precision 24). */
 const LINE_SQL = `
   SELECT l.bill_id, l.line_no,
-    CASE WHEN b.sale_type = 'Wholesale' AND l.material = 'Silver' AND l.method = 'By Weight' THEN l.nw * l.qty ELSE 0 END AS fine_due,
+    CASE WHEN ${FINE_SALE} AND l.material = 'Silver' AND l.method = 'By Weight' THEN l.nw * l.qty ELSE 0 END AS fine_due,
     CASE WHEN l.method = 'By Weight' THEN ROUND(l.nw * l.labour, 2) ELSE 0 END AS labour_amount,
     CASE
-      WHEN b.sale_type = 'Wholesale' AND l.material = 'Silver' AND l.method = 'By Weight' AND l.nw * l.qty > 0 THEN 0
+      WHEN ${FINE_SALE} AND l.material = 'Silver' AND l.method = 'By Weight' AND l.nw * l.qty > 0 THEN 0
       WHEN l.method = 'By Weight' THEN ROUND(l.nw * l.rate, 2)
       ELSE ROUND(l.rate * l.qty, 2)
     END AS metal_amount,
@@ -54,7 +59,8 @@ const BILL_SQL = `
 
 type L = NonNullable<PriceBillInput['lines']>[number] & { lineNo: number };
 
-function randomBill(rand: () => number, id: number) {
+/** A random bill; its pricing version is 1 for an odd id and 2 for an even one, unless `version` is given (R13). */
+function randomBill(rand: () => number, id: number, version: 1 | 2 = id % 2 === 0 ? 2 : 1) {
   const pick = <T,>(xs: T[]) => xs[Math.floor(rand() * xs.length)];
   const sale = pick(['Retail', 'Semi-Wholesale', 'Wholesale'] as const);
   const n = 1 + Math.floor(rand() * 5);
@@ -74,12 +80,12 @@ function randomBill(rand: () => number, id: number) {
       otherChargesPaise: rand() < 0.3 ? Math.floor(rand() * 50_000) : 0,
     });
   }
-  return { id, sale, lines, additionalPaise: rand() < 0.3 ? Math.floor(rand() * 100_000) : 0 };
+  return { id, version, sale, lines, additionalPaise: rand() < 0.3 ? Math.floor(rand() * 100_000) : 0 };
 }
 
 async function loadBill(b: ReturnType<typeof randomBill>, discountPaise: number) {
-  await c.query('INSERT INTO bills (id, sale_type, discount, additional) VALUES (?, ?, ?, ?)', [
-    b.id, b.sale, formatRupees(discountPaise), formatRupees(b.additionalPaise),
+  await c.query('INSERT INTO bills (id, sale_type, discount, additional, version) VALUES (?, ?, ?, ?, ?)', [
+    b.id, b.sale, formatRupees(discountPaise), formatRupees(b.additionalPaise), b.version,
   ]);
   const rows = b.lines.map((l) => [
     b.id, l.lineNo, l.material, l.sellingMethod, formatGrams(l.customerNetWeightMg), l.quantity ?? 1,
@@ -92,7 +98,7 @@ describe('(b) DECIMAL money against the BigInt oracle', () => {
   it('the spec worked example: NW 35.42, rate 6920, labour 353, piroi 2.15, Retail, By Weight -> 257,612', async () => {
     await c.query('DELETE FROM bill_lines');
     await c.query('DELETE FROM bills');
-    await c.query("INSERT INTO bills VALUES (1, 'Retail', 0, 0)");
+    await c.query("INSERT INTO bills VALUES (1, 'Retail', 0, 0, 2)");
     await c.query("INSERT INTO bill_lines VALUES (1, 1, 'Gold', 'By Weight', 35.420, 1, 6920.00, 353.00, 2.15, 0)");
     const [lines] = await c.query<any[]>(LINE_SQL);
     expect(lines[0].metal_amount).toBe('245106.40');
@@ -114,7 +120,7 @@ describe('(b) DECIMAL money against the BigInt oracle', () => {
     while (id < 3000) {
       id++;
       const b = randomBill(rand, id);
-      const base: PriceBillInput = { saleType: b.sale, lines: b.lines, additionalChargesPaise: b.additionalPaise, roundOffSetting: true };
+      const base: PriceBillInput = { pricingVersion: b.version, saleType: b.sale, lines: b.lines, additionalChargesPaise: b.additionalPaise, roundOffSetting: true };
       let priced;
       try {
         priced = priceBill(base);
@@ -249,7 +255,7 @@ describe('(b) DECIMAL money against the BigInt oracle', () => {
 
 // ------------------------------------------------------------------ T-A14 (API18): the API's pricing.ts against the two independent engines
 
-describe('T-A14 the API\'s pricing.ts equals the independent exact-decimal oracle and the SQL DECIMAL version on 200 random inputs (R12, C12)', () => {
+describe('T-A14 the API\'s pricing.ts equals the independent exact-decimal oracle and the SQL DECIMAL version on 200 random inputs per pricing version (R12, R13, C12)', () => {
   it('the exact-decimal oracle is its own text: it imports nothing and shares no long line with pricing.ts', () => {
     const oracle = readFileSync(new URL('../oracle/exact-decimal.ts', import.meta.url), 'utf8');
     const pricing = readFileSync(new URL('../src/domain/pricing.ts', import.meta.url), 'utf8');
@@ -275,7 +281,7 @@ describe('T-A14 the API\'s pricing.ts equals the independent exact-decimal oracl
     }
   });
 
-  it('200 random bills (some at the caps, some over them): pricing.ts and the exact-decimal oracle give the same figures or both refuse, and the accepted bills equal the SQL DECIMAL figures', async () => {
+  it.each([1, 2] as const)('version %i: 200 random bills (some at the caps, some over them): pricing.ts and the exact-decimal oracle give the same figures or both refuse, and the accepted bills equal the SQL DECIMAL figures', async (version) => {
     await c.query('DELETE FROM bill_lines');
     await c.query('DELETE FROM bills');
     const rand = rng(20261016);
@@ -283,8 +289,8 @@ describe('T-A14 the API\'s pricing.ts equals the independent exact-decimal oracl
     let refused = 0;
     const loaded: { b: ReturnType<typeof randomBill>; discount: number; priced: ReturnType<typeof exactPrice> }[] = [];
     for (let id = 1; id <= 200; id++) {
-      const b = randomBill(rand, id);
-      const base: PriceBillInput = { saleType: b.sale, lines: b.lines, additionalChargesPaise: b.additionalPaise, roundOffSetting: true };
+      const b = randomBill(rand, id, version);
+      const base: PriceBillInput = { pricingVersion: version, saleType: b.sale, lines: b.lines, additionalChargesPaise: b.additionalPaise, roundOffSetting: true };
       const outcome = (fn: (i: PriceBillInput) => unknown, input: PriceBillInput) => {
         try {
           return { ok: true as const, value: fn(input) };
@@ -322,6 +328,7 @@ describe('T-A14 the API\'s pricing.ts equals the independent exact-decimal oracl
       const e = byId.get(Number(r.bill_id))!.priced.lines[Number(r.line_no) - 1];
       expect(r.metal_amount, `bill ${r.bill_id} line ${r.line_no} metal`).toBe(formatRupees(e.metalAmountPaise));
       expect(r.labour_amount, `bill ${r.bill_id} line ${r.line_no} labour`).toBe(formatRupees(e.labourAmountPaise));
+      expect(Number(r.fine_due).toFixed(3), `bill ${r.bill_id} line ${r.line_no} fine`).toBe(formatGrams(e.fineWeightDueMg));
     }
     for (const r of billRows) {
       const e = byId.get(Number(r.bill_id))!.priced;
@@ -330,7 +337,12 @@ describe('T-A14 the API\'s pricing.ts equals the independent exact-decimal oracl
       expect(Number(r.round_off).toFixed(2), `bill ${r.bill_id} round_off`).toBe(formatRupees(e.roundOffPaise));
       expect(Number(r.fine_due).toFixed(3), `bill ${r.bill_id} fine`).toBe(formatGrams(e.fineWeightDueMg));
     }
-    console.log(`[T-A14] 200 random bills: ${accepted} accepted by pricing.ts and the exact-decimal oracle (equal), ${refused} refused by both over a cap; ${billRows.length} bills (with the round-off setting on) equal the SQL DECIMAL figures`);
+    // the rule that differs between the versions was exercised: Semi-Wholesale silver By Weight lines with weight owe fine in version 2 only
+    const semiSilver = loaded.flatMap(({ b, priced }) => b.lines.map((l, i) => ({ b, l, fine: priced.lines[i].fineWeightDueMg })).filter(({ l }) => b.sale === 'Semi-Wholesale' && l.material === 'Silver' && l.sellingMethod === 'By Weight' && l.customerNetWeightMg > 0));
+    expect(semiSilver.length, 'Semi-Wholesale silver By Weight lines among the loaded bills').toBeGreaterThan(5);
+    for (const { l, fine } of semiSilver) expect(fine).toBe(version === 2 ? l.customerNetWeightMg * (l.quantity ?? 1) : 0);
+    for (const { priced } of loaded) expect(priced.pricingVersion).toBe(version);
+    console.log(`[T-A14] version ${version}, 200 random bills: ${accepted} accepted by pricing.ts and the exact-decimal oracle (equal), ${refused} refused by both over a cap; ${billRows.length} bills (with the round-off setting on) equal the SQL DECIMAL figures; ${semiSilver.length} Semi-Wholesale silver By Weight lines`);
     expect(accepted + refused).toBe(200);
     expect(billRows.length).toBe(loaded.length);
     expect(loaded.length).toBeGreaterThan(50);

@@ -6,6 +6,9 @@
 // division by a power of ten. The same 200 random bills are priced by pricing.ts, by this file and by the SQL DECIMAL version of tests/b-decimal-money.test.ts, and the three must agree (T-A14); a
 // bill is also refused by all three or by none.
 //
+// VERSIONS (spec R13, written here from the rule, not from pricing.ts). Version 1: fine is due on the silver By Weight lines of a Wholesale bill. Version 2 (decision FB-D2, 6 Nov 2026): fine is due on
+// the silver By Weight lines of a Wholesale bill AND of a Semi-Wholesale bill; nothing else changes. A bill that names no version is priced with the newest, 2. Any other version is refused.
+//
 // The input and the answer have the SHAPE of pricing.ts (money in paise, weight in milligrams, as whole numbers) so that one object can be given to both; nothing else is shared. The caps are typed from
 // S4 in rupees and grams, as decimal text, not copied from the other file.
 
@@ -141,8 +144,14 @@ const withinCap = (d: Dec, what: string): Dec => (compare(d, CAP_AMOUNT) > 0 ? r
 
 // ------------------------------------------------------------------ the rules
 
+/** R4 by version: the sale types that leave the silver of a By Weight line to be settled later as fine. */
+const SALES_WITH_FINE: Record<string, string[]> = { '1': ['Wholesale'], '2': ['Semi-Wholesale', 'Wholesale'] };
+const NEWEST_VERSION = 2;
+
 export function priceBill(bill: PriceBillInput): PricedBill {
-  if (bill.pricingVersion !== undefined && bill.pricingVersion !== 1) refuse('only version 1 is priced');
+  const version = bill.pricingVersion === undefined ? NEWEST_VERSION : bill.pricingVersion;
+  if (version !== 1 && version !== 2) refuse(`version ${String(version)} is not priced (1 and 2 are)`);
+  const fineSales = SALES_WITH_FINE[String(version)];
   if (!['Retail', 'Semi-Wholesale', 'Wholesale'].includes(bill.saleType)) refuse('the sale type is unknown');
   if (typeof bill.roundOffSetting !== 'boolean') refuse('the round-off setting is not true or false');
   if (!Array.isArray(bill.lines) || bill.lines.length < LINES_MIN || bill.lines.length > LINES_MAX) refuse('a bill has 1 to 200 lines');
@@ -166,8 +175,8 @@ export function priceBill(bill: PriceBillInput): PricedBill {
     const o = optional(line.otherChargesPaise, 2, CAP_AMOUNT, `${at}: the other charges`);
     const q = units(quantity, 0);
 
-    // R4: fine due is NW x q for Wholesale + Silver + By Weight
-    const fine = bill.saleType === 'Wholesale' && line.material === 'Silver' && byWeight ? times(nw, q) : ZERO;
+    // R4: fine due is NW x q for a silver By Weight line of a sale type that the version names (1: Wholesale; 2: Wholesale and Semi-Wholesale)
+    const fine = fineSales.includes(bill.saleType) && line.material === 'Silver' && byWeight ? times(nw, q) : ZERO;
     // R3: By Weight round(NW x l, 2), Per Piece 0
     const labour = byWeight ? round(times(nw, l), 2) : ZERO;
     // R5: 0 when there is fine due; else By Weight round(NW x r, 2), Per Piece round(r x q, 2)
@@ -200,7 +209,7 @@ export function priceBill(bill: PriceBillInput): PricedBill {
   const roundOff = bill.roundOffSetting ? minus(grandTotal, beforeRound) : ZERO;
 
   return {
-    pricingVersion: 1,
+    pricingVersion: version,
     lines,
     subtotalPaise: asUnits(subtotal, 2),
     discountPaise: asUnits(discount, 2),

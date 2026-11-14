@@ -65,17 +65,18 @@ describe('T-A14 the API\'s pricing.ts is the app\'s, byte for byte (C12)', () =>
 
   it('PRICING-SOURCE.txt names the app\'s commit and the SHA-256 of the file, and the file has that hash', () => {
     expect(field('commit')).toMatch(/^[0-9a-f]{40}$/);
-    expect(field('commit')?.startsWith('9724728')).toBe(true); // the commit of the app that last changed src/lib/pricing.ts (FE01)
+    expect(field('commit')?.startsWith('adcb327')).toBe(true); // the commit of the app that last changed src/lib/pricing.ts (FB-C3, pricing version 2)
     expect(field('sha256')).toMatch(/^[0-9a-f]{64}$/);
     expect(sha256(read('src/domain/pricing.ts'))).toBe(field('sha256'));
   });
 
   it('the copy exports what the API and the app use', async () => {
     const copy = await import('../../src/domain/pricing');
-    for (const name of ['priceBill', 'priceLine', 'parseRupees', 'parseGrams', 'formatRupees', 'formatGrams', 'defaultLabourRate', 'defaultMetalRate', 'saleTypeForCustomer', 'assertBusinessDate', 'PricingError', 'LIMITS', 'CURRENT_PRICING_VERSION']) {
+    for (const name of ['priceBill', 'priceLine', 'parseRupees', 'parseGrams', 'formatRupees', 'formatGrams', 'defaultLabourRate', 'defaultMetalRate', 'saleTypeForCustomer', 'assertBusinessDate', 'PricingError', 'LIMITS', 'CURRENT_PRICING_VERSION', 'PRICING_VERSIONS_PRICED', 'owesFine']) {
       expect(copy, name).toHaveProperty(name);
     }
-    expect(copy.CURRENT_PRICING_VERSION).toBe(1);
+    expect(copy.CURRENT_PRICING_VERSION).toBe(2); // FB-C3: pricing version 2 (FB-D2)
+    expect(copy.PRICING_VERSIONS_PRICED).toEqual([1, 2]);
   });
 
   it('check:pricing passes on the repository as it is (the API\'s copy, the file, the hash in loginRoutes.ts and the test copy agree)', () => {

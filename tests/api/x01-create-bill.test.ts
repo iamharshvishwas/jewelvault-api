@@ -98,7 +98,7 @@ describe('X1 create_bill saves what R1 to R8 price (D11, D12)', () => {
       cancelled_on: null,
       cancelled_by: null,
       reissue_of: null,
-      pricing_version: 1,
+      pricing_version: 2, // FB-C3: new bills are version 2
       subtotal: '257611.81',
       discount: '0.00',
       additional_charges: '0.00',
@@ -424,7 +424,7 @@ describe('T-A17 metal_rate is required; a missing rate is RATE_MISSING, a stale 
 
 // ------------------------------------------------------------------ T-A15
 
-describe('T-A15 quote_bill returns exactly what create_bill then stores, for version 1 and a test-only version 2', () => {
+describe('T-A15 quote_bill returns exactly what create_bill then stores, for the current version (2) and a test-only version 3', () => {
   // The same cart through the quote and through the bill; every figure the bill stores is the quote's.
   async function expectBillIsQuote(r: Awaited<ReturnType<typeof saved>>, q: Quote) {
     const stored = await billRow(w, r.bill.id);
@@ -485,13 +485,13 @@ describe('T-A15 quote_bill returns exactly what create_bill then stores, for ver
     return { c, items };
   }
 
-  it('version 1: the bill stores every figure of the quote, line by line, list prices and warnings included', async () => {
-    for (const sale of ['Retail', 'Wholesale'] as const) {
+  it('the current version (2): the bill stores every figure of the quote, line by line, list prices and warnings included', async () => {
+    for (const sale of ['Retail', 'Semi-Wholesale', 'Wholesale'] as const) {
       const { c, items } = await mixedCart();
       const cart = billBody(c, sale, items, { discount: '12.34', additional_charges: '5.00' });
       const { customer_id: _c, ...quoteCart } = cart;
       const q = body<Quote>(await postQuote(w, 'biller', quoteCart));
-      expect(q.pricing_version).toBe(1);
+      expect(q.pricing_version).toBe(2);
       expect(q.warnings).toEqual(['RATE_MISSING', 'RATE_STALE']);
       const r = await saved(await postBill(w, 'biller', cart));
       await expectBillIsQuote(r, q);
@@ -518,18 +518,18 @@ describe('T-A15 quote_bill returns exactly what create_bill then stores, for ver
     expect(await footprint(w)).toEqual(before);
   });
 
-  describe('a test-only version 2, registered through an injected version table', () => {
-    // Version 2 rounds a half rupee DOWN instead of up (1,000.50 gives 1,000, not 1,001). It must stay within the +-0.50 the table allows for round_off (chk_bills_round_off), so a rule that rounded
-    // further (up to the next rupee) could not be stored by any bill: a real version 2 needs a migration of that CHECK first.
-    const priceBillV2 = (input: PriceBillInput): PricedBill => {
-      const v1 = priceBill(input);
-      const down = Math.floor((v1.beforeRoundPaise + 49) / 100) * 100;
-      return { ...v1, pricingVersion: 2, grandTotalPaise: down, roundOffPaise: input.roundOffSetting ? down - v1.beforeRoundPaise : 0 };
+  describe('a test-only version 3, registered through an injected version table', () => {
+    // Version 3 rounds a half rupee DOWN instead of up (1,000.50 gives 1,000, not 1,001). It must stay within the +-0.50 the table allows for round_off (chk_bills_round_off), so a rule that rounded
+    // further (up to the next rupee) could not be stored by any bill: such a version needs a migration of that CHECK first.
+    const priceBillV3 = (input: PriceBillInput): PricedBill => {
+      const v2 = priceBill(input);
+      const down = Math.floor((v2.beforeRoundPaise + 49) / 100) * 100;
+      return { ...v2, pricingVersion: 3, grandTotalPaise: down, roundOffPaise: input.roundOffSetting ? down - v2.beforeRoundPaise : 0 };
     };
     const apps: ReturnType<typeof buildApp>[] = [];
-    async function appWith(pricingVersion: number, v2: (input: PriceBillInput) => PricedBill) {
+    async function appWith(pricingVersion: number, v3: (input: PriceBillInput) => PricedBill) {
       const app = buildApp({ config: testConfig({ logLevel: 'silent' }), db: createDbPool(w.world.scratch.db), clock: createClock(() => T0), routes: false });
-      const versions = { ...PRICING_VERSIONS, 2: v2 };
+      const versions = { ...PRICING_VERSIONS, 3: v3 };
       registerQuoteBill(app, { versions });
       registerCreateBill(app, { versions, pricingVersion });
       await app.ready();
@@ -542,42 +542,42 @@ describe('T-A15 quote_bill returns exactly what create_bill then stores, for ver
     const call = (app: ReturnType<typeof buildApp>, url: string, payload: object, extra: Record<string, string> = {}) =>
       app.inject({ method: 'POST', url, payload, headers: { ...csrfHeaders(), cookie: w.world.cookieOf('owner')!, ...extra } });
 
-    it('the bill made while version 2 is current stores version 2 and the figures quote_bill gives for pricing_version 2; version 1 stays version 1', async () => {
-      const app2 = await appWith(2, priceBillV2);
-      const app1 = await appWith(1, priceBillV2);
+    it('the bill made while version 3 is current stores version 3 and the figures quote_bill gives for pricing_version 3; version 2 stays version 2', async () => {
+      const app3 = await appWith(3, priceBillV3);
+      const app2 = await appWith(2, priceBillV3);
       const c = await addCustomer(w);
       const mine = await piece(w, d.gold24pp, { retail: '1000.50' });
-      const cart = billBody(c, 'Retail', [item(mine, { metal_rate: '1000.50' })]); // before_round 1,000.50: version 1 rounds up to 1,001, version 2 down to 1,000
+      const cart = billBody(c, 'Retail', [item(mine, { metal_rate: '1000.50' })]); // before_round 1,000.50: version 2 rounds up to 1,001, version 3 down to 1,000
       const { customer_id: _c, ...quoteCart } = cart;
-      const q2 = (await call(app2, '/v1/bills/quote', { ...quoteCart, pricing_version: 2 })).json() as Quote;
-      expect(q2.pricing_version).toBe(2);
-      expect(q2.totals).toMatchObject({ subtotal: '1000.50', grand_total: '1000.00', round_off: '-0.50' });
-      const second = await call(app2, '/v1/bills', cart, { 'idempotency-key': newKey() });
+      const q3 = (await call(app3, '/v1/bills/quote', { ...quoteCart, pricing_version: 3 })).json() as Quote;
+      expect(q3.pricing_version).toBe(3);
+      expect(q3.totals).toMatchObject({ subtotal: '1000.50', grand_total: '1000.00', round_off: '-0.50' });
+      const third = await call(app3, '/v1/bills', cart, { 'idempotency-key': newKey() });
+      expect(third.statusCode, third.body).toBe(201);
+      const r3 = third.json() as Awaited<ReturnType<typeof saved>>;
+      expect(r3.bill).toMatchObject({ pricing_version: 3, grand_total: '1000.00', round_off: '-0.50' });
+      await expectBillIsQuote(r3, q3);
+      // the same cart where version 2 is current: a half rupee goes up
+      const two = await piece(w, d.gold24pp, { retail: '1000.50' });
+      const second = await call(app2, '/v1/bills', billBody(c, 'Retail', [item(two, { metal_rate: '1000.50' })]), { 'idempotency-key': newKey() });
       expect(second.statusCode, second.body).toBe(201);
-      const r2 = second.json() as Awaited<ReturnType<typeof saved>>;
-      expect(r2.bill).toMatchObject({ pricing_version: 2, grand_total: '1000.00', round_off: '-0.50' });
-      await expectBillIsQuote(r2, q2);
-      // the same cart where version 1 is current: a half rupee goes up
-      const one = await piece(w, d.gold24pp, { retail: '1000.50' });
-      const first = await call(app1, '/v1/bills', billBody(c, 'Retail', [item(one, { metal_rate: '1000.50' })]), { 'idempotency-key': newKey() });
-      expect(first.statusCode, first.body).toBe(201);
-      expect((first.json() as Awaited<ReturnType<typeof saved>>).bill).toMatchObject({ pricing_version: 1, grand_total: '1001.00', round_off: '0.50' });
-      expect((await billRow(w, r2.bill.id)).pricing_version).toBe(2);
+      expect((second.json() as Awaited<ReturnType<typeof saved>>).bill).toMatchObject({ pricing_version: 2, grand_total: '1001.00', round_off: '0.50' });
+      expect((await billRow(w, r3.bill.id)).pricing_version).toBe(3);
     });
 
-    it('control: a table whose version 2 prices like version 1 is caught by the same comparison (the dispatch can fail)', async () => {
-      const same = await appWith(2, (input) => ({ ...priceBill(input), pricingVersion: 2 }));
+    it('control: a table whose version 3 prices like version 2 is caught by the same comparison (the dispatch can fail)', async () => {
+      const same = await appWith(3, (input) => ({ ...priceBill(input), pricingVersion: 3 }));
       const c = await addCustomer(w);
       const p = await piece(w, d.gold24pp, { retail: '1000.50' });
       const res = await call(same, '/v1/bills', billBody(c, 'Retail', [item(p, { metal_rate: '1000.50' })]), { 'idempotency-key': newKey() });
       const r = res.json() as Awaited<ReturnType<typeof saved>>;
-      expect(r.bill.pricing_version).toBe(2);
-      expect(r.bill.grand_total, 'a dispatch that ignored the rule of version 2 gives the grand total of version 1').toBe('1001.00');
+      expect(r.bill.pricing_version).toBe(3);
+      expect(r.bill.grand_total, 'a dispatch that ignored the rule of version 3 gives the grand total of version 2').toBe('1001.00');
       expect(r.bill.grand_total).not.toBe('1000.00');
     });
 
     it('a version function that answers another version than the one asked for is a bug (JV_INTERNAL): no bill, no number', async () => {
-      const wrong = await appWith(2, priceBill);
+      const wrong = await appWith(3, priceBill);
       const c = await addCustomer(w);
       const p = await piece(w, d.gold24pp, { retail: '10.00' });
       const before = await footprint(w);
@@ -587,11 +587,11 @@ describe('T-A15 quote_bill returns exactly what create_bill then stores, for ver
       expect(await footprint(w)).toEqual(before);
     });
 
-    it('the application\'s own route cannot be told to price another version: the body has no pricing_version, and the table holds version 1 alone', async () => {
-      expect(Object.keys(PRICING_VERSIONS)).toEqual(['1']);
+    it('the application\'s own route cannot be told to price another version: the body has no pricing_version, and the table holds versions 1 and 2 (FB-C3)', async () => {
+      expect(Object.keys(PRICING_VERSIONS)).toEqual(['1', '2']);
       const c = await addCustomer(w);
       const p = await piece(w, d.gold24pp, { retail: '10.00' });
-      await refused(billBody(c, 'Retail', [item(p, { metal_rate: '10.00' })], { pricing_version: 2 }), 'pricing_version');
+      await refused(billBody(c, 'Retail', [item(p, { metal_rate: '10.00' })], { pricing_version: 1 }), 'pricing_version');
     });
   });
 });

@@ -20,9 +20,9 @@
 // no row) adds RATE_MISSING and a list_metal_rate of 0.00 (the column is NOT NULL, and a price of 0 can never be "sold below"). For a Per Piece line list_metal_rate is the piece price for the sale type and
 // list_labour_rate is null (the line is compared on the price only), and no daily rate is looked at. metal_rate_date is the date of the daily rate used (null for a Per Piece line and for none).
 //
-// VERSIONS (R13): pricing_version selects the pricing function from a version table. The application's table (PRICING_VERSIONS) holds the version of the shared file, 1; a bill stores the version it was priced
-// with (API20), and a rule change becomes version 2 with its own function, so the check on old bills (I6) keeps pricing them as version 1. A test registers a version 2 for itself by passing its own table to
-// registerQuoteBill (T-A15); nothing in a request can add one.
+// VERSIONS (R13): pricing_version selects the pricing function from a version table. The application's table (PRICING_VERSIONS) holds the versions of the shared file: 1 (section 8 as first written) and 2
+// (FB-D2: Semi-Wholesale silver By Weight owes fine like Wholesale), and new bills are priced with the current one, 2. A bill stores the version it was priced with (API20), so the check on old bills (I6)
+// keeps pricing them as version 1. A test registers a further version for itself by passing its own table to registerQuoteBill (T-A15); nothing in a request can add one.
 //
 // The date follows Y8 as create_bill does: a future date is refused for everybody, and a past date for a caller who may not back-date (mayUseField). Unlike create_bill this does not look at whether a piece
 // can be billed (R10: a Sold or Reserved piece is priced like any other): that is the job of the lock in X1.
@@ -58,8 +58,17 @@ import * as wire from '../wire/zod.js';
 export type PricingFunction = (input: PriceBillInput) => PricedBill;
 export type VersionTable = Readonly<Record<number, PricingFunction>>;
 
-/** The versions this API prices: the one of the shared file (pricing_version 1 for the rules of section 8). Version 2 gets its own function here when a rule changes (R13). */
-export const PRICING_VERSIONS: VersionTable = Object.freeze({ [CURRENT_PRICING_VERSION]: priceBill });
+/** One version of the shared file's priceBill, whatever version the input names. */
+const priceAsVersion =
+  (pricingVersion: number): PricingFunction =>
+  (input) =>
+    priceBill({ ...input, pricingVersion });
+
+/**
+ * The versions this API prices (R13), both from the shared file: 1, the rules of section 8 as first written (old bills, and the nightly I6 check on them), and 2, FB-D2 (Semi-Wholesale silver By Weight
+ * owes fine like Wholesale), the current one. A later rule change gets its own entry here.
+ */
+export const PRICING_VERSIONS: VersionTable = Object.freeze({ 1: priceAsVersion(1), 2: priceAsVersion(2) });
 
 /** Prices the bill with the function of `version`. The version is checked after the pricing too, so a table that puts a function under the wrong number is a bug and never a quote. */
 export function priceWithVersion(table: VersionTable, version: number, input: PriceBillInput): PricedBill {
