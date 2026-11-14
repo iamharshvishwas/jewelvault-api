@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { installUserRates } from '../../src/auth/throttle';
+import { txContext } from '../../src/db/tx';
+import { type PhotoCaps, createDbPhotoStore } from '../../src/photos/photoStore';
 import { V, insert } from '../schema/support';
 import type { CallerName } from './cells';
 import { type EditWorld, STAMP_DB, STAMP_WIRE, addDesign, auditRows, body, codeOf, detailsOf, editWorld, patch, stampOf } from './edit-support';
@@ -299,7 +301,8 @@ describe('FB-E1 PUT /v1/orders/:order_id/photos/:photo_id (the PhotoStore of P1 
 
   it('staff may not upload an order photo (403); the rules of P1 hold: a non-image is 415, more than 2 MiB 413, a kind that is not full or thumb 422', async () => {
     const orderId = await addOrder();
-    expect((await upload('staff', orderId, randomUUID(), 'full', jpeg(300))).statusCode).toBe(403);
+    const staff = await upload('staff', orderId, randomUUID(), 'full', jpeg(300));
+    expect([staff.statusCode, codeOf(staff)]).toEqual([403, 'JV_FORBIDDEN']);
     const text = await upload('owner', orderId, randomUUID(), 'full', Buffer.from('plain words, not a picture'.repeat(10)));
     expect([text.statusCode, codeOf(text)]).toEqual([415, 'JV_UNSUPPORTED_MEDIA_TYPE']);
     const big = await upload('owner', orderId, randomUUID(), 'full', jpeg(2 * 1024 * 1024 + 1));
@@ -358,3 +361,59 @@ describe('FB-E1 PUT /v1/orders/:order_id/photos/:photo_id (the PhotoStore of P1 
     expect([onDesign.statusCode, codeOf(onDesign), detailsOf(onDesign)?.field]).toEqual([422, 'JV_INVALID_INPUT', 'changes.photo_ids']);
   });
 });
+
+// ------------------------------------------------------------------ the shared caps of P2 with order photos (fix round 1)
+
+describe('FB-E1 the unattached caps of P2 are shared: an order photo counts until its order exists, and never fills or attaches to a design', () => {
+  // A world of its own, so the unattached figures start at nothing. The store is asked directly with caps lowered (2 photos, or 700 bytes), as the parity test of photo-store.test.ts does, because
+  // the route always uses the application's 60 photos and 100 MB; the order itself is made through the real route.
+  let x: EditWorld;
+  beforeAll(async () => {
+    x = await editWorld('x13caps');
+    installUserRates(x.world.app, { photoUpload: { limit: 1_000_000, windowMs: 60_000 }, everything: { limit: 1_000_000, windowMs: 60_000 } });
+  }, 120_000);
+  afterAll(async () => {
+    await x?.world.close();
+  }, 60_000);
+
+  const store = () => createDbPhotoStore(txContext(x.world.app.db!, { requestId: randomUUID(), actor: { id: x.world.fixtures.biller.userId, role: 'biller' } }));
+  const TWO_PHOTOS: PhotoCaps = { perDesign: 3, unattachedPhotos: 2, unattachedBytes: 100 * 1024 * 1024 };
+  const BYTES_700: PhotoCaps = { perDesign: 3, unattachedPhotos: 60, unattachedBytes: 700 };
+  const putOrder = (orderId: string, size: number, caps: PhotoCaps) => store().put({ photoId: randomUUID(), kind: 'full', orderId, mime: 'image/jpeg', bytes: jpeg(size), createdBy: null }, caps);
+  const putDesign = (designId: string, size: number, caps: PhotoCaps) => store().put({ photoId: randomUUID(), kind: 'full', designId, mime: 'image/jpeg', bytes: jpeg(size), createdBy: null }, caps);
+
+  it('(a) order photos of an order not yet made fill the unattached caps: a design upload is then refused unattached_count, and by bytes unattached_bytes; (b) once the order is made, the same design upload is stored', async () => {
+    const orderId = randomUUID();
+    expect(await putOrder(orderId, 300, TWO_PHOTOS)).toMatchObject({ stored: true });
+    expect(await putOrder(orderId, 300, TWO_PHOTOS)).toMatchObject({ stored: true });
+    expect((await store().sizes()).unattachedPhotos).toBe(2);
+    expect(await putDesign(randomUUID(), 200, TWO_PHOTOS)).toEqual({ stored: false, reason: 'unattached_count' });
+    expect(await putDesign(randomUUID(), 200, BYTES_700)).toEqual({ stored: false, reason: 'unattached_bytes' }); // 600 of order photos + 200 > 700
+    expect(await putOrder(randomUUID(), 200, TWO_PHOTOS)).toEqual({ stored: false, reason: 'unattached_count' }); // another order's photo meets the same cap
+
+    const made = await create('biller', { order_id: orderId, customer_id: await addCustomer(x), description: 'Gold chain, 20 inch' }, randomUUID(), x);
+    expect(made.statusCode, made.body).toBe(201);
+    expect((await store().sizes()).unattachedPhotos).toBe(0); // the order exists: its photos are attached
+    expect(await putDesign(randomUUID(), 200, TWO_PHOTOS)).toMatchObject({ stored: true });
+    expect(await putDesign(randomUUID(), 200, BYTES_700)).toMatchObject({ stored: true });
+  });
+
+  it('(c) three order photos under an id do not fill a design of that id (its upload is 201, not design_full), and do not count as attached to a design that carries the id', async () => {
+    const id = randomUUID();
+    for (let i = 0; i < 3; i++) await photoForOn(x, id);
+    const before = (await store().sizes()).unattachedPhotos; // the 3 order photos are among them: no order of that id exists
+    const res = await uploadForDesign(x, 'owner', id, randomUUID(), 'full', jpeg(300));
+    expect([res.statusCode, res.body.includes('design_full')]).toEqual([201, false]);
+    expect((await store().sizes()).unattachedPhotos).toBe(before + 1); // the design photo waits for its design too
+    await addDesign(x, { id }); // a design now carries the order's id
+    expect((await store().sizes()).unattachedPhotos).toBe(before); // the design's own photo is attached (-1); the 3 order photos are not the design's and stay unattached
+  });
+});
+
+/** A whole photo of an order in world `world`. */
+async function photoForOn(world: EditWorld, orderId: string): Promise<string> {
+  const id = randomUUID();
+  expect((await upload('biller', orderId, id, 'full', jpeg(400), world)).statusCode).toBe(201);
+  expect((await upload('biller', orderId, id, 'thumb', jpeg(100), world)).statusCode).toBe(201);
+  return id;
+}
