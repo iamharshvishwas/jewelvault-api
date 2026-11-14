@@ -328,11 +328,11 @@ describe('X5 what is refused, and that a refusal leaves no trace', () => {
     expect(refusal(res)).toMatchObject({ status: 422, code: 'JV_INVALID_INPUT', field: 'id' });
   });
 
-  it('the reason is required and is 3 to 500 characters once trimmed; anything else in the body is refused; nothing is saved', async () => {
+  it('a reason that is typed is 3 to 500 characters once trimmed (a missing or blank one is "No reason given", FB-D1, fb-c1-reason.test.ts); anything else in the body is refused; nothing is saved', async () => {
     const c = await addCustomer(w);
     const a = await sell(c, '100.00');
     await refused(a.id, NO_BODY, { status: 422, code: 'JV_INVALID_INPUT', field: 'body' });
-    for (const payload of [{}, { reason: '' }, { reason: 'ab' }, { reason: '  ab  ' }, { reason: '   ' }, { reason: 'x'.repeat(501) }, { reason: 12345 }, { reason: null }]) {
+    for (const payload of [{ reason: 'ab' }, { reason: '  ab  ' }, { reason: 'x'.repeat(501) }, { reason: 12345 }, { reason: null }]) {
       await refused(a.id, payload, { status: 422, code: 'JV_INVALID_INPUT', field: 'reason' });
     }
     await refused(a.id, { reason: 'fine', replacement: 'x' }, { status: 422, code: 'JV_INVALID_INPUT' });

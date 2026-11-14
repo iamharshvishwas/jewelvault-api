@@ -157,7 +157,7 @@ describe('T-A01 the worked example through quote_bill (R1 to R8)', () => {
   it('NW 35.42 g, rate 6,920, labour 353 per gram, piroi 2.15, Retail, By Weight: metal 245,106.40, labour 12,503.26, line 257,611.81, grand total 257,612', async () => {
     const piece = await addPiece('gold22', { nw: '35.420', retail: '353.00' });
     const q = await quote(bodyOf('Retail', [item(piece, { metal_rate: '6920.00', labour_rate: '353.00', piroi: '2.15' })]));
-    expect(q.pricing_version).toBe(1);
+    expect(q.pricing_version).toBe(2); // FB-C3: new quotes are version 2
     expect(q.bill_date).toBe(TODAY);
     expect(q.sale_type).toBe('Retail');
     expect(q.lines).toHaveLength(1);
@@ -214,10 +214,13 @@ describe('T-A04 Wholesale silver By Weight: the metal is settled later in fine, 
     expect(q.totals.grand_total).toBe('556.00');
   });
 
-  it('Semi-Wholesale silver and Wholesale gold have no fine: the metal is billed, 13.9 g x 85.00 = 1,181.50', async () => {
+  it('Wholesale gold has no fine, nor has Semi-Wholesale silver under version 1: the metal is billed, 13.9 g x 85.00 = 1,181.50; under version 2 (FB-D2) Semi-Wholesale silver owes fine like Wholesale', async () => {
     const silver = await addPiece('silver999', { nw: '13.900', retail: '40.00' });
-    const semi = await quote(bodyOf('Semi-Wholesale', [item(silver, { metal_rate: '85.00', labour_rate: '40.00' })]));
+    const semi = await quote({ ...bodyOf('Semi-Wholesale', [item(silver, { metal_rate: '85.00', labour_rate: '40.00' })]), pricing_version: 1 });
     expect(semi.lines[0]).toMatchObject({ metal_amount: '1181.50', labour_amount: '556.00', fine_weight_due: '0.000', item_total: '1737.50' });
+    const semi2 = await quote(bodyOf('Semi-Wholesale', [item(silver, { metal_rate: '85.00', labour_rate: '40.00' })]));
+    expect(semi2.pricing_version).toBe(2);
+    expect(semi2.lines[0]).toMatchObject({ metal_amount: '0.00', labour_amount: '556.00', fine_weight_due: '13.900', item_total: '556.00' });
     const gold = await addPiece('gold22', { nw: '13.900', retail: '40.00' });
     const wholesaleGold = await quote(bodyOf('Wholesale', [item(gold, { metal_rate: '85.00', labour_rate: '40.00' })]));
     expect(wholesaleGold.lines[0]).toMatchObject({ metal_amount: '1181.50', fine_weight_due: '0.000', item_total: '1737.50' });
@@ -629,12 +632,12 @@ describe('T-A14 GET /v1/auth/me returns the hash of pricing.ts', () => {
 });
 
 describe('T-A15 quote_bill takes the pricing version as a parameter (R13)', () => {
-  // A second application over the same database and the same users, with a test-only version 2 in its version table: grand total rounded UP to the next rupee instead of to the nearest. The
-  // application's own table holds version 1 alone, so a version that is not in it is refused.
-  const priceBillV2 = (input: RealInput): PricedBill => {
-    const v1 = priceBill(input);
-    const up = Math.ceil(v1.beforeRoundPaise / 100) * 100;
-    return { ...v1, pricingVersion: 2, grandTotalPaise: up, roundOffPaise: input.roundOffSetting ? up - v1.beforeRoundPaise : 0 };
+  // A second application over the same database and the same users, with a test-only version 3 in its version table: grand total rounded UP to the next rupee instead of to the nearest. The
+  // application's own table holds versions 1 and 2 (FB-C3), so a version that is not in it is refused.
+  const priceBillV3 = (input: RealInput): PricedBill => {
+    const v2 = priceBill(input);
+    const up = Math.ceil(v2.beforeRoundPaise / 100) * 100;
+    return { ...v2, pricingVersion: 3, grandTotalPaise: up, roundOffPaise: input.roundOffSetting ? up - v2.beforeRoundPaise : 0 };
   };
   const apps: ReturnType<typeof buildApp>[] = [];
   async function appWith(versions: Parameters<typeof registerQuoteBill>[1]) {
@@ -656,39 +659,41 @@ describe('T-A15 quote_bill takes the pricing version as a parameter (R13)', () =
     bill = bodyOf('Retail', [item(piece, { metal_rate: '1000.40' })]); // before_round 1,000.40
   });
 
-  it('the application\'s version table holds version 1 alone: no pricing_version and 1 are the same quote, 2 and 0 are refused, and so are a text and a fraction', async () => {
-    expect(Object.keys(PRICING_VERSIONS)).toEqual(['1']);
+  it('the application\'s version table holds versions 1 and 2 (FB-C3): no pricing_version and 2 are the same quote, 1 is priced as version 1, 3 and 0 are refused, and so are a text and a fraction', async () => {
+    expect(Object.keys(PRICING_VERSIONS)).toEqual(['1', '2']);
     const plain = await quote(bill);
-    const one = await quote({ ...bill, pricing_version: 1 });
-    expect(one).toEqual(plain);
-    expect(plain.pricing_version).toBe(1);
+    const two = await quote({ ...bill, pricing_version: 2 });
+    expect(two).toEqual(plain);
+    expect(plain.pricing_version).toBe(2);
     expect(plain.totals).toMatchObject({ subtotal: '1000.40', grand_total: '1000.00', round_off: '-0.40' });
-    for (const v of [2, 0, -1, 1.5, '1', null, 32768]) await refused({ ...bill, pricing_version: v }, 'pricing_version');
+    const one = await quote({ ...bill, pricing_version: 1 });
+    expect(one).toEqual({ ...plain, pricing_version: 1 }); // a Retail gold bill: the two versions price it alike
+    for (const v of [3, 0, -1, 1.5, '1', null, 32768]) await refused({ ...bill, pricing_version: v }, 'pricing_version');
   });
 
-  it('with version 2 registered, pricing_version 2 selects it and 1 (or none) still selects version 1', async () => {
-    const app = await appWith({ versions: { ...PRICING_VERSIONS, 2: priceBillV2 } });
-    const two = (await callOn(app, { ...bill, pricing_version: 2 })).json() as Quote;
-    expect(two.pricing_version).toBe(2);
-    expect(two.totals).toMatchObject({ subtotal: '1000.40', grand_total: '1001.00', round_off: '0.60' });
+  it('with version 3 registered, pricing_version 3 selects it and 2 (or none) still selects version 2', async () => {
+    const app = await appWith({ versions: { ...PRICING_VERSIONS, 3: priceBillV3 } });
+    const three = (await callOn(app, { ...bill, pricing_version: 3 })).json() as Quote;
+    expect(three.pricing_version).toBe(3);
+    expect(three.totals).toMatchObject({ subtotal: '1000.40', grand_total: '1001.00', round_off: '0.60' });
     const none = (await callOn(app, bill)).json() as Quote;
-    expect(none.pricing_version).toBe(1);
+    expect(none.pricing_version).toBe(2);
     expect(none.totals).toMatchObject({ grand_total: '1000.00', round_off: '-0.40' });
-    const one = (await callOn(app, { ...bill, pricing_version: 1 })).json() as Quote;
-    expect(one).toEqual(none);
+    const two = (await callOn(app, { ...bill, pricing_version: 2 })).json() as Quote;
+    expect(two).toEqual(none);
   });
 
-  it('control: a table whose version 2 prices like version 1 is caught by the same comparison (the dispatch can fail)', async () => {
-    const same = await appWith({ versions: { ...PRICING_VERSIONS, 2: (input) => ({ ...priceBill(input), pricingVersion: 2 }) } });
-    const two = (await callOn(same, { ...bill, pricing_version: 2 })).json() as Quote;
-    expect(two.pricing_version).toBe(2);
-    expect(two.totals.grand_total, 'a dispatch that ignored the rule of version 2 gives the grand total of version 1').toBe('1000.00');
-    expect(two.totals.grand_total).not.toBe('1001.00');
+  it('control: a table whose version 3 prices like version 2 is caught by the same comparison (the dispatch can fail)', async () => {
+    const same = await appWith({ versions: { ...PRICING_VERSIONS, 3: (input) => ({ ...priceBill(input), pricingVersion: 3 }) } });
+    const three = (await callOn(same, { ...bill, pricing_version: 3 })).json() as Quote;
+    expect(three.pricing_version).toBe(3);
+    expect(three.totals.grand_total, 'a dispatch that ignored the rule of version 3 gives the grand total of version 2').toBe('1000.00');
+    expect(three.totals.grand_total).not.toBe('1001.00');
   });
 
   it('a version function that answers another version than the one asked for is a bug (JV_INTERNAL), never a quote', async () => {
-    const wrong = await appWith({ versions: { ...PRICING_VERSIONS, 2: priceBill } });
-    const res = await callOn(wrong, { ...bill, pricing_version: 2 });
+    const wrong = await appWith({ versions: { ...PRICING_VERSIONS, 3: priceBill } });
+    const res = await callOn(wrong, { ...bill, pricing_version: 3 });
     expect(res.statusCode).toBe(500);
     expect(errorOf(res).code).toBe('JV_INTERNAL');
   });

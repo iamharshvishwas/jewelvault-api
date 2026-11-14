@@ -5,7 +5,7 @@
 // (Y10). The ledger and the cash book show the void as a reversing line on the day it is done (V3, V4: `voided_on`), so a closed day never changes because of it.
 //
 //   path     the receipt (`p_receipt_id`): a lower-case UUID, else 422 on `id`; no such receipt is 404 JV_NOT_FOUND.
-//   body     reason (3 to 500 characters once trimmed). Nothing else.
+//   body     reason: optional (FB-D1); missing or blank is stored as "No reason given", a typed one is 3 to 500 characters once trimmed (src/money/reason.ts). Nothing else.
 //   header   Idempotency-Key.
 //   answer   200 {receipt, allocations, bills}: `receipt` is the row as it is now (status voided, the reason, voided_at, voided_on, voided_by), `allocations` are the rows the REBALANCE made (Y6), and
 //            `bills` are the affected bills in the form of the bill-summary read (V1: pending, received, fine, payment status): the bills the receipt had paid and the bills the rebalance then paid.
