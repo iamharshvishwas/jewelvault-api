@@ -83,6 +83,8 @@ const SHAPES: Readonly<Record<string, Shape>> = {
     from: 'receipt_allocations',
     kinds: { id: 'uuid', receipt_id: 'uuid', bill_id: 'uuid', customer_id: 'uuid', amount: 'money', fine_grams: 'weight', released_at: 'timestamp', created_at: 'timestamp', updated_at: 'timestamp' },
   }),
+  // FB-E1: the Order Book, paged like every table by (updated_at, id) (ix_orders_updated)
+  orders: shape({ from: 'orders', kinds: { id: 'uuid', customer_id: 'uuid', delivery_date: 'date', ...STAMPS }, json: ['photo_ids'] }),
   // V1 and V2 are served by the base tables: the cursor is the base row's (updated_at, id), which the touches of D23 move whenever a payment or an allocation changes (C4)
   bill_summary: shape({
     from: 'bills',

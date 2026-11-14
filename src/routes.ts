@@ -11,6 +11,7 @@
 //   API33  the hourly tick (POST /internal/jobs/tick)
 //   API11  the read side (the sync resources, the poll) ...
 //   API13  the ordinary edits (designs, pieces, categories, subcategories) ...
+//   FB-E1  the Order Book (X13 create_order, the edit of an order; its read is a sync resource, its photo upload the PhotoStore's)
 import type { FastifyInstance } from 'fastify';
 import { registerAdminRoutes } from './admin/routes.js';
 import { registerAuthRoutes } from './auth/loginRoutes.js';
@@ -27,6 +28,7 @@ import { registerQuoteBill } from './money/x07QuoteBill.js';
 import { registerAddOpeningBalance } from './money/x12AddOpeningBalance.js';
 import { registerReissueBill } from './money/x10ReissueBill.js';
 import { registerIssueRefund } from './money/x11IssueRefund.js';
+import { registerOrderRoutes } from './orders/routes.js';
 import { route } from './permissions/route.js';
 import { registerPhotoRoutes } from './photos/routes.js';
 import { registerReadRoutes } from './reads/routes.js';
@@ -53,7 +55,8 @@ export function registerRoutes(app: FastifyInstance): void {
   registerDownloadRoutes(app); // API35: the record of Download everything (B3)
   registerCreateCustomer(app); // API19: X6 create_customer
   registerStockRoutes(app); // API16: X8 create_design, X9 set_sku_status
-  registerPhotoRoutes(app); // API17: the photo upload, the public photo read, the owner's removal
+  registerPhotoRoutes(app); // API17: the photo upload, the public photo read, the owner's removal (and FB-E1's upload of an order's photo)
+  registerOrderRoutes(app); // FB-E1: X13 create_order and the edit of an order (the Order Book)
   // A14: /readyz says only whether the start-up check passed, {"ok":true} or {"ok":false} (503 while it has not): never why. The reason is in sys_error_log and the owner's dashboard line.
   route(app, { public: 'ready', handler: ({ app: a, reply }) => reply.code(a.startup?.ok === true ? 200 : 503).send({ ok: a.startup?.ok === true }) });
 }

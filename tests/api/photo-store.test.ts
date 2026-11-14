@@ -12,7 +12,7 @@ import { txContext, withRead, withTx } from '../../src/db/tx';
 import { limits } from '../../src/limits';
 import { EtagMap } from '../../src/photos/etagMap';
 import { photoCaps as caps, type PhotoCaps, type PhotoKind, type PhotoMime, type PhotoStore, createDbPhotoStore, photoCapsOf, sniffImage } from '../../src/photos/photoStore';
-import { P2_INSERT_TEXT, P2_UNATTACHED_TEXT } from '../../src/photos/queries';
+import { P2_INSERT_ORDER_TEXT, P2_INSERT_TEXT, P2_UNATTACHED_TEXT } from '../../src/photos/queries';
 import { readDbSizeBytes } from '../../src/photos/sizeLine';
 import { DB_RED_LINE_BYTES, readHealth } from '../../src/reads/health';
 import { type Scratch, scratchDatabase } from '../helpers';
@@ -301,11 +301,13 @@ describe('T-F10 the in-database store', () => {
   });
 
   describe('the SQL is the database half\'s: the two texts of db/queries, character for character', () => {
-    it('P2_INSERT_TEXT and P2_UNATTACHED_TEXT equal loadQueries() (the twin pattern of API09 and API12)', () => {
+    it('P2_INSERT_TEXT, P2_INSERT_ORDER_TEXT (FB-E1) and P2_UNATTACHED_TEXT equal loadQueries() (the twin pattern of API09 and API12)', () => {
       const q = loadQueries();
       expect(P2_INSERT_TEXT).toBe(q.P2_insert);
+      expect(P2_INSERT_ORDER_TEXT).toBe(q.P2_insert_order);
       expect(P2_UNATTACHED_TEXT).toBe(q.P2_unattached);
       expect(P2_INSERT_TEXT.length).toBeGreaterThan(500);
+      expect(P2_INSERT_ORDER_TEXT.length).toBeGreaterThan(500);
     });
 
     it('the store answers what insertPhotoGuarded of scripts/housekeeping.mjs answers, step by step, for the same list of uploads (caps lowered so every refusal is reached)', async () => {

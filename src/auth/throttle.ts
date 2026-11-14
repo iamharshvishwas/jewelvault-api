@@ -326,6 +326,7 @@ export function loginThrottleOf(app: FastifyInstance): LoginThrottle {
 const OWN_ROW: Readonly<Record<string, 'changePassword' | 'photoUpload'>> = Object.freeze({
   'session:change-password': 'changePassword',
   'photo:upload': 'photoUpload',
+  'photo:upload_order': 'photoUpload', // FB-E1: an order's photo shares the user's 30 a minute with a design's (one bucket, one key)
 });
 
 type UserRow = 'changePassword' | 'photoUpload' | 'everything';

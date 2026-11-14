@@ -130,6 +130,8 @@ export const idRequired: FieldSpec = { schema: wire.uuid, ...plain };
 export const idOrNull: FieldSpec = { schema: wire.uuid.nullable(), ...plain };
 /** A business date, YYYY-MM-DD, a real calendar day. Whether it may be today, the past or the future is the rule of the table (a CHECK cannot read the clock, S4). */
 export const businessDate: FieldSpec = { schema: wire.businessDate, ...plain };
+/** A date or nothing (an order's delivery date, FB-E1): YYYY-MM-DD, a real calendar day, or null for none. Any day: an order may be written down late, or be overdue. */
+export const dateOrNull: FieldSpec = { schema: wire.businessDate.nullable(), ...plain };
 
 const sameList = (stored: unknown, value: unknown): boolean => JSON.stringify(parseList(stored)) === JSON.stringify(value);
 

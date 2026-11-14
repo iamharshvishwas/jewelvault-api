@@ -7,7 +7,7 @@ import { MATRIX, PUBLIC_ROUTES, TOKEN_DOORS } from '../permissions/matrix.js';
 export const requestLimits = Object.freeze({
   /** A request body is at most 1 MiB ... */
   bodyBytes: 1024 * 1024,
-  /** ... a photo upload 2 MiB and 16 KiB: the file (P1) and a little room for the envelope. */
+  /** ... a photo upload (a design's or an order's) 2 MiB and 16 KiB: the file (P1) and a little room for the envelope. */
   photoBodyBytes: limits.maxPhotoBytes + 16 * 1024,
   /** Receiving a request may take 30 seconds (Fastify's requestTimeout). */
   requestMs: 30_000,
@@ -39,8 +39,8 @@ export function handlerTimeoutFor(timers: RequestTimers, method: string, url: st
   return timers.handlerMs;
 }
 
-/** The body limit of a route when it is not the 1 MiB of the application: only the photo upload (a row of the matrix) has its own. */
+/** The body limit of a route when it is not the 1 MiB of the application: only the photo uploads (rows of the matrix: a design's, and an order's of FB-E1) have their own. */
 export function bodyLimitFor(method: string, url: string): number | undefined {
-  const photo = MATRIX['photo:upload'];
-  return method === photo.method && url === photo.path ? requestLimits.photoBodyBytes : undefined;
+  const photo = [MATRIX['photo:upload'], MATRIX['photo:upload_order']].some((row) => method === row.method && url === row.path);
+  return photo ? requestLimits.photoBodyBytes : undefined;
 }

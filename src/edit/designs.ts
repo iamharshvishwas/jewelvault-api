@@ -39,17 +39,19 @@ const KINDS = ['full', 'thumb'] as const;
 
 /**
  * P2 (b) to (d): every id has both kinds stored, for this design's id, and none of them is removed. One message for all, so that a photo of another design is not described. X8 (API16) asks the same
- * function for the ids of a design it is creating (`field` names where the ids stand in its body), so that the PATCH and the creation cannot differ.
+ * function for the ids of a design it is creating (`field` names where the ids stand in its body), so that the PATCH and the creation cannot differ. FB-E1: the photos of an order live in the same
+ * table with order_id set (0011), so a design takes only rows whose order_id is null, and an order (`of` 'order': X13 and the order PATCH) only rows whose order_id is its own id.
  */
-export async function assertAttachable(tx: Tx, designId: string, ids: readonly string[], field = 'changes.photo_ids'): Promise<void> {
-  const rows = await tx.rows<{ id: string; kind: string; design_id: string; removed_at: string | null }>(
-    `SELECT id, kind, design_id, removed_at FROM design_photos WHERE id IN (${ids.map(() => '?').join(', ')})`,
+export async function assertAttachable(tx: Tx, ownerId: string, ids: readonly string[], field = 'changes.photo_ids', of: 'design' | 'order' = 'design'): Promise<void> {
+  const rows = await tx.rows<{ id: string; kind: string; design_id: string; order_id: string | null; removed_at: string | null }>(
+    `SELECT id, kind, design_id, order_id, removed_at FROM design_photos WHERE id IN (${ids.map(() => '?').join(', ')})`,
     [...ids],
   );
+  const owned = (r: { design_id: string; order_id: string | null }) => r.design_id === ownerId && (of === 'order' ? r.order_id === ownerId : r.order_id === null);
   for (const id of ids) {
     const mine = rows.filter((r) => r.id === id);
-    const whole = KINDS.every((kind) => mine.some((r) => r.kind === kind && r.design_id === designId && r.removed_at === null));
-    if (!whole) throw invalid(field, 'names a photo that was not uploaded for this design, or was removed');
+    const whole = KINDS.every((kind) => mine.some((r) => r.kind === kind && owned(r) && r.removed_at === null));
+    if (!whole) throw invalid(field, `names a photo that was not uploaded for this ${of}, or was removed`);
   }
 }
 

@@ -228,7 +228,7 @@ describe('T-D02 clause (API11): the rows of the sync resources hold exactly the 
   const STAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/;
   const DAY = /^\d{4}-\d\d-\d\d$/;
   type Kind = 'money' | 'weight' | 'uuid' | 'timestamp' | 'date' | 'json' | 'flag' | 'count' | 'plain';
-  const JSON_COLUMNS = new Set(['settings.value', 'designs.tags', 'designs.photo_ids']);
+  const JSON_COLUMNS = new Set(['settings.value', 'designs.tags', 'designs.photo_ids', 'orders.photo_ids']);
   /** The two derived reads have no table to ask information_schema about: the kinds are written from V1 and V2. */
   const DERIVED: Record<string, Record<string, Kind>> = {
     bill_summary: { id: 'uuid', customer_id: 'uuid', reissue_of: 'uuid', bill_date: 'date', grand_total: 'money', received: 'money', pending: 'money', fine_due: 'weight', fine_settled: 'weight', fine_pending: 'weight', item_count: 'count', created_at: 'timestamp', updated_at: 'timestamp' },
@@ -332,11 +332,12 @@ describe('T-D03 / A9 the role sets of the read side: C3 names them, A4 draws the
   // customer_balances, rates, settings, categories, users. Staff: stock, categories, the seven settings keys of A4, users." A4's table gives staff `daily_rates` and `subcategories` too (read),
   // which C3's short list leaves out of the word "stock" and "categories"; the matrix follows A4 (the table is the oracle of T-D02), and the screens of staff need both (the rate card, the
   // sub-category pickers of the stock forms).
-  const ALL = ['users', 'settings', 'daily-rates', 'categories', 'subcategories', 'designs', 'skus', 'sku-private', 'customers', 'bills', 'bill-items', 'receipts', 'receipt-allocations', 'bill-summary', 'customer-balances'];
+  // FB-E1 (FB-D8): the Order Book's `orders` is read by all three roles (the owner and a biller edit it, staff only read it)
+  const ALL = ['users', 'settings', 'daily-rates', 'categories', 'subcategories', 'designs', 'skus', 'sku-private', 'customers', 'bills', 'bill-items', 'receipts', 'receipt-allocations', 'bill-summary', 'customer-balances', 'orders'];
   const BY_ROLE: Record<'owner' | 'biller' | 'staff', string[]> = {
     owner: ALL,
     biller: ALL.filter((n) => n !== 'sku-private'),
-    staff: ['users', 'settings', 'daily-rates', 'categories', 'subcategories', 'designs', 'skus'],
+    staff: ['users', 'settings', 'daily-rates', 'categories', 'subcategories', 'designs', 'skus', 'orders'],
   };
 
   it('each role gets 200 on exactly its resources and 403 on the others, by GET and by poll', async () => {
@@ -438,8 +439,8 @@ describe('T-F03 the poll (C4): one cursor per resource, one answer with server_t
     expect(body.results.customers.rows.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('a poll of everything a role may read: owner 15 resources, biller 14, staff 7 (A4)', async () => {
-    for (const [caller, count] of [['owner', 15], ['biller', 14], ['staff', 7]] as const) {
+  it('a poll of everything a role may read: owner 16 resources, biller 15, staff 8 (A4, and the orders of FB-E1)', async () => {
+    for (const [caller, count] of [['owner', 16], ['biller', 15], ['staff', 8]] as const) {
       const mine = SYNC_ROWS.filter((r) => r.roles.includes(caller));
       expect(mine).toHaveLength(count);
       const res = await poll(world, caller, { cursors: Object.fromEntries(mine.map((r) => [r.name, null])) });

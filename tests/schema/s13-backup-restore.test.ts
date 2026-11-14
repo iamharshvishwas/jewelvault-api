@@ -527,7 +527,7 @@ describe('restoreDatabase (B4, T-R02 database half)', () => {
     const t = await emptyDb('s13_s_r');
     const report = await restoreDatabase(t.c, store.source, photos);
     expect(report.ok).toBe(true);
-    expect(report.triggers).toBe(28); // the 2 append-only triggers of audit_log and the 26 generated audit triggers (L1 (a))
+    expect(report.triggers).toBe(30); // the 2 append-only triggers of audit_log and the 28 generated audit triggers (L1 (a): 13 tables and the orders of FB-E1)
     expect((await errorOf(() => t.c.query("UPDATE audit_log SET row_id = 'changed'")))).not.toBeNull(); // the trigger refuses
     expect((await t.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0]).toEqual((await s.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0]);
     const sourceAudits = Number((await s.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0][0].n);

@@ -62,7 +62,7 @@ export async function insertPhotoGuarded(conn, photo, caps) {
     photo.id, caps.unattachedPhotos, bytes.length, caps.unattachedBytes,
   ]);
   if (res.affectedRows === 1) return { inserted: true };
-  const [[d]] = await conn.query('SELECT COUNT(DISTINCT id) AS n FROM design_photos WHERE design_id = ? AND removed_at IS NULL AND id <> ?', [photo.design_id, photo.id]).then((r) => [r[0]]);
+  const [[d]] = await conn.query('SELECT COUNT(DISTINCT id) AS n FROM design_photos WHERE design_id = ? AND order_id IS NULL AND removed_at IS NULL AND id <> ?', [photo.design_id, photo.id]).then((r) => [r[0]]);
   if (Number(d.n) >= caps.perDesign) return { inserted: false, reason: 'design_full' };
   const u = await unattachedPhotos(conn);
   if (u.photos >= caps.unattachedPhotos) return { inserted: false, reason: 'unattached_count' };

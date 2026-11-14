@@ -16,6 +16,7 @@ const FILES = {
   S3: 'S3_bills_of_receipt.sql',
   S4: 'S4_receipts_of_bill.sql',
   P2_insert: 'P2_insert_photo.sql',
+  P2_insert_order: 'P2_insert_order_photo.sql',
   P2_unattached: 'P2_unattached.sql',
 };
 
