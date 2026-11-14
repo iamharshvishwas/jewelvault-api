@@ -6,7 +6,7 @@
 // advance, which the rebalance of Y6 applies to their other pending bills or leaves as credit. Handing the money back is X11. An opening-balance bill may be cancelled (IM5): it has no pieces.
 //
 //   path     the bill (`p_bill_id`): a lower-case UUID, else 422 on `id`; no such bill is 404 JV_NOT_FOUND.
-//   body     reason (3 to 500 characters once trimmed). Nothing else.
+//   body     reason: optional (FB-D1); missing or blank is stored as "No reason given", a typed one is 3 to 500 characters once trimmed (src/money/reason.ts). Nothing else.
 //   header   Idempotency-Key.
 //   answer   200 {bill, skus, released_allocations, allocations}: `bill` as it is now, `skus` the pieces that returned to stock, `released_allocations` the allocations that were released (every
 //            open one) and, besides the three of NODE-DESIGN 4.3, `allocations`: the rows the REBALANCE made with the money the cancel freed (Y6), so the screen can say where it went.

@@ -6,7 +6,7 @@
 // and belongs to the old bill's customer; the customer cannot change, so `customer_id` is not an input.
 //
 //   path     the old bill (`p_old_bill_id`): a lower-case UUID, else 422 on `id`; no such bill is 404 JV_NOT_FOUND.
-//   body     reason (3 to 500 characters once trimmed), then the body of X1 without `customer_id`: sale_type, bill_date, items, discount, additional_charges, notes, payments, confirm_held,
+//   body     reason (optional, FB-D1: missing or blank is stored as "No reason given", a typed one is 3 to 500 characters once trimmed), then the body of X1 without `customer_id`: sale_type, bill_date, items, discount, additional_charges, notes, payments, confirm_held,
 //            cash_override_reason.
 //   header   Idempotency-Key.
 //   answer   201 {old_bill, new_bill, items, receipts, allocations, released_allocations, warnings, advance_applied}: the keys of NODE-DESIGN 4.3 and, besides them, `released_allocations`, the
