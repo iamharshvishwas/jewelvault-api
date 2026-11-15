@@ -1,4 +1,4 @@
-// L3, L4, S2: human numbers (bill, opening-balance bill, design, piece, barcode) from the sys_counters row of the series, and their formats.
+// L3, L4, S2: human numbers (bill, opening-balance bill, design, piece, barcode, and the order of FB-E1) from the sys_counters row of the series, and their formats.
 //
 //  - The series is worked out ONCE (the year from the API clock, S5, in the Asia/Kolkata zone) into a NumberSeries and that one value is used in both steps: ensureSeries (before the transaction)
 //    and nextBillNo / nextNumber (inside it). A call that read the clock twice could straddle midnight on 31 December.
@@ -48,6 +48,7 @@ export const MAX_SKIPPED_NUMBERS = 100;
 
 const BILL_DIGITS = 4;
 const OPENING_DIGITS = 4;
+const ORDER_DIGITS = 4;
 /** sys_counters.series is VARCHAR(100). INSERT IGNORE would cut a longer key without a word, so it is refused before any statement. */
 const MAX_SERIES_KEY = 100;
 /** designs.design_no is at most 64 characters (D6). */
@@ -73,6 +74,15 @@ export function billNumbers(at: { readonly date: string }, prefix: string): Numb
   if (typeof prefix !== 'string' || !BILL_PREFIX_PATTERN.test(prefix)) throw new TypeError('a bill prefix is 1 to 12 letters or digits (a hyphen between them is allowed)');
   const year = businessYear(at);
   return Object.freeze({ key: `bill:${prefix}:${year}`, format: (n: number) => `${prefix}-${year}-${pad(n, BILL_DIGITS)}` });
+}
+
+/**
+ * order:<YYYY>; an order is ORD-<YYYY>-<4 digits> (FB-E1, FB-D8; spec section 17), and after 9,999 the digits simply grow. The year is that of the Asia/Kolkata day the order is SAVED (S5), from ONE
+ * reading of the API clock taken once for the whole call, as for a bill. No look-ahead: nothing but X13 writes an order number (there is no import of orders).
+ */
+export function orderNumbers(at: { readonly date: string }): NumberSeries {
+  const year = businessYear(at);
+  return Object.freeze({ key: `order:${year}`, format: (n: number) => `ORD-${year}-${pad(n, ORDER_DIGITS)}` });
 }
 
 /** opening: opening-balance bills are OB-<4 digits>. */

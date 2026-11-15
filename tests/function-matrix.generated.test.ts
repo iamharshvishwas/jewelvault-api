@@ -11,7 +11,7 @@ import { addBill, addCustomer, addMoney, rows } from './api/x02-support';
 import { addFineBill } from './api/x03-support';
 import { line, reissueBody, sell } from './api/x10-support';
 
-// API31, T-D09 (A6, A4) and the T-D03 clause (D9, D12, A4, A14): THE GENERATED FUNCTION MATRIX. For each of the twelve service functions X1 to X12 and each caller of A4 (no session, an ended, an expired
+// API31, T-D09 (A6, A4) and the T-D03 clause (D9, D12, A4, A14): THE GENERATED FUNCTION MATRIX. For each of the twelve service functions X1 to X12 (and X13 create_order of the Order Book, FB-E1) and each caller of A4 (no session, an ended, an expired
 // and an idle session, a user who is not active, a user who must still change the password, staff, a biller, the owner) one REAL call with a valid body and fresh fixtures is made, and the answer must be
 // the one the spec gives: no session none; staff only X8 and X9; a biller X1, X2, X3, X6 and X7 but not X4, X5, X10, X11 and X12; the owner all. A refused call writes nothing and reads nothing but the
 // session. An allowed call is saved (and X7, which only quotes, writes nothing). Then the field rules: a biller's cash override is JV_FORBIDDEN, a past date from a biller is JV_INVALID_INPUT, the
@@ -39,6 +39,7 @@ const X: Record<string, { n: string; roles: readonly Role[] }> = {
   'fn:reissue_bill': { n: 'X10', roles: ['owner'] },
   'fn:issue_refund': { n: 'X11', roles: ['owner'] },
   'fn:add_opening_balance': { n: 'X12', roles: ['owner'] },
+  'fn:create_order': { n: 'X13', roles: ['owner', 'biller'] }, // FB-E1 (FB-D8): the owner and a biller create orders, staff read them
 };
 const ACTIONS = Object.keys(X) as Action[];
 
@@ -137,6 +138,10 @@ const SCENARIOS: Record<string, () => Promise<Call>> = {
     const c = await addCustomer(w);
     return { method: 'POST', url: `/v1/customers/${c}/opening-balance`, payload: { dues: '100.00', as_of: DAY } };
   },
+  'fn:create_order': async () => {
+    const c = await addCustomer(w);
+    return { method: 'POST', url: '/v1/orders', payload: { order_id: randomUUID(), customer_id: c, description: 'Gold ring, size 14', delivery_date: '2026-10-19' } };
+  },
 };
 
 const send = (caller: CallerName, call: Call, key: string | null = newKey()): Promise<LightMyRequestResponse> =>
@@ -145,7 +150,7 @@ const send = (caller: CallerName, call: Call, key: string | null = newKey()): Pr
 /** Everything a refused call must leave as it found it: rows of every table a function writes, the sum of the counters, the newest stamp of each. */
 async function books(): Promise<string> {
   const out: Record<string, unknown> = {};
-  for (const t of ['designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'sys_idempotency', 'audit_log']) out[t] = Number((await rows(w, `SELECT COUNT(*) AS n FROM \`${t}\``))[0].n);
+  for (const t of ['designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'orders', 'sys_idempotency', 'audit_log']) out[t] = Number((await rows(w, `SELECT COUNT(*) AS n FROM \`${t}\``))[0].n);
   out.counters = String((await rows(w, 'SELECT COALESCE(SUM(last_value), 0) AS n FROM sys_counters'))[0].n);
   for (const t of ['customers', 'bills', 'receipts', 'skus']) out[`${t}_stamp`] = String((await rows(w, `SELECT COALESCE(MAX(updated_at), '') AS m FROM \`${t}\``))[0].m);
   return JSON.stringify(out);
@@ -187,16 +192,16 @@ async function runCell(action: Action, caller: CallerName, expected: Expected = 
 
 // ------------------------------------------------------------------ T-D09: the matrix
 
-describe('T-D09 the function matrix: X1 to X12 for the callers of A4, generated (a real call with a valid body for each cell)', () => {
-  it('the matrix has exactly the twelve service functions of the spec, with the roles the spec gives: staff only X8 and X9, a biller X1, X2, X3, X6 and X7 but not X4, X5, X10, X11 and X12, the owner all', () => {
+describe('T-D09 the function matrix: X1 to X12 (and X13 of FB-E1) for the callers of A4, generated (a real call with a valid body for each cell)', () => {
+  it('the matrix has exactly the twelve service functions of the spec and X13 create_order of FB-E1, with the roles they give: staff only X8 and X9, a biller X1, X2, X3, X6, X7 and X13 but not X4, X5, X10, X11 and X12, the owner all', () => {
     const fn = Object.entries(MATRIX).filter(([, r]) => r.kind === 'fn');
     expect(fn.map(([a]) => a).sort()).toEqual([...ACTIONS].sort());
     for (const [action, row] of fn) expect([...row.roles].sort(), `${action} (${X[action].n})`).toEqual([...X[action].roles].sort());
     // the spec's sentence, as the roles of the typed table
     const may = (role: Role) => ACTIONS.filter((a) => X[a].roles.includes(role)).map((a) => X[a].n);
     expect(may('staff')).toEqual(['X8', 'X9']);
-    expect(may('biller')).toEqual(['X1', 'X2', 'X3', 'X6', 'X7']);
-    expect(may('owner')).toEqual(['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'X11', 'X12']);
+    expect(may('biller')).toEqual(['X1', 'X2', 'X3', 'X6', 'X7', 'X13']);
+    expect(may('owner')).toEqual(['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'X11', 'X12', 'X13']);
     // every one has a route and a scenario here
     const registered = new Set(w.world.app.routeTable.map((r) => r.action));
     for (const a of ACTIONS) {

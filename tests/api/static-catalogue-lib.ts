@@ -38,6 +38,9 @@ export const NAMED_CHECKS: readonly string[] = [
   'receipt_allocations.chk_allocations_one_kind',
   'design_photos.chk_design_photos_size',
   'sys_photo_copies.chk_photo_copies_size',
+  // FB-E1 (FB-D8): an order's status is one of the five, and it holds at most 3 photo ids
+  'orders.chk_orders_status',
+  'orders.chk_orders_photos',
 ];
 
 /** Money (DECIMAL(14,2)), rates (DECIMAL(12,2)), weights (DECIMAL(12,3)) and percentages (DECIMAL(5,2)): S3, D3 to D13. Every column that carries one of them, with its exact type. */
@@ -80,6 +83,7 @@ export const UNIQUE_KEYS: readonly string[] = [
   'customers.uq_customers_walkin(walkin_key)',
   'daily_rates.uq_daily_rates_day(rate_date,material,purity)',
   'designs.uq_designs_no(design_no)',
+  'orders.uq_orders_no(order_no)',
   'receipts.uq_receipts_id_customer(id,customer_id)',
   'sessions.uq_sessions_token(token_hash)',
   'skus.uq_skus_barcode(barcode)',
@@ -92,7 +96,7 @@ export const UNIQUE_KEYS: readonly string[] = [
 ];
 
 /** The tables the screens poll: each has an index on (updated_at, primary key) (C4, D19). */
-export const POLLED_TABLES: readonly string[] = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations'];
+export const POLLED_TABLES: readonly string[] = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'orders'];
 
 /** D19: an index must exist that starts with these columns (a foreign key's own index counts, MariaDB makes one). */
 export const INDEXED: readonly (readonly [string, readonly string[]])[] = [

@@ -14,6 +14,10 @@
  * Inputs are turned into integers by the small `units` helper below, not by the module's own parsers, so a
  * bug in a parser cannot hide a bug in the pricing (and the other way round).
  *
+ * VERSIONS (R13). The vector tables were made for pricing version 1, so they are priced with version 1 here; the
+ * rule of version 2 (FB-D2: Semi-Wholesale silver By Weight owes fine like Wholesale) is checked against the same
+ * vectors by changing only what that rule changes, written out from the rule in this file.
+ *
  * BigInt literals (10n) do not type-check with this repository's target (ES2017), so BigInt(...) calls are used.
  */
 import { readFileSync } from 'node:fs';
@@ -22,11 +26,13 @@ import { describe, expect, it } from 'vitest';
 import {
   CURRENT_PRICING_VERSION,
   LIMITS,
+  PRICING_VERSIONS_PRICED,
   PricingError,
   defaultLabourRate,
   defaultMetalRate,
   formatGrams,
   formatRupees,
+  owesFine,
   parseGrams,
   parseRupees,
   priceBill,
@@ -184,9 +190,10 @@ function describeRow(row: LineRow): string {
   return `${sale} ${material} ${method} NW ${nw} q${quantity} r ${rate} l ${labour} p ${piroi} o ${other}`;
 }
 
+/** The vectors are version 1 figures (R13). */
 function assertLine(row: LineRow) {
   const { sale, input, expected } = fromRow(row);
-  const priced = priceLine(input, sale);
+  const priced = priceLine(input, sale, 1);
   expect(priced).toMatchObject(expected);
   expect(priced.quantity).toBe(row[4]);
   expect(formatRupees(priced.metalAmountPaise)).toBe(row[9]);
@@ -491,6 +498,7 @@ function billFromVector(vector: {
   lines: LineRow[];
 }): PriceBillInput {
   return {
+    pricingVersion: 1,
     saleType: vector.sale,
     roundOffSetting: vector.roundOffSetting,
     discountPaise: paise(vector.discount),
@@ -516,15 +524,28 @@ describe('S4 limits and R13 version', () => {
     });
   });
 
-  it('prices with pricing version 1 and says so', () => {
-    expect(CURRENT_PRICING_VERSION).toBe(1);
-    expect(priceBill(bill([line()])).pricingVersion).toBe(1);
+  it('FB-C3: prices new bills with pricing version 2 and says so; version 1 is still priced for old bills', () => {
+    expect(CURRENT_PRICING_VERSION).toBe(2);
+    expect(PRICING_VERSIONS_PRICED).toEqual([1, 2]);
+    expect(priceBill(bill([line()])).pricingVersion).toBe(2);
+    expect(priceBill(bill([line()], { pricingVersion: 2 })).pricingVersion).toBe(2);
     expect(priceBill(bill([line()], { pricingVersion: 1 })).pricingVersion).toBe(1);
   });
 
-  it('refuses a version it has no copy of (a later rule change is version 2 with its own code)', () => {
-    expectInvalid(() => priceBill(bill([line()], { pricingVersion: 2 })), 'pricingVersion');
-    expectInvalid(() => priceBill(bill([line()], { pricingVersion: 0 })), 'pricingVersion');
+  it('refuses a version it has no copy of (a later rule change is version 3 with its own code)', () => {
+    for (const version of [0, 3, -1, 1.5, Number.NaN]) {
+      expectInvalid(() => priceBill(bill([line()], { pricingVersion: version })), 'pricingVersion');
+      expectInvalid(() => priceLine(line(), 'Retail', version), 'pricingVersion');
+      expectInvalid(() => owesFine('Wholesale', 'Silver', 'By Weight', version), 'pricingVersion');
+    }
+    expectInvalid(
+      () => priceBill(bill([line()], { pricingVersion: '2' as unknown as number })),
+      'pricingVersion'
+    );
+    expectInvalid(
+      () => priceBill(bill([line()], { pricingVersion: null as unknown as number })),
+      'pricingVersion'
+    );
   });
 });
 
@@ -948,38 +969,75 @@ describe('R4 and R5, T-A04 and T-A05 mirror: fine due and metal amount', () => {
 
   it('the metal rate does not matter once there is fine due (the silver is settled later, SF1)', () => {
     for (const rate of ['0', '1', '75', '99999']) {
-      const priced = priceLine(
-        line({ material: 'Silver', metalRatePaise: paise(rate), labourRatePaise: paise('40') }),
-        'Wholesale'
-      );
-      expect(priced.metalAmountPaise).toBe(0);
-      expect(priced.fineWeightDueMg).toBe(35420);
+      for (const [saleType, version] of [
+        ['Wholesale', 1],
+        ['Wholesale', 2],
+        ['Semi-Wholesale', 2],
+      ] as const) {
+        const priced = priceLine(
+          line({ material: 'Silver', metalRatePaise: paise(rate), labourRatePaise: paise('40') }),
+          saleType,
+          version
+        );
+        expect(priced.metalAmountPaise).toBe(0);
+        expect(priced.fineWeightDueMg).toBe(35420);
+      }
     }
   });
 
-  it.each<[SaleType, Material, SellingMethod, number]>([
-    ['Wholesale', 'Silver', 'By Weight', 13900],
-    ['Wholesale', 'Gold', 'By Weight', 0],
-    ['Semi-Wholesale', 'Silver', 'By Weight', 0],
-    ['Retail', 'Silver', 'By Weight', 0],
-    ['Wholesale', 'Silver', 'Per Piece', 0],
-    ['Wholesale', 'Gold', 'Per Piece', 0],
-    ['Semi-Wholesale', 'Gold', 'By Weight', 0],
-    ['Retail', 'Gold', 'By Weight', 0],
-  ])('%s %s %s gives fine due %d mg', (saleType, material, method, fineMg) => {
-    const priced = priceLine(
-      line({
-        material,
-        sellingMethod: method,
-        customerNetWeightMg: mg('13.9'),
-        labourRatePaise: paise('40'),
-        metalRatePaise: paise('75'),
-      }),
-      saleType
-    );
-    expect(priced.fineWeightDueMg).toBe(fineMg);
-    if (fineMg === 0) expect(priced.metalAmountPaise).toBeGreaterThan(0); // metal is charged when no fine is due
-  });
+  // [sale type, material, method, fine due in mg under version 1, under version 2]
+  it.each<[SaleType, Material, SellingMethod, number, number]>([
+    ['Wholesale', 'Silver', 'By Weight', 13900, 13900],
+    ['Wholesale', 'Gold', 'By Weight', 0, 0],
+    ['Semi-Wholesale', 'Silver', 'By Weight', 0, 13900],
+    ['Retail', 'Silver', 'By Weight', 0, 0],
+    ['Wholesale', 'Silver', 'Per Piece', 0, 0],
+    ['Semi-Wholesale', 'Silver', 'Per Piece', 0, 0],
+    ['Wholesale', 'Gold', 'Per Piece', 0, 0],
+    ['Semi-Wholesale', 'Gold', 'By Weight', 0, 0],
+    ['Retail', 'Gold', 'By Weight', 0, 0],
+  ])(
+    '%s %s %s gives fine due %d mg in version 1 and %d mg in version 2',
+    (saleType, material, method, v1Mg, v2Mg) => {
+      for (const [version, fineMg] of [
+        [1, v1Mg],
+        [2, v2Mg],
+      ] as const) {
+        const priced = priceLine(
+          line({
+            material,
+            sellingMethod: method,
+            customerNetWeightMg: mg('13.9'),
+            labourRatePaise: paise('40'),
+            metalRatePaise: paise('75'),
+          }),
+          saleType,
+          version
+        );
+        expect(priced.fineWeightDueMg, `version ${version}`).toBe(fineMg);
+        expect(owesFine(saleType, material, method, version), `version ${version}`).toBe(
+          fineMg > 0
+        );
+        if (fineMg === 0)
+          expect(priced.metalAmountPaise).toBeGreaterThan(0); // metal is charged when no fine is due
+        else expect(priced.metalAmountPaise).toBe(0);
+      }
+      // no version given: the current one (2)
+      expect(
+        priceLine(
+          line({
+            material,
+            sellingMethod: method,
+            customerNetWeightMg: mg('13.9'),
+            labourRatePaise: paise('40'),
+            metalRatePaise: paise('75'),
+          }),
+          saleType
+        ).fineWeightDueMg
+      ).toBe(v2Mg);
+      expect(owesFine(saleType, material, method)).toBe(v2Mg > 0);
+    }
+  );
 
   it('T-A05: Wholesale silver Per Piece keeps the price and has no fine (QA BIL-06): 2 pieces at 1,200', () => {
     const priced = priceLine(pieceLine('1200', 2, { material: 'Silver' }), 'Wholesale');
@@ -1012,6 +1070,111 @@ describe('R4 and R5, T-A04 and T-A05 mirror: fine due and metal amount', () => {
     );
     expect(priced.fineWeightDueMg).toBe(14001);
     expect(priced.lines.map((l) => l.fineWeightDueMg)).toEqual([13900, 101, 0]);
+  });
+});
+
+describe('FB-C3: pricing version 2, Semi-Wholesale silver owes fine like Wholesale (FB-D2, R4, R5, R13)', () => {
+  // NW 120.000 g, q 1, rate 85.00 per g, labour 40.00 per g, piroi 2.15: labour = 120 x 40 = 4,800.00 in every case
+  const silver = line({
+    material: 'Silver',
+    customerNetWeightMg: mg('120.000'),
+    metalRatePaise: paise('85'),
+    labourRatePaise: paise('40'),
+    piroiPaise: paise('2.15'),
+  });
+
+  it('version 2, Semi-Wholesale, Silver, By Weight, NW 120.000 g, q 1: fine 120.000, metal 0, labour as before (4,800.00)', () => {
+    const priced = priceBill(bill([silver], { saleType: 'Semi-Wholesale', pricingVersion: 2 }));
+    expect(priced.pricingVersion).toBe(2);
+    expect(priced.lines[0]).toEqual({
+      quantity: 1,
+      piroiPaise: 215,
+      otherChargesPaise: 0,
+      labourAmountPaise: 480000,
+      metalAmountPaise: 0,
+      fineWeightDueMg: 120000,
+      itemTotalPaise: 480215,
+    });
+    expect(formatGrams(priced.fineWeightDueMg)).toBe('120.000');
+    expect(priced.subtotalPaise).toBe(480215);
+    expect(priced.grandTotalPaise).toBe(480200);
+    // the same bill with no version given is version 2
+    expect(priceBill(bill([silver], { saleType: 'Semi-Wholesale' }))).toEqual(priced);
+  });
+
+  it('version 2, Semi-Wholesale, Gold: fine 0 and the metal is billed (120 g x 85.00 = 10,200.00)', () => {
+    const priced = priceLine({ ...silver, material: 'Gold' }, 'Semi-Wholesale', 2);
+    expect(priced).toMatchObject({
+      fineWeightDueMg: 0,
+      metalAmountPaise: 1020000,
+      labourAmountPaise: 480000,
+    });
+  });
+
+  it('version 2, Retail, Silver: fine 0 and the metal is billed', () => {
+    const priced = priceLine(silver, 'Retail', 2);
+    expect(priced).toMatchObject({
+      fineWeightDueMg: 0,
+      metalAmountPaise: 1020000,
+      labourAmountPaise: 480000,
+    });
+  });
+
+  it('version 2, Semi-Wholesale, Silver, Per Piece keeps the piece price and has no fine (QA BIL-06 still holds)', () => {
+    const priced = priceLine(pieceLine('1200', 2, { material: 'Silver' }), 'Semi-Wholesale', 2);
+    expect(priced).toMatchObject({
+      fineWeightDueMg: 0,
+      metalAmountPaise: 240000,
+      itemTotalPaise: 240000,
+    });
+  });
+
+  it('version 1 (an old bill), Semi-Wholesale, Silver, By Weight: fine 0 and metal = round(NW x r) = 10,200.00 (Review Focus 2)', () => {
+    const priced = priceBill(bill([silver], { saleType: 'Semi-Wholesale', pricingVersion: 1 }));
+    expect(priced.pricingVersion).toBe(1);
+    expect(priced.lines[0]).toEqual({
+      quantity: 1,
+      piroiPaise: 215,
+      otherChargesPaise: 0,
+      labourAmountPaise: 480000,
+      metalAmountPaise: 1020000,
+      fineWeightDueMg: 0,
+      itemTotalPaise: 1500215,
+    });
+    // an odd weight: metal is the nearest paisa of NW x r (13.901 g x 85.00 = 1,181.585 -> 1,181.59)
+    const odd = priceLine({ ...silver, customerNetWeightMg: mg('13.901') }, 'Semi-Wholesale', 1);
+    expect(odd).toMatchObject({ fineWeightDueMg: 0, metalAmountPaise: 118159 });
+  });
+
+  it('version 2 changes nothing but R4/R5 of Semi-Wholesale silver By Weight: every version 1 vector line priced as version 2', () => {
+    for (const row of [...EDGE_LINES, ...RANDOM_LINES]) {
+      const { sale, input, expected } = fromRow(row);
+      const v2 = priceLine(input, sale, 2);
+      if (
+        sale === 'Semi-Wholesale' &&
+        input.material === 'Silver' &&
+        input.sellingMethod === 'By Weight'
+      ) {
+        // fine = NW x q, metal 0 (when the fine is above 0), labour unchanged, total = labour + piroi + other
+        const fine = input.customerNetWeightMg * (input.quantity ?? 1);
+        const metal = fine > 0 ? 0 : expected.metalAmountPaise;
+        expect(v2, describeRow(row)).toEqual({
+          quantity: row[4],
+          piroiPaise: input.piroiPaise,
+          otherChargesPaise: input.otherChargesPaise,
+          labourAmountPaise: expected.labourAmountPaise,
+          metalAmountPaise: metal,
+          fineWeightDueMg: fine,
+          itemTotalPaise:
+            metal +
+            expected.labourAmountPaise +
+            (input.piroiPaise ?? 0) +
+            (input.otherChargesPaise ?? 0),
+        });
+      } else {
+        expect(v2, describeRow(row)).toMatchObject(expected);
+      }
+    }
   });
 });
 
@@ -1639,6 +1802,8 @@ describe('T-A14 UNIT: the integer copy against the independent oracle and agains
       const labourRate = randInt(rand, 0, 1000000);
       const piroi = randInt(rand, 0, 100000);
       const other = randInt(rand, 0, 100000);
+      // every line under both versions; the fine rule written out per version (R4; version 2: FB-D2)
+      const version = i % 2 === 0 ? 1 : 2;
       const priced = priceLine(
         {
           material,
@@ -1650,9 +1815,11 @@ describe('T-A14 UNIT: the integer copy against the independent oracle and agains
           piroiPaise: piroi,
           otherChargesPaise: other,
         },
-        sale
+        sale,
+        version
       );
-      const wantsFine = sale === 'Wholesale' && material === 'Silver' && method === 'By Weight';
+      const fineSale = version === 1 ? sale === 'Wholesale' : sale !== 'Retail';
+      const wantsFine = fineSale && material === 'Silver' && method === 'By Weight';
       expect(priced.fineWeightDueMg).toBe(wantsFine ? weightMg * quantity : 0);
       if (method === 'By Weight') {
         expect(isNearestPaisaTiesUp(priced.labourAmountPaise, weightMg, labourRate)).toBe(true);

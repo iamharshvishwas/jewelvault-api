@@ -4,7 +4,7 @@
 //
 // WHAT IS HERE
 //   MATRIX          one row for each thing a caller can do: each read resource (GET /v1/sync/<resource>) and the named read calls of C3, each direct edit (A5), each service function
-//                   X1 to X12 with its route (section 10), the photo calls (P2, P3), the download record (B3) and the four session calls (U5, U8, U11). The row carries the address
+//                   X1 to X12 with its route (section 10), the Order Book of FB-E1 (its read, X13 create_order, its edit and its photo upload), the photo calls (P2, P3), the download record (B3) and the four session calls (U5, U8, U11). The row carries the address
 //                   (method and path) too, so the route is registered by its action alone and the generated test (tests/matrix.generated.test.ts) knows what to call.
 //   READ_COLUMNS    the field allow-list per role for every read resource: a read names its columns and never uses SELECT * (A4).
 //   WRITE_COLUMNS   the same for every direct edit (A5): a field outside the list is JV_FORBIDDEN, an unknown field JV_INVALID_INPUT, nothing is silently ignored.
@@ -28,7 +28,7 @@ export type RowKind = 'read' | 'edit' | 'fn' | 'photo' | 'session' | 'owner';
 
 // ------------------------------------------------------------------ what can be read
 
-/** Every table or derived read a screen can read (C3, C4). The first sixteen are tables; the last four are the derived reads of section 11, queries of the API (db/queries), not views. */
+/** Every table or derived read a screen can read (C3, C4). The first seventeen are tables (orders is FB-E1's); the last four are the derived reads of section 11, queries of the API (db/queries), not views. */
 export const READ_RESOURCES = [
   'users',
   'settings',
@@ -43,6 +43,7 @@ export const READ_RESOURCES = [
   'bill_items',
   'receipts',
   'receipt_allocations',
+  'orders',
   'audit_log',
   'check_runs',
   'backup_runs',
@@ -119,6 +120,7 @@ const ROWS = {
   'read:receipt_allocations': read('/v1/sync/receipt-allocations', OB, ['receipt_allocations'], 'A4 receipt_allocations'),
   'read:bill_summary': read('/v1/sync/bill-summary', OB, ['bill_summary'], 'A4 derived read V1'),
   'read:customer_balances': read('/v1/sync/customer-balances', OB, ['customer_balances'], 'A4 derived read V2'),
+  'read:orders': read('/v1/sync/orders', OBS, ['orders'], 'FB-E1, FB-D8: the Order Book; staff read it too'),
   // ---- the named read calls of C3
   'read:customer_ledger': read('/v1/customers/:id/ledger', OB, ['customer_ledger'], 'C3, V3 for one customer'),
   'read:daily_totals': read('/v1/daily-totals', OB, ['daily_totals'], 'C3, V4; a biller reads today and yesterday only (A4, O25: BILLER_DAILY_TOTALS_DAYS)'),
@@ -140,6 +142,7 @@ const ROWS = {
   'edit:skus.update': edit('PATCH', '/v1/skus/:id', OS, { table: 'skus', op: 'update', shape: 'changes' }, 'A4, A5 skus: content columns; status and archived_at only through X9'),
   'edit:sku_private.update': edit('PUT', '/v1/sku-private/:sku_id', O, { table: 'sku_private', op: 'update', shape: 'fields' }, 'A4 sku_private: S, I, U for the owner'),
   'edit:customers.update': edit('PATCH', '/v1/customers/:id', OB, { table: 'customers', op: 'update', shape: 'changes' }, 'A4, A5 customers: content columns; archived_at only for the owner'),
+  'edit:orders.update': edit('PATCH', '/v1/orders/:id', OB, { table: 'orders', op: 'update', shape: 'changes' }, 'FB-E1, FB-D8: description, delivery_date, status, notes, photo_ids; the status of a delivered or cancelled order is the owner\'s (FIELD_RIGHTS)'),
 
   // ---- service functions X1 to X12 (section 10)
   'fn:create_bill': fn('/v1/bills', OB, 'X1'),
@@ -154,9 +157,11 @@ const ROWS = {
   'fn:reissue_bill': fn('/v1/bills/:id/reissue', O, 'X10'),
   'fn:issue_refund': fn('/v1/customers/:id/refunds', O, 'X11'),
   'fn:add_opening_balance': fn('/v1/customers/:id/opening-balance', O, 'X12'),
+  'fn:create_order': fn('/v1/orders', OB, 'X13 (FB-E1, FB-D8): create_order; the spec\'s own X13 was retired in draft 4, so the number is free'),
 
   // ---- photos (P2, P3); the photo READ is on the public list
   'photo:upload': { kind: 'photo', method: 'PUT', path: '/v1/designs/:design_id/photos/:photo_id', roles: OS, mustChange: false, spec: 'P2, P3: the owner and staff add a new photo' },
+  'photo:upload_order': { kind: 'photo', method: 'PUT', path: '/v1/orders/:order_id/photos/:photo_id', roles: OB, mustChange: false, spec: 'FB-E1, P2, P3: the owner and a biller add a photo to an order (the same PhotoStore and caps, 3 an order)' },
   'photo:remove': { kind: 'photo', method: 'POST', path: '/v1/photos/:photo_id/remove', roles: O, mustChange: false, spec: 'P3: only the owner removes one (a POST, nothing is deleted, S7)' },
 
   // ---- the owner's download record (B3)
@@ -226,14 +231,16 @@ export const NEVER_WRITTEN_SETTINGS: readonly string[] = ['last_download', 'last
 export const BILLER_DAILY_TOTALS_DAYS = 2;
 
 /**
- * Section 10 and A5: the field rules that belong to the matrix. Owner-only: cash_override_reason (Z1), original_net_weight (X8), a business date other than today (Y8), and removing, reordering or
- * replacing the photo ids of a design (A5, P3: the others may only add ids at the end).
+ * Section 10 and A5: the field rules that belong to the matrix. Owner-only: cash_override_reason (Z1), original_net_weight (X8), a business date other than today (Y8), removing, reordering or
+ * replacing the photo ids of a design or an order (A5, P3: the others may only add ids at the end), and changing the status of an order that is delivered or cancelled (FB-D8: delivered ->
+ * cancelled is the owner's, and so is taking a closed order back).
  */
 export const FIELD_RIGHTS = {
   cash_override_reason: O,
   original_net_weight: O,
   back_dates: O,
   rewrite_photo_ids: O,
+  change_closed_order: O,
 } as const satisfies Record<string, readonly Role[]>;
 export type FieldRight = keyof typeof FIELD_RIGHTS;
 
@@ -302,6 +309,7 @@ const BILL_SUMMARY = ['id', 'bill_no', 'customer_id', 'bill_date', 'doc_type', '
 const CUSTOMER_BALANCES = ['id', 'billed', 'total_purchases', 'received', 'refunded', 'allocated', 'outstanding', 'advance', 'balance', 'fine_billed', 'fine_received', 'fine_allocated', 'fine_outstanding', 'fine_advance', 'fine_balance', 'last_purchase', 'updated_at'] as const;
 const CUSTOMER_LEDGER = ['customer_id', 'entry_date', 'entry_at', 'kind_rank', 'id', 'kind', 'description', 'debit', 'credit', 'fine_debit', 'fine_credit', 'balance', 'fine_balance'] as const;
 const DAILY_TOTALS = ['business_date', 'mode', 'money_in', 'money_out', 'net'] as const;
+const ORDERS = ['id', 'order_no', 'customer_id', 'description', 'delivery_date', 'status', 'photo_ids', 'notes', ...STAMPS] as const;
 
 const all = (c: readonly string[]): Columns => ({ owner: c, biller: c, staff: c });
 const ownerBiller = (c: readonly string[]): Columns => ({ owner: c, biller: c });
@@ -325,6 +333,7 @@ export const READ_COLUMNS: Readonly<Record<ReadResource, Columns>> = {
   bill_items: ownerBiller(BILL_ITEMS),
   receipts: ownerBiller(RECEIPTS),
   receipt_allocations: ownerBiller(RECEIPT_ALLOCATIONS),
+  orders: all(ORDERS),
   audit_log: ownerOnly(['id', 'at', 'actor', 'actor_role', 'request_id', 'table_name', 'row_id', 'action', 'old_row', 'new_row']),
   check_runs: ownerOnly(['id', 'ran_at', 'ok', 'details']),
   backup_runs: ownerOnly(['id', 'ran_at', 'kind', 'ok', 'bytes', 'detail']),
@@ -365,6 +374,7 @@ export const HIDDEN_COLUMNS = {
 const DESIGN_CONTENT = ['name', 'description', 'notes', 'tags', 'primary_photo_id', 'photo_ids', 'category_id', 'subcategory_id', 'archived_at'] as const;
 const SKU_CONTENT = ['gross_weight', 'customer_net_weight', 'stones', 'stone_weight', 'kundan', 'kundan_weight', 'piroi', 'labour_retail', 'labour_semi', 'labour_wholesale', 'location', 'notes'] as const;
 const CUSTOMER_CONTENT = ['name', 'mobile', 'customer_type', 'email', 'address', 'gst_number', 'pan', 'notes'] as const;
+const ORDER_CONTENT = ['description', 'delivery_date', 'status', 'notes', 'photo_ids'] as const;
 
 /**
  * The fields each role may send on each direct edit (A5). A field outside the list is refused with JV_FORBIDDEN, an unknown field with JV_INVALID_INPUT, and nothing is silently ignored. What is
@@ -383,6 +393,7 @@ export const WRITE_COLUMNS: Readonly<Record<EditAction, Columns>> = {
   'edit:skus.update': { owner: SKU_CONTENT, staff: SKU_CONTENT },
   'edit:sku_private.update': ownerOnly(['original_net_weight']),
   'edit:customers.update': { owner: [...CUSTOMER_CONTENT, 'archived_at'], biller: CUSTOMER_CONTENT },
+  'edit:orders.update': ownerBiller(ORDER_CONTENT),
 };
 
 // ------------------------------------------------------------------ what an edit does with a field it is sent

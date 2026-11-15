@@ -50,7 +50,7 @@ const BAD_LOGIN = () => new JvError('JV_BAD_LOGIN', 'Wrong email or password.');
 const NOT_ACTIVE = () => new JvError('JV_FORBIDDEN', 'Your account is not active.', { details: { reason: 'inactive' } });
 
 /** pricing_sha256 of `me`: the SHA-256 of the API's src/domain/pricing.ts, the app's pricing file byte for byte (API18, C12). `npm run check:pricing` fails when it is not the hash of the file and the one PRICING-SOURCE.txt names. */
-const PRICING_SHA256: string | null = '202482b7bfa9aff7f5cf004a92311253b05aed98f9f86a00d6dc89c29a95fc09';
+const PRICING_SHA256: string | null = 'eb2e0deabfb77cdf885505b6ca4b603fcbcbe9009a08dd8dc2b6db770645960d';
 
 const userBody = (u: { id: string; email: string; fullName: string; role: string; mustChangePassword: boolean }) => ({
   id: u.id,

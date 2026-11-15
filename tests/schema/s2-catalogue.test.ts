@@ -19,6 +19,7 @@ afterAll(async () => {
 
 const EXPECTED_TABLES = [
   'audit_log', 'backup_runs', 'bill_items', 'bills', 'categories', 'check_runs', 'customers', 'daily_rates', 'design_photos', 'designs',
+  'orders', // FB-E1
   'receipt_allocations', 'receipts', 'schema_migrations', 'sessions', 'settings', 'sku_private', 'skus', 'subcategories',
   'sys_counters', 'sys_error_log', 'sys_idempotency', 'sys_import_batches', 'sys_job_runs', 'sys_login_attempts', 'sys_photo_copies', 'users',
 ].sort();
@@ -40,8 +41,8 @@ describe('shape of the schema', () => {
   it('has NO database view (S7, S9, section 11: a view can be created once and never changed without the Drop right) and the four derived reads are query files', async () => {
     const [r] = await c.query<any[]>("SELECT TABLE_NAME n FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE()");
     expect(r).toEqual([]);
-    expect(Object.keys(Q).sort()).toEqual(['P2_insert', 'P2_unattached', 'S1', 'S2', 'S3', 'S4', 'V1', 'V2', 'V2_one', 'V3', 'V4']);
-    for (const [name, sql] of Object.entries(Q)) expect(sql, name).toMatch(name === 'P2_insert' ? /^INSERT INTO design_photos\b/ : /^SELECT\b/);
+    expect(Object.keys(Q).sort()).toEqual(['P2_insert', 'P2_insert_order', 'P2_unattached', 'S1', 'S2', 'S3', 'S4', 'V1', 'V2', 'V2_one', 'V3', 'V4']);
+    for (const [name, sql] of Object.entries(Q)) expect(sql, name).toMatch(name === 'P2_insert' || name === 'P2_insert_order' ? /^INSERT INTO design_photos\b/ : /^SELECT\b/);
   });
 
   it('every index a query names with FORCE INDEX exists (the correlated reads do not leave their plan to the table statistics, which are stale after a bulk load)', async () => {
@@ -159,6 +160,7 @@ describe('shape of the schema', () => {
       'designs(design_no)', 'skus(sku_no)', 'skus(barcode)', 'customers(walkin_key)', 'bills(bill_no)', 'bills(request_id)', 'bills(reissue_of)',
       'bills(id,customer_id)', 'bill_items(bill_id,line_no)', 'bill_items(bill_id,sku_id)', 'receipts(id,customer_id)',
       'sys_job_runs(job,run_date)', 'sys_import_batches(name)', 'sys_error_log(code,minute_at,seq)',
+      'orders(order_no)', // FB-E1: an order's number never changes
     ].sort();
     expect(found).toEqual(allowed);
     const mutable = ['status', 'archived_at', 'released_at', 'voided_at', 'voided_on', 'active', 'role', 'is_live', 'cancelled_at', 'cancelled_on', 'updated_at', 'sold_bill_id'];

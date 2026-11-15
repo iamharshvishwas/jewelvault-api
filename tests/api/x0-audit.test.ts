@@ -67,7 +67,7 @@ async function updateRow(tx: Tx, table: string, shape: AuditShape, id: string, s
 }
 
 describe('T-D14 (API15 clause) the shapes in src/db/auditShapes are the catalogue and the exclude list', () => {
-  it('the 13 audited tables, their columns in order, types, JSON columns, DATETIME precision, primary keys and the exclude list equal the migrated database and db/optional/audit-exclude.json', async () => {
+  it('the 14 audited tables (the 13 of L1 and the orders of FB-E1), their columns in order, types, JSON columns, DATETIME precision, primary keys and the exclude list equal the migrated database and db/optional/audit-exclude.json', async () => {
     const live = await readAuditShape(plain.u, AUDITED_TABLES);
     const exclude = loadExcludeList();
     expect(Object.keys(AUDIT_SHAPES)).toEqual(AUDITED_TABLES);
@@ -170,7 +170,7 @@ describe('T-D14 (API15 clause) mechanism (b) equals mechanism (a) on a toy table
   });
 });
 
-describe('T-D14 (API15 clause) the 13 audited tables: one insert and one update of each give the same rows in both mechanisms', () => {
+describe('T-D14 (API15 clause) the 14 audited tables (with the orders of FB-E1): one insert and one update of each give the same rows in both mechanisms', () => {
   it('the same sequence on a database with the triggers and on one without, run in node mode', async () => {
     const cat = V.category({ name: 'Rings', prefix: 'RNG' });
     const sub = V.subcategory(cat.id, { name: 'Plain' });
@@ -193,6 +193,7 @@ describe('T-D14 (API15 clause) the 13 audited tables: one insert and one update 
       ['bill_items', V.billItem(bill.id, sku.id, {}), { category: 'Ring 2' }],
       ['receipts', receipt, { notes: 'paid' }],
       ['receipt_allocations', V.allocation(receipt.id, bill.id, customer.id, {}), { released_at: '2026-10-05 00:00:00.000000' }],
+      ['orders', { id: randomUUID(), order_no: 'ORD-2026-0901', customer_id: customer.id, description: 'Audit order', delivery_date: '2026-10-20', photo_ids: [] }, { status: 'ready', delivery_date: null }], // FB-E1
     ];
     expect(rows.map((r) => r[0])).toEqual(AUDITED_TABLES);
     const requestId = randomUUID();

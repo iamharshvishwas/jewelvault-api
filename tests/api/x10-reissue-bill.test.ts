@@ -415,12 +415,12 @@ describe('X10 the rules of X1 apply to the new bill (Y8, Z1 to Z3, K2) and what 
     expect((await reissueBill(w, 'owner', a.id, reissueBody('Retail', [line(a.piece, '100.00')]))).statusCode).toBe(201);
   });
 
-  it('the reason is required and is 3 to 500 characters once trimmed; the body of create_bill is checked as create_bill checks it (items, dates, charges); unknown keys are refused', async () => {
+  it('a reason that is typed is 3 to 500 characters once trimmed (a missing or blank one is "No reason given", FB-D1, fb-c1-reason.test.ts); the body of create_bill is checked as create_bill checks it (items, dates, charges); unknown keys are refused', async () => {
     const c = await addCustomer(w);
     const a = await bill(c, '100.00');
     const items = [line(a.piece, '100.00')];
-    for (const reason of [undefined, '', 'ab', '  ab  ', '   ', 'x'.repeat(501), 12345, null]) {
-      const payload: Body = { sale_type: 'Retail', items, ...(reason === undefined ? {} : { reason }) };
+    for (const reason of ['ab', '  ab  ', 'x'.repeat(501), 12345, null]) {
+      const payload: Body = { sale_type: 'Retail', items, reason };
       await refused(a.id, payload, { status: 422, code: 'JV_INVALID_INPUT', field: 'reason' });
     }
     await refused(a.id, { reason: 'fine', sale_type: 'Retail' }, { status: 422, code: 'JV_INVALID_INPUT', field: 'items' });

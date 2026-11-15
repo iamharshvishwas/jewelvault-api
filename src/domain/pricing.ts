@@ -24,15 +24,22 @@
  * discount that makes the total negative) throws a `PricingError` with `code` 'JV_INVALID_INPUT' and the
  * `field` that was wrong (`lines[2].metalRatePaise` for the third line of a bill). Nothing here can overflow.
  *
- * VERSION. Only pricing version 1 (the rules of spec section 8) is implemented. A later change of a rule is
- * version 2 with its own code (R13); asking this copy for another version throws.
+ * VERSIONS (R13). A bill is priced with the version it stores, so a rule change never moves an old bill:
+ *   1  the rules of spec section 8 as first written: fine is due on Wholesale silver By Weight lines only.
+ *   2  (FB-D2, Siddhi's feedback of 6 Nov 2026, #5) R4 also covers Semi-Wholesale: fine due = NW x q when the
+ *      sale type is Wholesale OR Semi-Wholesale, the material Silver and the selling method By Weight; such a
+ *      line has metal amount 0 (R5). Every other rule is the same as version 1.
+ * New bills are priced with CURRENT_PRICING_VERSION; asking for a version this copy does not have throws.
  *
  * The functions that start with `default` and `saleTypeFor` are the screen-side defaults of R1, R2 and R9:
  * the database prices the rates it is sent, the screen decides which rates to send.
  */
 
-/** The version of the pricing rules this copy implements (R13). */
-export const CURRENT_PRICING_VERSION = 1;
+/** The version of the pricing rules new bills are priced with (R13). */
+export const CURRENT_PRICING_VERSION = 2;
+
+/** Every version this copy prices (R13): old bills keep the version they were saved with. */
+export const PRICING_VERSIONS_PRICED: readonly number[] = [1, 2];
 
 export type SaleType = 'Retail' | 'Semi-Wholesale' | 'Wholesale';
 export type Material = 'Gold' | 'Silver';
@@ -348,7 +355,7 @@ export interface PriceBillInput {
   additionalChargesPaise?: number | null;
   /** `settings.estimate.roundOff`: whether `round_off` is kept (R8). Required, so it cannot be forgotten. */
   roundOffSetting: boolean;
-  /** Default: the current version. Only version 1 exists in this copy. */
+  /** Default: the current version. This copy prices versions 1 and 2 (R13). */
   pricingVersion?: number;
 }
 
@@ -406,7 +413,48 @@ function amountWithinCap(value: bigint, field: string): number {
   return Number(value);
 }
 
-function priceLineAt(line: PriceLineInput, saleType: SaleType, at: string): PricedLine {
+/** The version asked for (absent: the current one), or JV_INVALID_INPUT when this copy does not price it. */
+function pricingVersionOf(value: unknown): number {
+  const version = value === undefined ? CURRENT_PRICING_VERSION : value;
+  if (typeof version !== 'number' || !PRICING_VERSIONS_PRICED.includes(version)) {
+    throw invalid(
+      'pricingVersion',
+      `${String(version)} is not available (this copy prices versions ${PRICING_VERSIONS_PRICED.join(' and ')})`
+    );
+  }
+  return version;
+}
+
+/** The sale types whose silver By Weight lines owe fine, for each version (R4; version 2 adds Semi-Wholesale, FB-D2). */
+const FINE_SALE_TYPES: Readonly<Record<number, readonly SaleType[]>> = {
+  1: ['Wholesale'],
+  2: ['Wholesale', 'Semi-Wholesale'],
+};
+
+/**
+ * R4: whether a line owes fine (silver settled later, SF1) under the given version (absent: the current one).
+ * The screens ask this instead of comparing the sale type themselves, so they follow the version rule.
+ */
+export function owesFine(
+  saleType: SaleType,
+  material: Material,
+  sellingMethod: SellingMethod,
+  pricingVersion?: number
+): boolean {
+  const version = pricingVersionOf(pricingVersion);
+  return (
+    FINE_SALE_TYPES[version].includes(saleType) &&
+    material === 'Silver' &&
+    sellingMethod === 'By Weight'
+  );
+}
+
+function priceLineAt(
+  line: PriceLineInput,
+  saleType: SaleType,
+  version: number,
+  at: string
+): PricedLine {
   const material = assertOneOf(line.material, MATERIALS, `${at}material`);
   const sellingMethod = assertOneOf(line.sellingMethod, SELLING_METHODS, `${at}sellingMethod`);
   const byWeight = sellingMethod === 'By Weight';
@@ -437,11 +485,11 @@ function priceLineAt(line: PriceLineInput, saleType: SaleType, at: string): Pric
   const weight = BigInt(weightMg);
   // R3: By Weight round(NW x l, 2); Per Piece 0. NW (mg) x l (paise per g) / 1000 is the amount in paise.
   const labourAmount = byWeight ? divideHalfUp(weight * BigInt(labourRate), THOUSAND) : ZERO;
-  // R4: NW x q for Wholesale + Silver + By Weight, else 0.
-  const fineDue =
-    saleType === 'Wholesale' && material === 'Silver' && byWeight
-      ? weight * BigInt(quantity)
-      : ZERO;
+  // R4: NW x q for Silver + By Weight on a sale type of the version (1: Wholesale; 2: Wholesale or
+  // Semi-Wholesale), else 0.
+  const fineDue = owesFine(saleType, material, sellingMethod, version)
+    ? weight * BigInt(quantity)
+    : ZERO;
   // R5: fine due means the silver is settled later, so no metal amount; else By Weight round(NW x r, 2),
   // Per Piece round(r x q, 2) (exact: r has at most two decimals and q is whole).
   let metalAmount: bigint;
@@ -469,22 +517,23 @@ function priceLineAt(line: PriceLineInput, saleType: SaleType, at: string): Pric
   };
 }
 
-/** Prices one line for a bill of the given sale type (R3 to R7). Throws `PricingError` on bad input. */
-export function priceLine(line: PriceLineInput, saleType: SaleType): PricedLine {
+/**
+ * Prices one line for a bill of the given sale type (R3 to R7) under the given version (absent: the current
+ * one). Throws `PricingError` on bad input.
+ */
+export function priceLine(
+  line: PriceLineInput,
+  saleType: SaleType,
+  pricingVersion?: number
+): PricedLine {
+  const version = pricingVersionOf(pricingVersion);
   assertOneOf(saleType, SALE_TYPES, 'saleType');
-  return priceLineAt(line, saleType, '');
+  return priceLineAt(line, saleType, version, '');
 }
 
-/** Prices a whole bill (R3 to R8), pricing version 1. Throws `PricingError` on bad input. */
+/** Prices a whole bill (R3 to R8) under its version (absent: the current one). Throws `PricingError` on bad input. */
 export function priceBill(input: PriceBillInput): PricedBill {
-  const version =
-    input.pricingVersion === undefined ? CURRENT_PRICING_VERSION : input.pricingVersion;
-  if (version !== CURRENT_PRICING_VERSION) {
-    throw invalid(
-      'pricingVersion',
-      `${String(version)} is not available (this copy prices version ${CURRENT_PRICING_VERSION})`
-    );
-  }
+  const version = pricingVersionOf(input.pricingVersion);
   const saleType = assertOneOf(input.saleType, SALE_TYPES, 'saleType');
   if (typeof input.roundOffSetting !== 'boolean') {
     throw invalid('roundOffSetting', 'must be true or false');
@@ -494,7 +543,9 @@ export function priceBill(input: PriceBillInput): PricedBill {
     throw invalid('lines', `must hold ${LIMITS.minLines} to ${LIMITS.maxLines} lines`);
   }
 
-  const lines = input.lines.map((line, index) => priceLineAt(line, saleType, `lines[${index}].`));
+  const lines = input.lines.map((line, index) =>
+    priceLineAt(line, saleType, version, `lines[${index}].`)
+  );
   // At most 200 lines of at most the amount cap each: both sums stay far inside the safe integers.
   const subtotalPaise = lines.reduce((sum, line) => sum + line.itemTotalPaise, 0);
   const fineWeightDueMg = lines.reduce((sum, line) => sum + line.fineWeightDueMg, 0);

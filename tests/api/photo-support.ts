@@ -99,16 +99,18 @@ export class FakePhotoStore implements PhotoStore {
   }
 
   async put(photo: PhotoToPut, caps: PhotoCaps = DEFAULT_CAPS): Promise<PutOutcome> {
-    const others = new Set(this.live().filter(([id, , r]) => r.designId === photo.designId && id !== photo.photoId).map(([id]) => id));
+    if (photo.designId === undefined) throw new Error('the fake store keeps the photos of designs only (the contract of P7); an order\'s photo (FB-E1) is the table\'s');
+    const designId = photo.designId;
+    const others = new Set(this.live().filter(([id, , r]) => r.designId === designId && id !== photo.photoId).map(([id]) => id));
     if (others.size >= caps.perDesign) return { stored: false, reason: 'design_full' };
-    if (!this.designs.has(photo.designId)) {
+    if (!this.designs.has(designId)) {
       const unattached = this.live().filter(([, , r]) => !this.designs.has(r.designId));
       if (new Set(unattached.filter(([id]) => id !== photo.photoId).map(([id]) => id)).size >= caps.unattachedPhotos) return { stored: false, reason: 'unattached_count' };
       if (unattached.reduce((sum, [, , r]) => sum + r.byteSize, 0) + photo.bytes.length > caps.unattachedBytes) return { stored: false, reason: 'unattached_bytes' };
     }
     if (this.rows.has(this.key(photo.photoId, photo.kind))) return { stored: false, reason: 'duplicate' };
     const digest = sha256(photo.bytes);
-    this.rows.set(this.key(photo.photoId, photo.kind), { designId: photo.designId, mime: photo.mime, sha256: digest, byteSize: photo.bytes.length, bytes: Buffer.from(photo.bytes), removedAt: null });
+    this.rows.set(this.key(photo.photoId, photo.kind), { designId, mime: photo.mime, sha256: digest, byteSize: photo.bytes.length, bytes: Buffer.from(photo.bytes), removedAt: null });
     return { stored: true, sha256: digest, byteSize: photo.bytes.length };
   }
 

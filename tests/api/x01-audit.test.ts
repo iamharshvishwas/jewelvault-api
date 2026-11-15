@@ -63,7 +63,7 @@ for (const mode of MODES) {
       const bill = log.find((x) => x.table_name === 'bills')!;
       expect(bill.row_id).toBe(r.bill.id);
       expect(bill.old_row).toBeNull();
-      expect(bill.new_row).toMatchObject({ id: r.bill.id, bill_no: r.bill.bill_no, customer_id: c, status: 'active', grand_total: r.bill.grand_total, round_off: r.bill.round_off, pricing_version: 1, cancelled_on: null });
+      expect(bill.new_row).toMatchObject({ id: r.bill.id, bill_no: r.bill.bill_no, customer_id: c, status: 'active', grand_total: r.bill.grand_total, round_off: r.bill.round_off, pricing_version: 2, cancelled_on: null });
       expect(new Set(log.filter((x) => x.table_name === 'bill_items').map((x) => x.row_id))).toEqual(new Set(r.items.map((i) => i.id)));
       for (const x of log.filter((y) => y.table_name === 'skus')) {
         expect(x.old_row).toMatchObject({ sold_bill_id: null });

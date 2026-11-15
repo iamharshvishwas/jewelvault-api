@@ -1,6 +1,8 @@
 // P1 to P3, P7, A13, D26 (API17): the photo routes.
 //
 //   PUT  /v1/designs/:design_id/photos/:photo_id?kind=full|thumb   upload one object of a photo (matrix row photo:upload; the owner and staff). The raw bytes are the body. Insert-only.
+//   PUT  /v1/orders/:order_id/photos/:photo_id?kind=full|thumb     the same for an order of FB-E1 (matrix row photo:upload_order; the owner and a biller): the same checks, the same caps, 3 an order,
+//                                                                   201 { photo_id, order_id, kind, mime, byte_size, sha256 }; a 4th photo is 409 JV_NOT_ALLOWED with reason order_full.
 //   GET  /v1/photos/:photo_id/full  and  /thumb                    read one object, with NO session (the public list): immutable caching, ETag = sha256, nosniff, cross-origin resource policy.
 //   POST /v1/photos/:photo_id/remove                                the removal (matrix row photo:remove; the owner alone): a tombstone, audited. A DELETE has no route.
 //
@@ -54,13 +56,15 @@ const notAllowed = (message: string, details: Record<string, unknown>) => new Jv
 
 const kindError = (issue: { input?: unknown }) => (issue.input === undefined ? 'is required' : 'must be full or thumb');
 const uploadParams = wire.strictObject({ design_id: wire.uuid, photo_id: wire.uuid });
+const orderUploadParams = wire.strictObject({ order_id: wire.uuid, photo_id: wire.uuid });
 const uploadQuery = wire.strictObject({ kind: z.enum(['full', 'thumb'], { error: kindError }) });
 
 const REFUSALS: Record<PutRefusal, string> = {
   duplicate: 'This photo was already uploaded. A photo is never overwritten: send the new one under a new photo id.',
   design_full: `A design can have at most ${limits.maxPhotosPerDesign} photos.`,
-  unattached_count: `At most ${limits.maxUnattachedPhotos} photos can wait for a design to be saved. Save the designs you have started first.`,
-  unattached_bytes: `At most ${Math.round(limits.maxUnattachedPhotoBytes / (1024 * 1024))} MB of photos can wait for a design to be saved. Save the designs you have started first.`,
+  order_full: `An order can have at most ${limits.maxPhotosPerDesign} photos.`,
+  unattached_count: `At most ${limits.maxUnattachedPhotos} photos can wait for a design or an order to be saved. Save the designs and orders you have started first.`,
+  unattached_bytes: `At most ${Math.round(limits.maxUnattachedPhotoBytes / (1024 * 1024))} MB of photos can wait for a design or an order to be saved. Save the designs and orders you have started first.`,
 };
 
 /** A13: a repeated read with If-None-Match. Weak validators and lists count, and * matches any photo that exists (RFC 9110 13.1.2: the comparison for this header is the weak one). */
@@ -92,35 +96,41 @@ export function registerPhotoRoutes(app: FastifyInstance, options: PhotoRouteOpt
 
   // The upload's body is raw bytes. The parser answers only the photo upload: any other route that is sent one of these types keeps the 415 it had before. Parsing happens after the route's onRequest
   // hooks (the session, the rate, the matrix row), so a caller who is refused never has the body read.
-  const uploadPath = MATRIX['photo:upload'].path;
+  const uploadPaths = [MATRIX['photo:upload'].path, MATRIX['photo:upload_order'].path];
   app.addContentTypeParser(RAW_TYPES, { parseAs: 'buffer' }, (request, body, done) => {
-    if (request.routeOptions?.url !== uploadPath) {
+    if (!uploadPaths.includes(request.routeOptions?.url ?? '')) {
       done(Object.assign(new Error('Unsupported Media Type'), { code: 'FST_ERR_CTP_INVALID_MEDIA_TYPE', statusCode: 415 }));
       return;
     }
     done(null, body);
   });
 
-  route(app, {
-    action: 'photo:upload',
-    body: z.unknown(), // the bytes; whether they are bytes at all is judged below, so that "not an image" is 415 and not a 422 about a body
-    handler: async ({ app: a, request, reply, auth, body }) => {
-      assertMayCall(auth.user.role, 'photo:upload');
-      const ids = wire.parseInput(uploadParams, request.params);
-      const { kind } = wire.parseInput(uploadQuery, request.query);
-      if (!Buffer.isBuffer(body)) throw new JvError('JV_UNSUPPORTED_MEDIA_TYPE', 'Send the photo as a JPEG, PNG or WebP image: the raw bytes of the file are the body.');
-      if (body.length > limits.maxPhotoBytes) throw new JvError('JV_PAYLOAD_TOO_LARGE', `A photo can be at most ${limits.maxPhotoBytes / (1024 * 1024)} MiB.`);
-      const mime = sniffImage(body);
-      if (mime === null) throw new JvError('JV_UNSUPPORTED_MEDIA_TYPE', 'This file is not a JPEG, PNG or WebP image.');
-      const ctx = contextOf(a, request, { id: auth.user.id, role: auth.user.role });
-      // O46, P2: whenever the size line is red the upload is refused (at 3 GB the plan stops billing)
-      const size = options.sizeBytes ? await options.sizeBytes() : await withRead(ctx, (db) => readDbSizeBytes(db));
-      if (size > DB_RED_LINE_BYTES) throw notAllowed('The database is nearly full, so no photo can be added now.', { reason: 'database_full' });
-      const outcome = await storeOf(ctx).put({ photoId: ids.photo_id, kind: kind as PhotoKind, designId: ids.design_id, mime, bytes: body, createdBy: auth.user.id });
-      if (!outcome.stored) throw notAllowed(REFUSALS[outcome.reason], { field: outcome.reason === 'duplicate' ? 'photo_id' : 'design_id', reason: outcome.reason });
-      return reply.code(201).send({ photo_id: ids.photo_id, design_id: ids.design_id, kind, mime, byte_size: outcome.byteSize, sha256: outcome.sha256 });
-    },
-  });
+  // One upload for a design (P2) and for an order (FB-E1): the same checks in the same order; only the id in the address and the row it names differ.
+  const registerUpload = (action: 'photo:upload' | 'photo:upload_order', ownerField: 'design_id' | 'order_id') =>
+    route(app, {
+      action,
+      body: z.unknown(), // the bytes; whether they are bytes at all is judged below, so that "not an image" is 415 and not a 422 about a body
+      handler: async ({ app: a, request, reply, auth, body }) => {
+        assertMayCall(auth.user.role, action);
+        const ids = ownerField === 'design_id' ? wire.parseInput(uploadParams, request.params) : wire.parseInput(orderUploadParams, request.params);
+        const ownerId = ownerField === 'design_id' ? (ids as { design_id: string }).design_id : (ids as { order_id: string }).order_id;
+        const { kind } = wire.parseInput(uploadQuery, request.query);
+        if (!Buffer.isBuffer(body)) throw new JvError('JV_UNSUPPORTED_MEDIA_TYPE', 'Send the photo as a JPEG, PNG or WebP image: the raw bytes of the file are the body.');
+        if (body.length > limits.maxPhotoBytes) throw new JvError('JV_PAYLOAD_TOO_LARGE', `A photo can be at most ${limits.maxPhotoBytes / (1024 * 1024)} MiB.`);
+        const mime = sniffImage(body);
+        if (mime === null) throw new JvError('JV_UNSUPPORTED_MEDIA_TYPE', 'This file is not a JPEG, PNG or WebP image.');
+        const ctx = contextOf(a, request, { id: auth.user.id, role: auth.user.role });
+        // O46, P2: whenever the size line is red the upload is refused (at 3 GB the plan stops billing)
+        const size = options.sizeBytes ? await options.sizeBytes() : await withRead(ctx, (db) => readDbSizeBytes(db));
+        if (size > DB_RED_LINE_BYTES) throw notAllowed('The database is nearly full, so no photo can be added now.', { reason: 'database_full' });
+        const object = { photoId: ids.photo_id, kind: kind as PhotoKind, mime, bytes: body, createdBy: auth.user.id };
+        const outcome = await storeOf(ctx).put(ownerField === 'design_id' ? { ...object, designId: ownerId } : { ...object, orderId: ownerId });
+        if (!outcome.stored) throw notAllowed(REFUSALS[outcome.reason], { field: outcome.reason === 'duplicate' ? 'photo_id' : ownerField, reason: outcome.reason });
+        return reply.code(201).send({ photo_id: ids.photo_id, [ownerField]: ownerId, kind, mime, byte_size: outcome.byteSize, sha256: outcome.sha256 });
+      },
+    });
+  registerUpload('photo:upload', 'design_id');
+  registerUpload('photo:upload_order', 'order_id');
 
   const read = async (a: FastifyInstance, request: FastifyRequest, reply: FastifyReply, kind: PhotoKind) => {
     throttleRead(a, request.headers);
