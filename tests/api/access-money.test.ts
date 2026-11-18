@@ -79,8 +79,6 @@ interface Scenario {
   tick: TickKey;
   /** the status of a call that is done */
   ok: 200 | 201;
-  /** ticks that the ANSWER of the call needs besides the tick and its needs: the answer is in the wire format of the sync read, and a person reads a bill with bill_view (bill_make does not need it) */
-  alsoReads?: TickKey[];
   /** the books the call needs (typed by SQL or made by the real routes) and the call itself; `date` is a business date for the call to carry (only the functions that take one) */
   prepare: (date?: string) => Promise<Call>;
   /** the functions that take a business date: the input that carries it, and where the answer shows it */
@@ -94,7 +92,6 @@ const SCENARIOS: Scenario[] = [
     action: 'fn:create_bill',
     tick: 'bill_make',
     ok: 201,
-    alsoReads: ['bill_view'],
     dated: { field: 'bill_date', shows: (a) => a.bill.bill_date },
     async prepare(date) {
       const c = await addCustomer(w);
@@ -196,7 +193,7 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 const scenario = (action: Action): Scenario => SCENARIOS.find((s) => s.action === action) as Scenario;
-const closeOf = (s: Scenario, ...more: TickKey[]): TickKey[] => closeOverNeeds([s.tick, ...(s.alsoReads ?? []), ...more]);
+const closeOf = (s: Scenario, ...more: TickKey[]): TickKey[] => closeOverNeeds([s.tick, ...more]);
 
 describe('the ten money functions ask the ticks of the person who calls (X0 item 2, R4)', () => {
   it.each(SCENARIOS)(

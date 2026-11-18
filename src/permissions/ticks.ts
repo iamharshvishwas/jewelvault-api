@@ -109,7 +109,7 @@ const DEFS: Record<TickKey, TickDef> = {
   bill_make: {
     group: 'Money',
     label: 'Make bills and estimates',
-    needs: ['customer_view'],
+    needs: ['customer_view', 'bill_view'], // R18: the answer of create-bill is the bill in the wire format of the bills read
     help: 'A bill that takes payment also needs "Receive payments and settle fine". Without that, the role can still save a bill that takes no payment.',
   },
   payment_receive: { group: 'Money', label: 'Receive payments and settle fine', needs: ['customer_view', 'bill_view'] },

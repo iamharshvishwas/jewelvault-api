@@ -33,7 +33,7 @@ const TABLE: readonly (readonly [string, string, string, readonly string[]])[] =
   ['cashbook_all', 'Money', 'See the cash book for all days', ['cashbook_recent']],
   ['customer_edit', 'Money', 'Add and edit customers', ['customer_view']],
   ['customer_archive', 'Money', 'Archive a customer', ['customer_view']],
-  ['bill_make', 'Money', 'Make bills and estimates', ['customer_view']],
+  ['bill_make', 'Money', 'Make bills and estimates', ['customer_view', 'bill_view']],
   ['payment_receive', 'Money', 'Receive payments and settle fine', ['customer_view', 'bill_view']],
   ['rate_enter', 'Money', "Enter today's metal rates", []],
   ['rate_correct', 'Money', 'Correct a daily rate', ['rate_enter']],
