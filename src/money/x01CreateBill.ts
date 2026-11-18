@@ -45,13 +45,14 @@ import { type Tx, txContextFor, withRead, withTx } from '../db/tx.js';
 import { applyCashRules, needsPanPrompt, refuseWalkinBill } from '../domain/cashRules.js';
 import { CURRENT_PRICING_VERSION } from '../domain/pricing.js';
 import { type AllocationRow, fromUnits, insertAllocations, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, invalid, readRow, wireRow } from '../edit/engine.js';
+import { type Row, invalid, readRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { BusyError, JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
 import { columnsOfTable, mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
+import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { type PieceRow, PRICING_VERSIONS, type Quote, type VersionTable, assertEachPieceOnce, buildQuote, checkBillDate, quoteBody, readEstimate, readRates } from './x07QuoteBill.js';
 
@@ -417,7 +418,7 @@ function contextOf(app: FastifyInstance, request: FastifyRequest, auth: Auth) {
 
 /** X1. `key` is the Idempotency-Key as idempotencyKey() read it. Returns the answer and whether it is the stored answer of an earlier call with the same key. */
 export async function createBill(app: FastifyInstance, request: FastifyRequest, auth: Auth, key: string, input: CreateBillBody, options: CreateBillOptions = {}): Promise<{ value: CreateBillResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const versions = options.versions ?? PRICING_VERSIONS;
   const version = options.pricingVersion ?? CURRENT_PRICING_VERSION;
   if (!Object.hasOwn(versions, version)) throw new Error(`the bill is to be priced with version ${version}, which the version table does not hold`);
@@ -432,15 +433,15 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'create_bill', route: 'POST /v1/bills', body: input });
-    assertMayCall(role, 'fn:create_bill'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
-    if (input.cash_override_reason != null && !mayUseField(role, 'cash_override_reason')) {
+    assertMayCall(grants, 'fn:create_bill'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
       throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
     }
     if (!c.first) return { value: c.result as CreateBillResult, replayed: true };
 
     // 2. the customer row FOR UPDATE, then X1 (a) and (b)
     const customer = await lockCustomer(tx, input.customer_id);
-    const billDate = checkBillDate(input.bill_date, day.date, role); // Y8
+    const billDate = checkBillDate(input.bill_date, day.date, grants); // Y8
     assertEachPieceOnce(input.items); // X1 (a): a piece twice is JV_INVALID_INPUT, never the duplicate-key error of UNIQUE (bill_id, sku_id)
     const confirmed = confirmedPieces(input);
     if (!customer) throw invalid('customer_id', 'is not a customer');
@@ -457,7 +458,7 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
 
     // (e) the payment rows may not exceed the grand total (JV_OVERPAYMENT, Y5) and the cash rules of section 13 must pass (JV_CASH_LIMIT, Z1, Z2); the Cash rows are dated the bill date, so that is the day
     const payments = planPayments(input.payments ?? [], grand);
-    const cash = await applyCashRules(tx, { customerId: customer.id, walkin, day: billDate, cash: payments.cash, role, reason: input.cash_override_reason });
+    const cash = await applyCashRules(tx, { customerId: customer.id, walkin, day: billDate, cash: payments.cash, grants, reason: input.cash_override_reason });
 
     // 5. the number, last (X0 item 6)
     const issued = await nextBillNo(tx, series);
@@ -482,10 +483,10 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     const adjusted = rebalanced.allocations.filter((a) => a.bill_id === billId).reduce((sum, a) => sum + toUnits(a.amount, 2), 0n);
 
     const value: CreateBillResult = {
-      bill: wireRow('bills', role, billRow),
-      items: lineRows.map((r) => wireRow('bill_items', role, r)),
-      receipts: written.receipts.map((r) => wireRow('receipts', role, r)),
-      allocations: [...written.allocations, ...rebalanced.allocations].map((a) => wireRow('receipt_allocations', role, { ...a })),
+      bill: answerRow('bills', grants, billRow),
+      items: lineRows.map((r) => answerRow('bill_items', grants, r)),
+      receipts: written.receipts.map((r) => answerRow('receipts', grants, r)),
+      allocations: [...written.allocations, ...rebalanced.allocations].map((a) => answerRow('receipt_allocations', grants, { ...a })),
       warnings: [...warnings].sort(),
       advance_applied: fromUnits(adjusted, 2),
     };

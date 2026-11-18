@@ -39,11 +39,12 @@ import { touchForBillWrite } from '../db/touch.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
 import { rebalance, toUnits } from '../domain/rebalance.js';
 import { stateAfterCancel } from '../domain/reopen.js';
-import { type Row, notFound, readRow, wireRow } from '../edit/engine.js';
+import { type Row, notFound, readRow } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
 import { columnsOfTable } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
+import { answerRow } from './answer.js';
 import { reasonText } from './reason.js';
 
 // ------------------------------------------------------------------ the body
@@ -153,14 +154,14 @@ export async function cancelBill(
   billId: string,
   input: CancelBillBody,
 ): Promise<{ value: CancelBillResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
 
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'cancel_bill', route: ROUTE_NAME, pathIds: { id: billId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as CancelBillResult, replayed: true };
 
     // 2. the customer from the bill, locked, the bill read again FOR UPDATE (the same customer, or JV_BUSY); everything else is decided now, after the lock
@@ -197,10 +198,10 @@ export async function cancelBill(
     const rebalanced = await rebalance(tx, { customerId: customer.id, walkin, state: adjusted, at });
 
     const value: CancelBillResult = {
-      bill: wireRow('bills', role, written.bill),
-      skus: written.skus.map((r) => wireRow('skus', role, r)),
-      released_allocations: written.released.map((r) => wireRow('receipt_allocations', role, r)),
-      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', role, { ...a })),
+      bill: answerRow('bills', grants, written.bill),
+      skus: written.skus.map((r) => answerRow('skus', grants, r)),
+      released_allocations: written.released.map((r) => answerRow('receipt_allocations', grants, r)),
+      allocations: rebalanced.allocations.map((a) => answerRow('receipt_allocations', grants, { ...a })),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

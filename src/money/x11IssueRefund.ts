@@ -43,11 +43,12 @@ import { type CustomerState, readCustomerState } from '../db/state.js';
 import { touchForReceiptWrite } from '../db/touch.js';
 import { txContextFor, withTx } from '../db/tx.js';
 import { fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, notFound, wireRow } from '../edit/engine.js';
+import { type Row, notFound } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { JvError, unavailableError } from '../errors.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
+import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { REFERENCE_MAX, paymentAmount, paymentMode } from './x01CreateBill.js';
 import { checkBillDate } from './x07QuoteBill.js';
@@ -100,14 +101,14 @@ export async function issueRefund(
   customerId: string,
   input: IssueRefundBody,
 ): Promise<{ value: IssueRefundResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
 
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'issue_refund', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as IssueRefundResult, replayed: true };
 
     // 2. the customer row FOR UPDATE, then "exists and is not archived"; one reading of the clock after the lock
@@ -116,7 +117,7 @@ export async function issueRefund(
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before handing money back.', { details: { customer_id: customer.id } });
     const now = app.clock.read();
     const at = now.timestamp;
-    const paidOn = checkBillDate(input.paid_on, now.date, role, 'paid_on'); // Y8
+    const paidOn = checkBillDate(input.paid_on, now.date, grants, 'paid_on'); // Y8
     const walkin = Number(customer.is_walkin) === 1;
     const amount = toUnits(input.amount, MONEY);
 
@@ -152,7 +153,7 @@ export async function issueRefund(
     const rebalanced = await rebalance(tx, { customerId: customer.id, walkin, state: stateAfterRefund(state, amount), at });
 
     const value: IssueRefundResult = {
-      receipt: wireRow('receipts', role, receiptRow),
+      receipt: answerRow('receipts', grants, receiptRow),
       advance: fromUnits(advance - amount - toUnits(rebalanced.applied, MONEY), MONEY),
     };
     await storeResult(tx, c.key, value);

@@ -35,11 +35,13 @@ import { touchForReceiptWrite } from '../db/touch.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
 import { fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
 import { type Share, stateAfterVoid } from '../domain/reopen.js';
-import { type Row, notFound, readRow, wireRow } from '../edit/engine.js';
+import { type Row, notFound, readRow } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
+import type { Grants } from '../permissions/grants.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import { billSummaryFigures } from '../sync/derived.js';
 import * as wire from '../wire/zod.js';
+import { answerRow } from './answer.js';
 import { reasonText } from './reason.js';
 
 // ------------------------------------------------------------------ the body
@@ -71,14 +73,14 @@ const SHARES_SQL =
   'SELECT bill_id, SUM(amount) AS amount, SUM(fine_grams) AS fine_grams FROM receipt_allocations WHERE receipt_id = ? AND customer_id = ? AND released_at IS NULL GROUP BY bill_id';
 
 /** The affected bills in the form of the bill-summary read (V1), in the order of `ids`. Read after the writes, so the figures are the ones the call left. */
-async function billSummaries(tx: Tx, role: string, ids: readonly string[]): Promise<Row[]> {
+async function billSummaries(tx: Tx, grants: Grants, ids: readonly string[]): Promise<Row[]> {
   if (ids.length === 0) return [];
   const found = await tx.rows<Row>(billSummaryFigures(ids.length), [...ids]);
   const byId = new Map(found.map((r) => [String(r.id), r]));
   return ids.map((id) => {
     const r = byId.get(id);
     if (!r) throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error(`bill ${id} is not there after the void`) });
-    return wireRow('bill_summary', role, r);
+    return answerRow('bill_summary', grants, r);
   });
 }
 
@@ -93,14 +95,14 @@ export async function voidReceipt(
   receiptId: string,
   input: VoidReceiptBody,
 ): Promise<{ value: VoidReceiptResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
 
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'void_receipt', route: ROUTE_NAME, pathIds: { id: receiptId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as VoidReceiptResult, replayed: true };
 
     // 2. the customer from the receipt, locked, the receipt read again FOR UPDATE (the same customer, or JV_BUSY); everything else is decided now, after the lock
@@ -144,9 +146,9 @@ export async function voidReceipt(
     // 5. the answer: the receipt, the rows of the rebalance, and the bills the call touched in the order they were touched
     const billIds = [...new Set([...shares.map((s) => s.bill_id), ...rebalanced.allocations.map((a) => a.bill_id)])];
     const value: VoidReceiptResult = {
-      receipt: wireRow('receipts', role, row),
-      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', role, { ...a })),
-      bills: await billSummaries(tx, role, billIds),
+      receipt: answerRow('receipts', grants, row),
+      allocations: rebalanced.allocations.map((a) => answerRow('receipt_allocations', grants, { ...a })),
+      bills: await billSummaries(tx, grants, billIds),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

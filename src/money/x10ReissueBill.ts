@@ -48,10 +48,11 @@ import { applyCashRules } from '../domain/cashRules.js';
 import { CURRENT_PRICING_VERSION } from '../domain/pricing.js';
 import { type NewBill, applyRebalance, fromUnits, planRebalanceOf, toUnits } from '../domain/rebalance.js';
 import { stateAfterCancel } from '../domain/reopen.js';
-import { type Row, notFound, wireRow } from '../edit/engine.js';
+import { type Row, notFound } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
+import { answerRow } from './answer.js';
 import { reasonText } from './reason.js';
 import { readBillToCancel, writeCancel } from './x05CancelBill.js';
 import { type CreateBillOptions, confirmedPieces, createBillBody, planPayments, priceNewBill, writeNewBill, writePayments } from './x01CreateBill.js';
@@ -105,7 +106,7 @@ export async function reissueBill(
   input: ReissueBillBody,
   options: CreateBillOptions = {},
 ): Promise<{ value: ReissueBillResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const versions = options.versions ?? PRICING_VERSIONS;
   const version = options.pricingVersion ?? CURRENT_PRICING_VERSION;
@@ -121,7 +122,7 @@ export async function reissueBill(
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'reissue_bill', route: ROUTE_NAME, pathIds: { id: oldBillId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as ReissueBillResult, replayed: true };
 
     // 2. the customer from the old bill, locked, the bill read again FOR UPDATE (the same customer, or JV_BUSY); everything that needs no more reading is decided now, after the lock
@@ -133,7 +134,7 @@ export async function reissueBill(
       throw new JvError('JV_NOT_ALLOWED', 'Only an estimate can be re-issued. Cancel this bill and add a new opening balance instead.', { details: { reason: 'not_an_estimate', bill_id: oldBillId, doc_type: old.doc_type } });
     }
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before re-issuing a bill.', { details: { customer_id: customer.id } });
-    const billDate = checkBillDate(input.bill_date, day.date, role); // Y8
+    const billDate = checkBillDate(input.bill_date, day.date, grants); // Y8
     assertEachPieceOnce(input.items); // X1 (a)
     const confirmed = confirmedPieces(input);
     const walkin = Number(customer.is_walkin) === 1;
@@ -172,7 +173,7 @@ export async function reissueBill(
     // (e) the explicit payments may not exceed what the new bill still needs after the carried-over money (Y5), and the cash rules judge the Cash rows (Z1, Z2): the old bill's Cash receipts stay
     // active, so they are in the day's cash already, and the carried-over money is not new cash
     const payments = planPayments(input.payments ?? [], grand, carried);
-    const cash = await applyCashRules(tx, { customerId: customer.id, walkin, day: billDate, cash: payments.cash, role, reason: input.cash_override_reason });
+    const cash = await applyCashRules(tx, { customerId: customer.id, walkin, day: billDate, cash: payments.cash, grants, reason: input.cash_override_reason });
 
     // the number, last (X0 item 6)
     const issued = await nextBillNo(tx, series);
@@ -186,12 +187,12 @@ export async function reissueBill(
     const written = await writePayments(tx, { plan: payments, customerId: customer.id, billId: newBillId, billDate, at, by });
 
     const value: ReissueBillResult = {
-      old_bill: wireRow('bills', role, cancelled.bill),
-      new_bill: wireRow('bills', role, made.billRow),
-      items: made.lineRows.map((r) => wireRow('bill_items', role, r)),
-      receipts: written.receipts.map((r) => wireRow('receipts', role, r)),
-      allocations: [...rebalanced.allocations, ...written.allocations].map((a) => wireRow('receipt_allocations', role, { ...a })),
-      released_allocations: cancelled.released.map((r) => wireRow('receipt_allocations', role, r)),
+      old_bill: answerRow('bills', grants, cancelled.bill),
+      new_bill: answerRow('bills', grants, made.billRow),
+      items: made.lineRows.map((r) => answerRow('bill_items', grants, r)),
+      receipts: written.receipts.map((r) => answerRow('receipts', grants, r)),
+      allocations: [...rebalanced.allocations, ...written.allocations].map((a) => answerRow('receipt_allocations', grants, { ...a })),
+      released_allocations: cancelled.released.map((r) => answerRow('receipt_allocations', grants, r)),
       warnings: [...warnings].sort(),
       advance_applied: fromUnits(carried, 2),
     };

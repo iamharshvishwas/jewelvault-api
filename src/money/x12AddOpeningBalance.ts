@@ -42,10 +42,11 @@ import { readCustomerState } from '../db/state.js';
 import { touchForBillWrite, touchForReceiptWrite } from '../db/touch.js';
 import { txContextFor, withTx } from '../db/tx.js';
 import { type NewReceipt, fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, notFound, readRow, wireRow } from '../edit/engine.js';
+import { type Row, notFound, readRow } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
+import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { checkBillDate } from './x07QuoteBill.js';
 
@@ -113,7 +114,7 @@ export async function addOpeningBalance(
   customerId: string,
   input: AddOpeningBalanceBody,
 ): Promise<{ value: AddOpeningBalanceResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
   const dues = toUnits(input.dues ?? '0.00', MONEY);
@@ -128,7 +129,7 @@ export async function addOpeningBalance(
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'add_opening_balance', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as AddOpeningBalanceResult, replayed: true };
 
     // 2. the customer row FOR UPDATE, then "exists and is not archived"; one reading of the clock after the lock
@@ -137,7 +138,7 @@ export async function addOpeningBalance(
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before adding an opening balance.', { details: { customer_id: customer.id } });
     const now = app.clock.read();
     const at = now.timestamp;
-    const asOf = checkBillDate(input.as_of, now.date, role, 'as_of'); // Y8
+    const asOf = checkBillDate(input.as_of, now.date, grants, 'as_of'); // Y8
     const walkin = Number(customer.is_walkin) === 1;
     // K5: one row stands for strangers whose money must not pay each other's bills, so the walk-in never holds an advance (I10); its opening dues are fine
     if (walkin && (advance > 0n || fineAdvance > 0n)) {
@@ -191,9 +192,9 @@ export async function addOpeningBalance(
     });
 
     const value: AddOpeningBalanceResult = {
-      bill: billRow ? wireRow('bills', role, billRow) : null,
-      receipts: receipts.map((r) => wireRow('receipts', role, r)),
-      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', role, { ...a })),
+      bill: billRow ? answerRow('bills', grants, billRow) : null,
+      receipts: receipts.map((r) => answerRow('receipts', grants, r)),
+      allocations: rebalanced.allocations.map((a) => answerRow('receipt_allocations', grants, { ...a })),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

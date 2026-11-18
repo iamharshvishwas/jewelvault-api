@@ -39,13 +39,14 @@ import { touchForReceiptWrite } from '../db/touch.js';
 import { txContextFor, withTx } from '../db/tx.js';
 import { applyCashRules } from '../domain/cashRules.js';
 import { type AllocationRow, fromUnits, insertAllocations, planRebalance, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, invalid, notFound, wireRow } from '../edit/engine.js';
+import { type Row, invalid, notFound } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
 import { mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
+import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { REFERENCE_MAX, cashOverrideReason } from './x01CreateBill.js';
 import { checkBillDate } from './x07QuoteBill.js';
@@ -157,7 +158,7 @@ export async function settleFine(
   customerId: string,
   input: SettleFineBody,
 ): Promise<{ value: SettleFineResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
   const settlement = judgeSettlement(input); // before the claim: a refusal that needs only the body does not use the key up
@@ -165,8 +166,8 @@ export async function settleFine(
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'settle_fine', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
-    if (input.cash_override_reason != null && !mayUseField(role, 'cash_override_reason')) {
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
       throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
     }
     if (!c.first) return { value: c.result as SettleFineResult, replayed: true };
@@ -177,7 +178,7 @@ export async function settleFine(
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before settling silver.', { details: { customer_id: customer.id } });
     const now = app.clock.read();
     const at = now.timestamp;
-    const paidOn = checkBillDate(input.paid_on, now.date, role, 'paid_on'); // Y8
+    const paidOn = checkBillDate(input.paid_on, now.date, grants, 'paid_on'); // Y8
     const walkin = Number(customer.is_walkin) === 1;
 
     // 3. the state of the customer, read ONCE (X0 item 8); the hook of the test build is the return of this call. The bills with SILVER pending are the ones a fine settlement can settle (Y3).
@@ -206,7 +207,7 @@ export async function settleFine(
     }
 
     // The cash rules of section 13 (Z1, Z2), before the first write: only a fine settled in cash is cash; the day is the date of the settlement; the reason comes back only when the override was needed.
-    const cashRules = await applyCashRules(tx, { customerId: customer.id, walkin, day: paidOn, cash: settlement.amount, role, reason: input.cash_override_reason });
+    const cashRules = await applyCashRules(tx, { customerId: customer.id, walkin, day: paidOn, cash: settlement.amount, grants, reason: input.cash_override_reason });
 
     // 4. the writes. The receipt (fine_silver: no mode, amount 0; fine_cash: mode Cash, the rate and the amount), its audit row, then the settlement's own allocation by Y3.
     const receiptId = newId();
@@ -256,8 +257,8 @@ export async function settleFine(
     const all = [...own, ...rebalanced.allocations];
     const settledNow = all.reduce((n, a) => n + toUnits(a.fine_grams, FINE), 0n);
     const value: SettleFineResult = {
-      receipt: wireRow('receipts', role, receiptRow),
-      allocations: all.map((a) => wireRow('receipt_allocations', role, { ...a })),
+      receipt: answerRow('receipts', grants, receiptRow),
+      allocations: all.map((a) => answerRow('receipt_allocations', grants, { ...a })),
       fine_remaining: fromUnits(outstanding - settledNow, FINE),
     };
     await storeResult(tx, c.key, value);
