@@ -17,7 +17,8 @@
 //
 // ORDER OF WORK (X1 and X0). Before the transaction: one reading of the API clock (`day`: the business date for Y8 and for a bill_date left out, and the year of the number series, S5), the prefix of the bill
 // numbers (settings.estimate, NODE-DESIGN 5.5), and the counter row of the series (ensureSeries: a series made inside a transaction can deadlock, spike F3). Then, in one withTx:
-//   1. the claim of the key (L5) and the role check (X0 items 1 and 2: a refusal rolls the claim back, so the key stays unused), then the stored answer if the key is a repeat;
+//   1. the claim of the key (L5), the role check and the two checks of the body (X0 items 1 and 2, assertMayUseBody: a refusal rolls the claim back, so the key stays unused), then the stored
+//      answer if the key is a repeat;
 //   2. the customer row FOR UPDATE (X0 item 3), then the validation of what needs no more reading (Y8, each piece once, the confirm list, the payments), then "the customer exists and is not archived";
 //   3. the state of the customer, read once (X0 item 8, `create_bill.after_read` of the test build: the hook is a wrapper of the test build, not a line of this file); the rebalance (j) allocates
 //      from it and reads nothing again;
@@ -49,6 +50,7 @@ import { type Row, invalid, readRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { BusyError, JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
+import type { Grants } from '../permissions/grants.js';
 import { columnsOfTable, mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
@@ -208,6 +210,19 @@ export interface PaymentPlan {
   rows: PaymentRowPlan[];
   total: bigint;
   cash: bigint;
+}
+
+/**
+ * The two field-level checks of the body that come right after the role check, before the stored answer of a repeat (X0 item 2: a refusal rolls the claim back, so the key stays unused). X1 and
+ * X10 take the same body and ask both.
+ *   - DESIGN M8: a payment row of an amount above 0 is money received, so the caller must also be allowed fn:record_payment (payment_receive); rows of amount 0 are ignored, as they are written.
+ *   - Z1: `cash_override_reason` only from a caller who may use it (cash_over_limit), whether or not the cash rule would need it.
+ */
+export function assertMayUseBody(grants: Grants, input: Pick<CreateBillBody, 'payments' | 'cash_override_reason'>): void {
+  if ((input.payments ?? []).some((p) => toUnits(p.amount, MONEY) > 0n)) assertMayCall(grants, 'fn:record_payment');
+  if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
+    throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
+  }
 }
 
 /**
@@ -434,9 +449,7 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'create_bill', route: 'POST /v1/bills', body: input });
     assertMayCall(grants, 'fn:create_bill'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
-    if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
-      throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
-    }
+    assertMayUseBody(grants, input); // payment rows need payment_receive (M8), a cash reason needs cash_over_limit (Z1)
     if (!c.first) return { value: c.result as CreateBillResult, replayed: true };
 
     // 2. the customer row FOR UPDATE, then X1 (a) and (b)

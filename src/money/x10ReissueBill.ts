@@ -23,9 +23,11 @@
 //
 // ORDER OF WORK (X0). Before the transaction, as in X1: ONE clock reading (the business date for Y8 and the year of the number), the prefix of the bill numbers and the counter row of the series. Then
 // ONE transaction:
-//   1. the claim of the key (L5, the first statement), the role check again (X0 item 2), the stored answer if the key is a repeat;
+//   1. the claim of the key (L5, the first statement), the role check again (X0 item 2) and the two checks of the body that X1 makes (a payment row above 0 needs payment_receive, M8; a
+//      cash_override_reason needs cash_over_limit, Z1), the stored answer if the key is a repeat;
 //   2. the customer is found from the old bill WITHOUT a lock, locked, and the bill is read again FOR UPDATE and must be the SAME customer's (X0 item 3): a second re-issue of one bill is
-//      JV_BILL_CANCELLED, never a false JV_BUSY. Then what needs no more reading: the status and kind of the old bill, the archive, Y8, each piece once, the confirm list;
+//      JV_BILL_CANCELLED, never a false JV_BUSY. Then what needs no more reading: the status and kind of the old bill, the archive, the old bill's date (M13: a bill not dated
+//      today is re-issued only with back_date), Y8, each piece once, the confirm list;
 //   3. the plain reads of the cancel (the bill's open allocations and lines), then the state of the customer, read ONCE and including the old bill and the receipts allocated to it
 //      (X0 item 8: `x10.after_read` of the test build);
 //   4. the pieces of BOTH lists, the old bill's and the new lines', by ONE statement in MariaDB's id order (X0 item 5; a piece on both lists is locked once); R10 is judged on the locked rows with
@@ -50,12 +52,13 @@ import { type NewBill, applyRebalance, fromUnits, planRebalanceOf, toUnits } fro
 import { stateAfterCancel } from '../domain/reopen.js';
 import { type Row, notFound } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
+import { mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
 import { answerRow } from './answer.js';
 import { reasonText } from './reason.js';
 import { readBillToCancel, writeCancel } from './x05CancelBill.js';
-import { type CreateBillOptions, confirmedPieces, createBillBody, planPayments, priceNewBill, writeNewBill, writePayments } from './x01CreateBill.js';
+import { type CreateBillOptions, assertMayUseBody, confirmedPieces, createBillBody, planPayments, priceNewBill, writeNewBill, writePayments } from './x01CreateBill.js';
 import { PRICING_VERSIONS, assertEachPieceOnce, checkBillDate, readEstimate } from './x07QuoteBill.js';
 
 // ------------------------------------------------------------------ the body
@@ -123,6 +126,7 @@ export async function reissueBill(
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'reissue_bill', route: ROUTE_NAME, pathIds: { id: oldBillId }, body: input });
     assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayUseBody(grants, input); // as X1: payment rows need payment_receive (M8), a cash reason needs cash_over_limit (Z1)
     if (!c.first) return { value: c.result as ReissueBillResult, replayed: true };
 
     // 2. the customer from the old bill, locked, the bill read again FOR UPDATE (the same customer, or JV_BUSY); everything that needs no more reading is decided now, after the lock
@@ -134,6 +138,8 @@ export async function reissueBill(
       throw new JvError('JV_NOT_ALLOWED', 'Only an estimate can be re-issued. Cancel this bill and add a new opening balance instead.', { details: { reason: 'not_an_estimate', bill_id: oldBillId, doc_type: old.doc_type } });
     }
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before re-issuing a bill.', { details: { customer_id: customer.id } });
+    // M13: the new bill keeps the old bill's date, so without back_date only a bill dated today can be re-issued; then Y8 for the date sent
+    if (String(old.bill_date) !== day.date && !mayUseField(grants, 'back_dates')) throw new wire.InvalidInputError('bill_date', 'must be today: this bill is dated another day, and re-issuing it needs the right to use a date other than today');
     const billDate = checkBillDate(input.bill_date, day.date, grants); // Y8
     assertEachPieceOnce(input.items); // X1 (a)
     const confirmed = confirmedPieces(input);
