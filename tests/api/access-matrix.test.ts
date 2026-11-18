@@ -114,6 +114,16 @@ describe('P4 completeness of the matrix', () => {
     }
   });
 
+  it('P4: the ticks of each row are exactly the ticks whose COVERS list it: an open or superAdmin row has none, and no tick opens a row it does not cover (a role stored without its needs gets no more)', () => {
+    for (const action of ACTIONS) {
+      const a = MATRIX[action].access;
+      const ticks = 'anyOf' in a ? [...a.anyOf].sort() : [];
+      const covering = TICK_KEYS.filter((t) => COVERS[t].includes(action)).sort();
+      expect(ticks, action).toEqual(covering);
+      if (OPEN_ROWS.includes(action)) expect('open' in a, `${action} is open`).toBe(true);
+    }
+  });
+
   it('the open rows are what a person with no tick may call', () => {
     expect(allowedActions(NO_GRANTS)).toEqual(sorted(OPEN_ROWS));
     expect(allowedActions(ticksOnly(['not_a_tick', 7, null, '__proto__']))).toEqual(sorted(OPEN_ROWS));
