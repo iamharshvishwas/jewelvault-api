@@ -17,8 +17,8 @@ export const SYNC_ROWS = Object.entries(MATRIX)
   .filter(([, r]) => r.kind === 'read' && r.method === 'GET' && r.path.startsWith('/v1/sync/'))
   .map(([action, r]) => ({ action, name: r.path.slice('/v1/sync/'.length), table: (r as { reads: readonly string[] }).reads[0], access: r.access }));
 
-/** Whether a caller of the fixture reads a sync resource: a built-in role whose tick set opens the resource's row (rowAllows); any other caller reads none. */
-export const readsRow = (r: { access: Access }, caller: string): boolean => (ROLES as readonly string[]).includes(caller) && rowAllows(r, caller as Role);
+/** Whether a caller of the fixture reads a sync resource: the Super Admin reads every one (R3, R4); a built-in role whose tick set opens the resource's row (rowAllows); any other caller reads none. */
+export const readsRow = (r: { access: Access }, caller: string): boolean => caller === 'super' || ((ROLES as readonly string[]).includes(caller) && rowAllows(r, caller as Role));
 
 export type Fixture = Awaited<ReturnType<typeof ledgerWorld>> & { skuPrivateFor: string };
 

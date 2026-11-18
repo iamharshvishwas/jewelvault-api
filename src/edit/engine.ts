@@ -30,7 +30,7 @@ import { newId } from '../db/ids.js';
 import type { Param } from '../db/stmt.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
 import { JvError, unavailableError } from '../errors.js';
-import { type EditAction, type Role, columnsOfTable, readColumnsFor, writeColumnsFor, writeFieldVerdict } from '../permissions/matrix.js';
+import { type EditAction, columnsOfTable, readColumnsFor, writeColumnsFor, writeFieldVerdict } from '../permissions/matrix.js';
 import { type Auth, assertMayCall } from '../permissions/route.js';
 import { toWire } from '../sync/page.js';
 import { resourceByName } from '../sync/resources.js';
@@ -58,7 +58,8 @@ export interface EditTable {
 /** What a rule of a table is given: the open transaction, the caller, the row as it is, and the fields that really change. */
 export interface RuleInput {
   readonly tx: Tx;
-  readonly role: Role;
+  /** the session's role key (TEMPORARY until Task 8 hands the rules Grants: a string is resolved by the matrix's shim) */
+  readonly role: string;
   /** The reading of the API clock that stamps this write, taken on first use: a rule that needs today's business date (S5) asks here, so that the rule and the stamps see one instant. */
   readonly now: () => Reading;
   readonly id: string;
@@ -69,7 +70,8 @@ export interface RuleInput {
 export type UpdateRule = (input: RuleInput) => Promise<void>;
 /** What an insert rule is told besides the values: who is asking, and the reading of the API clock that will stamp the row (taken on first use). */
 export interface InsertContext {
-  readonly role: Role;
+  /** the session's role key (TEMPORARY until Task 8 hands the rules Grants) */
+  readonly role: string;
   readonly now: () => Reading;
 }
 /** A check before an insert: the values after validation. */

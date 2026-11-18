@@ -200,7 +200,8 @@ describe('T-D18 the four derived reads are readable by the owner and a biller an
         if (caller === 'owner' || caller === 'biller' || caller === 'staff' || caller === 'anon') continue;
         const res = await get(caller, url);
         await world.restore(caller);
-        expect(res.statusCode, `${caller} reads ${name}`).toBe(caller === 'must_change' ? 403 : 401);
+        // the Super Admin (role owner with the flag, access plan R3) reads them like the owner
+        expect(res.statusCode, `${caller} reads ${name}`).toBe(caller === 'super' ? 200 : caller === 'must_change' ? 403 : 401);
       }
     }
   });

@@ -1,7 +1,7 @@
 // C3, C4: the read side of the screens. GET /v1/sync/<resource>?updated_after=&after_key=&limit= (hydrate, and one resource of a poll) and POST /v1/sync/poll (all the resources of a screen in one call).
 //
 //   GET  → 200 { rows, next, server_time }          next: { updated_at, key } when the page was full, else null (the load ends)
-//   POST → 200 { results: { <resource>: { rows, next } }, server_time, role }
+//   POST → 200 { results: { <resource>: { rows, next } }, server_time, role, access }      access: the fingerprint of R5, the same text `me` carries
 //   POST body: { limit?: 1 to 1,000, cursors: { <resource>: null | { updated_at, key? } } }
 //
 // What each answer promises, in the order the spec gives it:
@@ -125,7 +125,7 @@ export function registerSyncRoutes(app: FastifyInstance, options: SyncRoutesOpti
         },
         { snapshot: true },
       );
-      return { results, server_time: serverTime, role: auth.user.role };
+      return { results, server_time: serverTime, role: auth.user.role, access: auth.user.access };
     },
   });
 }

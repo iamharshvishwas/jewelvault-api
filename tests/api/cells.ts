@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import type { Connection } from 'mysql2/promise';
 import { buildApp } from '../../src/app';
@@ -18,8 +18,11 @@ import { type Spy, spyOn } from './tx-support';
 // caller, one expected answer. A cell returns null when the answer is the one the matrix gives, and a sentence when it is not, so the same function that the generated test asserts on can be
 // shown to FAIL on a wrong cell (the negative control of tests/api/cells.test.ts).
 
-/** The callers of A4 (the spec says five and lists six; the ones that end in a 401 are told apart because each ends differently) plus a user who must still change the password (U11). */
-export const CALLERS = ['anon', 'ended', 'expired', 'idle', 'inactive', 'must_change', 'staff', 'biller', 'owner'] as const;
+/**
+ * The callers of A4 (the spec says five and lists six; the ones that end in a 401 are told apart because each ends differently) plus a user who must still change the password (U11) and the
+ * Super Admin of the access plan (R3: role `owner` with the flag `is_super_admin`).
+ */
+export const CALLERS = ['anon', 'ended', 'expired', 'idle', 'inactive', 'must_change', 'staff', 'biller', 'owner', 'super'] as const;
 export type CallerName = (typeof CALLERS)[number];
 
 /** The answer the matrix gives a caller for a row. */
@@ -48,6 +51,9 @@ export function expectedFor(row: Pick<MatrixRow, 'access' | 'mustChange'>, calle
     case 'must_change':
       // U11 and A6: the gate comes before the matrix row, so the answer does not depend on whether the staff role may call the row
       return row.mustChange ? (rowAllows(row, 'staff') ? { kind: 'allowed' } : { kind: 'forbidden' }) : { kind: 'password_change' };
+    case 'super':
+      // R3, R4: the Owner key gives every tick and the flag passes the superAdmin rows, so every row lets the Super Admin in
+      return { kind: 'allowed' };
     default:
       return rowAllows(row, caller) ? { kind: 'allowed' } : { kind: 'forbidden' };
   }
@@ -69,7 +75,10 @@ interface Fixture {
 }
 
 export interface UserSpec {
-  role: Role;
+  /** a role key: one of the three seeded ones, or a key World.addRole made */
+  role: string;
+  /** users.is_super_admin (R3) */
+  superAdmin?: boolean;
   active?: boolean;
   mustChange?: boolean;
   /** the login name (default: a made-up address) */
@@ -91,6 +100,8 @@ export interface World {
   logs: ReturnType<typeof logSink>;
   /** the cookie header of a caller, or undefined */
   cookieOf(caller: CallerName): string | undefined;
+  /** A new row of `roles` (R1): the key is made up when not given, the name too; `ticks` is written as given (unknown keys included), `active` defaults to on. */
+  addRole(spec: { key?: string; name?: string; description?: string; ticks: readonly string[]; active?: boolean }): Promise<{ key: string }>;
   /** A new user with a live session (the spec says how it differs), for a test that changes the user or the session. Returns the user id, the e-mail, the session id and the cookie header. */
   addUser(spec: UserSpec): Promise<{ userId: string; email: string; sessionId: string; cookie: string }>;
   /** Puts the fixture caller's session row back as the fixture made it (a call may have ended or moved it): the cells of T-D02 are independent of each other. */
@@ -132,7 +143,7 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
   async function insertUser(label: string, spec: UserSpec) {
     const userId = randomUUID();
     const email = spec.email ?? `${label}-${randomUUID().slice(0, 8)}@example.test`;
-    await sql.query('INSERT INTO users (id, email, full_name, role, active, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+    await sql.query('INSERT INTO users (id, email, full_name, role, active, password_hash, must_change_password, is_super_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [
       userId,
       email,
       `Fixture ${label}`,
@@ -140,6 +151,7 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
       spec.active === false ? 0 : 1,
       spec.passwordHash ?? secret('not-a-hash'),
       spec.mustChange ? 1 : 0,
+      spec.superAdmin ? 1 : 0,
     ]);
     const ticket = newTicket();
     const sessionId = randomUUID();
@@ -171,6 +183,7 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
   await add('expired', { role: 'owner', session: { createdAgo: 15n * 24n * HOUR, expiresIn: -1_000_000n } });
   await add('idle', { role: 'owner', session: { lastSeenAgo: BigInt(limits.sessionIdleMs) * 1000n + 1_000_000n } });
   await add('must_change', { role: 'staff', mustChange: true });
+  await add('super', { role: 'owner', superAdmin: true });
 
   const realPool = createDbPool(scratch.db);
   const spy = spyOn(realPool);
@@ -190,6 +203,17 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
     handled,
     logs,
     cookieOf: (caller) => (caller === 'anon' ? undefined : `${SESSION_COOKIE}=${fixtures[caller].ticket}`),
+    async addRole(spec) {
+      const key = spec.key ?? `x${Array.from(randomBytes(8), (b) => String.fromCharCode(97 + (b % 26))).join('')}`;
+      await sql.query('INSERT INTO roles (role_key, name, description, active, ticks) VALUES (?, ?, ?, ?, ?)', [
+        key,
+        spec.name ?? `Role ${key}`,
+        spec.description ?? '',
+        spec.active === false ? 0 : 1,
+        JSON.stringify(spec.ticks),
+      ]);
+      return { key };
+    },
     async addUser(spec) {
       const u = await insertUser('extra', spec);
       return { userId: u.userId, email: u.email, sessionId: u.sessionId, cookie: `${SESSION_COOKIE}=${u.ticket}` };

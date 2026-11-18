@@ -426,11 +426,11 @@ describe('T-F03 the derived reads are paged by the base row: bill-summary by bil
 // ------------------------------------------------------------------ the poll
 
 describe('T-F03 the poll (C4): one cursor per resource, one answer with server_time and the caller\'s current role, 403 as a whole when one resource is not the role\'s', () => {
-  it('answers {results, server_time, role} with one {rows, next} for each resource named, and nothing for the others', async () => {
+  it('answers {results, server_time, role, access} with one {rows, next} for each resource named, and nothing for the others', async () => {
     const res = await poll(world, 'owner', { cursors: { customers: null, 'sku-private': null, 'bill-items': null } });
     expect(res.statusCode).toBe(200);
     const body = JSON.parse(res.body) as { results: Record<string, PageBody>; server_time: string; role: string };
-    expect(Object.keys(body).sort()).toEqual(['results', 'role', 'server_time']);
+    expect(Object.keys(body).sort()).toEqual(['access', 'results', 'role', 'server_time']);
     expect(body.role).toBe('owner');
     expect(body.server_time).toMatch(/^2026-10-17T10:00:00\.\d{6}Z$/);
     expect(Object.keys(body.results).sort()).toEqual(['bill-items', 'customers', 'sku-private']);

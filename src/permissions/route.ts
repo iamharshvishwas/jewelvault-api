@@ -5,7 +5,8 @@
 //   route(app, { token: 'admin', method, url, verify, handler })       a route of a token door (/admin/v1/*, /internal/jobs/*), with its own token check, `verify`
 //
 // For a session route the order of work is fixed (A6, NODE-DESIGN 3.1), and each step ends the call when it refuses, so that a refused caller learns nothing about the next:
-//   1. the session: the cookie's ticket to a `sessions` row and then the `users` row; no ticket, an ended or expired session, a user who is not active: 401 (D2, session.ts)
+//   1. the session: the cookie's ticket to a `sessions` row and then the `users` row with its `roles` row; no ticket, an ended or expired session, a user who is not active, a role that is
+//      missing or switched off: 401 (D2, session.ts)
 //      then the user's throttle (A13): over its limit, 429 (src/auth/throttle.ts)
 //   2. the must-change-password gate: a user who must still change the password may call only the rows marked `mustChange` (U11): 403 JV_PASSWORD_CHANGE_REQUIRED
 //   3. the matrix row: a caller whose grants do not pass the row's access: 403 JV_FORBIDDEN
@@ -23,7 +24,6 @@ import type { ZodType, output } from 'zod';
 import { throttleSessionCall } from '../auth/throttle.js';
 import { JvError, errorBody } from '../errors.js';
 import * as wire from '../wire/zod.js';
-import { grantsOfBuiltin } from './grants.js';
 import {
   type Access,
   type Action,
@@ -164,8 +164,8 @@ function sessionHook(app: FastifyInstance, info: RouteInfo) {
     const auth = await lookupSession(app, request); // 1. D2
     throttleSessionCall(app, info.action ?? '', auth.user.id); // A13: change-password 5 per 15 minutes, every other call 300 a minute, for each user; 429 JV_RATE_LIMITED with Retry-After
     if (auth.user.mustChangePassword && !info.mustChange) throw new JvError('JV_PASSWORD_CHANGE_REQUIRED', 'Change your password to continue.'); // 2. U11
-    // 3. A4, R8. TEMPORARY until Task 5: the grants are those of the built-in role key the session gives; Task 5 hands the gate the grants the session reads
-    if (info.access === null || !accessAllows(info.access, grantsOfBuiltin(auth.user.role))) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
+    // 3. A4, R8: the row's access against the grants the session read (the role's ticks and the Super Admin flag)
+    if (info.access === null || !accessAllows(info.access, auth.user.grants)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
     if (countsAsActivity(info)) await touchSession(app, request, auth.session.id); // U4: last_seen_at, its own autocommit statement, before the handler and so before any claim of a money call
     request.auth = auth;
   };

@@ -3,7 +3,8 @@
 //   POST /v1/auth/login            the public route (no session is looked up): e-mail and password; sets the cookie. A wrong e-mail and a wrong password give the same JV_BAD_LOGIN, after one
 //                                  password verification each (an unknown e-mail verifies against the dummy hash), so the answer and the time do not say which. A correct password for a user who is
 //                                  not active is 403 JV_FORBIDDEN with details.reason "inactive". A new ticket every time; the session the browser carried is ended.
-//   GET  /v1/auth/me               who the caller is, as the database says now (the role is read on every call, A2), the limits of the session and pricing_sha256 (API18 fills it).
+//   GET  /v1/auth/me               who the caller is, as the database says now (the role and its ticks are read on every call, A2, G4), what they may do (R6: role_name, permissions,
+//                                  is_super_admin, access, reads), the limits of the session and pricing_sha256 (API18 fills it).
 //   POST /v1/auth/logout           ends the session, clears the cookie.
 //   POST /v1/auth/activity         the screen's "a click or key press" (at most once a minute). The wrapper moves last_seen_at for it, as for every call except polling and `me` (U4).
 //   POST /v1/auth/change-password  verifies the current password, applies the rules of U9, stores the new hash, ends the user's OTHER sessions, clears must_change_password (U11).
@@ -26,8 +27,10 @@ import type { DbPool } from '../db/pool.js';
 import { type Actor, txContext, txContextFor, withRead, withTx } from '../db/tx.js';
 import { JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
+import { sortedTicks } from '../permissions/grants.js';
 import { type Auth, route } from '../permissions/route.js';
 import { readTicket } from '../permissions/session.js';
+import { readableResourceNames } from '../sync/resources.js';
 import { timestampToWire } from '../wire/format.js';
 import * as wire from '../wire/zod.js';
 import { PASSWORD_MAX_LENGTH, checkNewPassword, passwords } from './password.js';
@@ -58,6 +61,19 @@ const userBody = (u: { id: string; email: string; fullName: string; role: string
   full_name: u.fullName,
   role: u.role,
   must_change_password: u.mustChangePassword,
+});
+
+/**
+ * R6: the user of `me`: the user of the login answer, plus what the person may do as the session read it on this call: the role's name, the ticks in catalogue order, the Super Admin flag, the
+ * access fingerprint (R5, the website compares the text) and the sync resources the person may read, named as the poll names them.
+ */
+const meBody = (u: Auth['user']) => ({
+  ...userBody(u),
+  role_name: u.roleName,
+  permissions: sortedTicks(u.grants),
+  is_super_admin: u.grants.isSuperAdmin,
+  access: u.access,
+  reads: readableResourceNames(u.grants),
 });
 
 /** What the screen needs to know about the life of the session: the idle limit, and when the absolute one ends. */
@@ -151,7 +167,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
 
   route(app, {
     action: 'session:me',
-    handler: async ({ auth }) => ({ user: userBody(auth.user), pricing_sha256: PRICING_SHA256, ...lifeBody(auth.session.expiresAt) }),
+    handler: async ({ auth }) => ({ user: meBody(auth.user), pricing_sha256: PRICING_SHA256, ...lifeBody(auth.session.expiresAt) }),
   });
 
   route(app, {

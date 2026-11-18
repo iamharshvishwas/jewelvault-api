@@ -56,6 +56,8 @@ function expectedFor(action: Action, caller: CallerName): Expected {
       return { allowed: false, status: 401, code: 'JV_SESSION_EXPIRED' };
     case 'must_change':
       return { allowed: false, status: 403, code: 'JV_PASSWORD_CHANGE_REQUIRED' };
+    case 'super':
+      return { allowed: true }; // the access plan, R3: the Super Admin has the role owner and holds every tick
     default:
       return X[action].roles.includes(caller) ? { allowed: true } : { allowed: false, status: 403, code: 'JV_FORBIDDEN' };
   }
@@ -443,7 +445,8 @@ describe('T-D03 clause (API31): the generated function matrix scans every result
 
   it('the key original_net_weight and the weight itself appear in no result of staff, of a biller, or of any caller who has no session, and in no result of the owner but the owner\'s own reads and answers', () => {
     const OWNERS_OWN = new Set(['read:sku_private', 'read:poll', 'read:poll (own resources)', 'read:audit_log', 'fn:create_design', 'edit:sku_private.update']);
-    const leaks = results.filter(holdsWeight).filter((r) => !(r.caller === 'owner' && OWNERS_OWN.has(r.what)));
+    // the Super Admin has the role owner (R3): her own reads and answers are the owner's
+    const leaks = results.filter(holdsWeight).filter((r) => !((r.caller === 'owner' || r.caller === 'super') && OWNERS_OWN.has(r.what)));
     expect(leaks.map((r) => `${r.caller} on ${r.what} (${r.status})`)).toEqual([]);
     // and every caller but the owner was really answered (a 401 or 403 is an answer that was scanned, not a missing one)
     for (const caller of CALLERS.filter((c) => c !== 'owner')) expect(results.filter((r) => r.caller === caller).length, caller).toBeGreaterThan(ACTIONS.length);

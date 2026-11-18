@@ -14,6 +14,7 @@ import { limits } from '../../src/limits';
 import { MATRIX } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, microsOfDbTimestamp, newTicket } from '../../src/permissions/session';
+import { TICK_KEYS } from '../../src/permissions/ticks';
 import { registerSyncRoutes } from '../../src/sync/routes';
 import { T0, type World, concreteUrl, makeWorld, registerStubs } from './cells';
 import { csrfHeaders, secret, testConfig } from './support';
@@ -517,8 +518,21 @@ describe('T-D25 me, logout and activity', () => {
     const u = await signIn('owner');
     const res = await inject('GET', '/v1/auth/me', { cookie: u.cookie });
     expect(res.statusCode).toBe(200);
+    // the access plan, R6: me also says what the person may do (tests/api/access-session.test.ts checks each field for every role); the owner holds every tick and reads every sync resource
+    const everySyncResource = Object.values(MATRIX).filter((r) => r.kind === 'read' && r.method === 'GET' && r.path.startsWith('/v1/sync/')).map((r) => r.path.slice('/v1/sync/'.length));
     expect(res.json()).toEqual({
-      user: { id: u.userId, email: u.email, full_name: expect.any(String), role: 'owner', must_change_password: false },
+      user: {
+        id: u.userId,
+        email: u.email,
+        full_name: expect.any(String),
+        role: 'owner',
+        must_change_password: false,
+        role_name: 'Owner',
+        permissions: [...TICK_KEYS],
+        is_super_admin: false,
+        access: createHash('sha256').update(JSON.stringify(['owner', TICK_KEYS, false])).digest('hex').slice(0, 16),
+        reads: everySyncResource,
+      },
       pricing_sha256: createHash('sha256').update(readFileSync(new URL('../../src/domain/pricing.ts', import.meta.url))).digest('hex'),
       idle_timeout_s: limits.sessionIdleMs / 1000,
       absolute_expires_at: u.res.json().absolute_expires_at,
