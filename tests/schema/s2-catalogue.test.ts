@@ -20,7 +20,9 @@ afterAll(async () => {
 const EXPECTED_TABLES = [
   'audit_log', 'backup_runs', 'bill_items', 'bills', 'categories', 'check_runs', 'customers', 'daily_rates', 'design_photos', 'designs',
   'orders', // FB-E1
-  'receipt_allocations', 'receipts', 'schema_migrations', 'sessions', 'settings', 'sku_private', 'skus', 'subcategories',
+  'receipt_allocations', 'receipts',
+  'roles', // the access plan, R1
+  'schema_migrations', 'sessions', 'settings', 'sku_private', 'skus', 'subcategories',
   'sys_counters', 'sys_error_log', 'sys_idempotency', 'sys_import_batches', 'sys_job_runs', 'sys_login_attempts', 'sys_photo_copies', 'users',
 ].sort();
 
@@ -161,6 +163,7 @@ describe('shape of the schema', () => {
       'bills(id,customer_id)', 'bill_items(bill_id,line_no)', 'bill_items(bill_id,sku_id)', 'receipts(id,customer_id)',
       'sys_job_runs(job,run_date)', 'sys_import_batches(name)', 'sys_error_log(code,minute_at,seq)',
       'orders(order_no)', // FB-E1: an order's number never changes
+      'roles(name)', // the access plan, R1: a rename by the Super Admin is rare and one row at a time, as for categories(name)
     ].sort();
     expect(found).toEqual(allowed);
     const mutable = ['status', 'archived_at', 'released_at', 'voided_at', 'voided_on', 'active', 'role', 'is_live', 'cancelled_at', 'cancelled_on', 'updated_at', 'sold_bill_id'];

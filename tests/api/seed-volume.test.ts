@@ -30,7 +30,7 @@ describe('T-F03 seed-volume: the C2 volumes (2,500 pieces over 600 designs, 2,00
 
   beforeAll(async () => {
     world = await makeWorld({ label: 'seedv', routes: true });
-    await migrate(world.sql, { seeds: true, optional: true }); // a lane's database: migrations, seeds and the 30 audit triggers
+    await migrate(world.sql, { seeds: true, optional: true }); // a lane's database: migrations, seeds and the 32 audit triggers
     const t0 = Date.now();
     seeded = await seedVolume(world.sql);
     ms = Date.now() - t0;

@@ -14,6 +14,7 @@ export const REQUIRED_TABLES: readonly string[] = [
   'orders',
   'receipt_allocations',
   'receipts',
+  'roles',
   'sessions',
   'settings',
   'sku_private',

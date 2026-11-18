@@ -1,4 +1,4 @@
-// L1 mechanism (b): what the Node audit writer (src/db/audit.ts) needs to know about the 14 audited tables (the 13 of L1 and the orders of FB-E1), which is what the generated triggers of db/optional/0910 read from the catalogue: the
+// L1 mechanism (b): what the Node audit writer (src/db/audit.ts) needs to know about the 15 audited tables (the 13 of L1, the orders of FB-E1 and the roles of the access plan), which is what the generated triggers of db/optional/0910 read from the catalogue: the
 // columns in table order (generated columns left out, as the triggers leave them out), their types, which hold JSON, the fraction digits of a DATETIME, the primary key, and the exclude list of
 // db/optional/audit-exclude.json (a column that must never be copied into audit_log, such as users.password_hash). It is static because src/ is compiled alone (tsconfig.build.json, rootDir src) and
 // cannot import scripts/audit-triggers.mjs or the JSON file, and because the writer must not ask the catalogue on every change.
@@ -25,6 +25,7 @@ export const AUDIT_SHAPES: Readonly<Record<string, AuditShape>> = {
       { name: 'updated_at', type: 'datetime', precision: 6 },
       { name: 'created_by', type: 'uuid' },
       { name: 'updated_by', type: 'uuid' },
+      { name: 'is_super_admin', type: 'tinyint' },
     ],
   },
   settings: {
@@ -294,6 +295,21 @@ export const AUDIT_SHAPES: Readonly<Record<string, AuditShape>> = {
       { name: 'status', type: 'varchar' },
       { name: 'photo_ids', type: 'longtext', json: true },
       { name: 'notes', type: 'varchar' },
+      { name: 'created_at', type: 'datetime', precision: 6 },
+      { name: 'updated_at', type: 'datetime', precision: 6 },
+      { name: 'created_by', type: 'uuid' },
+      { name: 'updated_by', type: 'uuid' },
+    ],
+  },
+  roles: {
+    primaryKey: ['role_key'],
+    exclude: [],
+    columns: [
+      { name: 'role_key', type: 'varchar' },
+      { name: 'name', type: 'varchar' },
+      { name: 'description', type: 'varchar' },
+      { name: 'active', type: 'tinyint' },
+      { name: 'ticks', type: 'longtext', json: true },
       { name: 'created_at', type: 'datetime', precision: 6 },
       { name: 'updated_at', type: 'datetime', precision: 6 },
       { name: 'created_by', type: 'uuid' },

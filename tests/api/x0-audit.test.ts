@@ -9,7 +9,7 @@ import { V } from '../schema/support';
 import { type X0World, rowOf, x0World } from './x0-support';
 
 // T-D14 (API15 clause), L1 mechanism (b): the Node writer of src/db/audit.ts produces the same audit rows as the generated triggers (mechanism (a)), for a toy table that has every column type of the
-// audited tables and for the 13 audited tables themselves; none for an update that changes nothing but updated_at or only an excluded column (D23, D16); never a hash. "Never both": a database with
+// audited tables and for the 15 audited tables themselves; none for an update that changes nothing but updated_at or only an excluded column (D23, D16); never a hash. "Never both": a database with
 // the triggers must not be run in node mode (auditMechanismProblem says so). The edit routes in node mode are in tests/api/edit-audit.test.ts.
 
 const ACTOR = { id: '11111111-1111-4111-8111-111111111111', role: 'biller' };
@@ -67,7 +67,7 @@ async function updateRow(tx: Tx, table: string, shape: AuditShape, id: string, s
 }
 
 describe('T-D14 (API15 clause) the shapes in src/db/auditShapes are the catalogue and the exclude list', () => {
-  it('the 14 audited tables (the 13 of L1 and the orders of FB-E1), their columns in order, types, JSON columns, DATETIME precision, primary keys and the exclude list equal the migrated database and db/optional/audit-exclude.json', async () => {
+  it('the 15 audited tables (the 13 of L1, the orders of FB-E1 and the roles of the access plan), their columns in order, types, JSON columns, DATETIME precision, primary keys and the exclude list equal the migrated database and db/optional/audit-exclude.json', async () => {
     const live = await readAuditShape(plain.u, AUDITED_TABLES);
     const exclude = loadExcludeList();
     expect(Object.keys(AUDIT_SHAPES)).toEqual(AUDITED_TABLES);
@@ -162,7 +162,7 @@ describe('T-D14 (API15 clause) mechanism (b) equals mechanism (a) on a toy table
   });
 
   it('a hash never reaches the JSON: the users row has no password_hash, whatever the caller passes', () => {
-    const user = { ...V.user(), password_hash: 'h'.repeat(60), created_at: STAMP, updated_at: STAMP, last_login_at: null, must_change_password: 0, created_by: null, updated_by: null };
+    const user = { ...V.user(), password_hash: 'h'.repeat(60), created_at: STAMP, updated_at: STAMP, last_login_at: null, must_change_password: 0, created_by: null, updated_by: null, is_super_admin: 0 };
     const json = auditRowJson(AUDIT_SHAPES.users, user);
     expect(Object.keys(json)).not.toContain('password_hash');
     expect(JSON.stringify(json)).not.toContain('h'.repeat(10));
@@ -170,7 +170,7 @@ describe('T-D14 (API15 clause) mechanism (b) equals mechanism (a) on a toy table
   });
 });
 
-describe('T-D14 (API15 clause) the 14 audited tables (with the orders of FB-E1): one insert and one update of each give the same rows in both mechanisms', () => {
+describe('T-D14 (API15 clause) the 15 audited tables (with the orders of FB-E1 and the roles of the access plan): one insert and one update of each give the same rows in both mechanisms', () => {
   it('the same sequence on a database with the triggers and on one without, run in node mode', async () => {
     const cat = V.category({ name: 'Rings', prefix: 'RNG' });
     const sub = V.subcategory(cat.id, { name: 'Plain' });
@@ -194,6 +194,7 @@ describe('T-D14 (API15 clause) the 14 audited tables (with the orders of FB-E1):
       ['receipts', receipt, { notes: 'paid' }],
       ['receipt_allocations', V.allocation(receipt.id, bill.id, customer.id, {}), { released_at: '2026-10-05 00:00:00.000000' }],
       ['orders', { id: randomUUID(), order_no: 'ORD-2026-0901', customer_id: customer.id, description: 'Audit order', delivery_date: '2026-10-20', photo_ids: [] }, { status: 'ready', delivery_date: null }], // FB-E1
+      ['roles', { role_key: 'audit-role', name: 'Audit role', description: 'x', ticks: ['order_view'] }, { ticks: ['order_view', 'order_edit'], active: 0 }], // the access plan, R1
     ];
     expect(rows.map((r) => r[0])).toEqual(AUDITED_TABLES);
     const requestId = randomUUID();

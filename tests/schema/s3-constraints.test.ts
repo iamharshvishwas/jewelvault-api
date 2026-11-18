@@ -36,7 +36,7 @@ const run = (cases: Case[]) =>
 describe('users and sessions (D1 replaced)', () => {
   run([
     ['a valid user is accepted and is inactive by default', 'users', () => V.user(), null],
-    ['an unknown role is refused', 'users', () => V.user({ role: 'admin' }), CHECK],
+    ['an unknown role is refused (the foreign key fk_users_role of 0012 replaced chk_users_role)', 'users', () => V.user({ role: 'admin' }), ER.NO_REFERENCED_ROW],
     ['an e-mail without @ is refused', 'users', () => V.user({ email: 'nobody' }), CHECK],
     ['an empty full name is refused', 'users', () => V.user({ full_name: '' }), CHECK],
   ]);

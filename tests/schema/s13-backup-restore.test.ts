@@ -34,7 +34,10 @@ async function sourceShop(name: string, opts: { optional?: boolean } = {}) {
   dbs.push(db);
   const w = await cleanWorld(c);
   await insert(c, 'customers', V.customer({ name: 'Siddhi 💍 सिद्धि जैन', mobile: '9000000001', address: 'Jaishri Gold Palace, "Main" Road\nline two \\ backslash' }));
-  const user = V.user({ active: 1 });
+  // R17: the migration seeds owner, biller and staff, so the restore meets them before it loads the export; an edited Biller and a custom role must still come back as exported
+  await c.query('UPDATE roles SET ticks = ?, description = ? WHERE role_key = ?', [JSON.stringify(['customer_view', 'bill_view', 'bill_make']), 'Bills only, no payments.', 'biller']);
+  await insert(c, 'roles', { role_key: 'cashier', name: 'Cashier', description: 'Takes payments.', ticks: ['customer_view', 'bill_view', 'payment_receive'], created_at: '2026-10-01 05:00:00.000000', updated_at: '2026-10-02 05:00:00.000000' });
+  const user = V.user({ active: 1, role: 'cashier' });
   await insert(c, 'users', user);
   await insert(c, 'sessions', V.session(user.id));
   await insert(c, 'sys_login_attempts', { scope: 'email', slot: 5, window_start: '2026-10-15 10:00:00.000000', n: 2 });
@@ -356,6 +359,23 @@ describe('restoreDatabase (B4, T-R02 database half)', () => {
     await t.c.end();
   });
 
+  it('the seed rows of roles do not stop the restore (R17): an edited Biller and a custom role come back as exported, and the row count is the manifest\'s', async () => {
+    const { s, t, store, manifest, report } = await roundTrip('s13_k4');
+    expect(report.problems).toEqual([]);
+    const exported = store.files.get('data/roles.ndjson')!.trim().split('\n').map((l) => JSON.parse(l));
+    const restored = (await t.c.query<any[]>('SELECT * FROM roles ORDER BY role_key'))[0];
+    const source = (await s.c.query<any[]>('SELECT * FROM roles ORDER BY role_key'))[0];
+    expect(restored).toEqual(source);
+    expect(restored.map((r) => r.role_key)).toEqual(['biller', 'cashier', 'owner', 'staff']);
+    const ticks = restored.find((r) => r.role_key === 'biller').ticks;
+    expect(typeof ticks === 'string' ? JSON.parse(ticks) : ticks).toEqual(['customer_view', 'bill_view', 'bill_make']);
+    expect(restored.find((r) => r.role_key === 'biller').updated_at).toBe(exported.find((r) => r.role_key === 'biller').updated_at);
+    expect(manifest.tables.find((x: { name: string }) => x.name === 'roles')!.rows).toBe(4);
+    expect(report.tables.find((x) => x.name === 'roles')).toEqual({ name: 'roles', rows_expected: 4, rows_restored: 4, hash_ok: true });
+    await s.c.end();
+    await t.c.end();
+  });
+
   it('what was left out of the export is empty in the copy (sessions, login counters, old idempotency rows) and the migration record is the repository\'s', async () => {
     const { s, t } = await roundTrip('s13_k2');
     for (const table of ['sessions', 'sys_login_attempts']) expect(Number((((await t.c.query<any[]>(`SELECT COUNT(*) AS n FROM ${table}`))[0]) as any[])[0].n), table).toBe(0);
@@ -527,7 +547,7 @@ describe('restoreDatabase (B4, T-R02 database half)', () => {
     const t = await emptyDb('s13_s_r');
     const report = await restoreDatabase(t.c, store.source, photos);
     expect(report.ok).toBe(true);
-    expect(report.triggers).toBe(30); // the 2 append-only triggers of audit_log and the 28 generated audit triggers (L1 (a): 13 tables and the orders of FB-E1)
+    expect(report.triggers).toBe(32); // the 2 append-only triggers of audit_log and the 30 generated audit triggers (L1 (a): 13 tables, the orders of FB-E1 and the roles of the access plan)
     expect((await errorOf(() => t.c.query("UPDATE audit_log SET row_id = 'changed'")))).not.toBeNull(); // the trigger refuses
     expect((await t.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0]).toEqual((await s.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0]);
     const sourceAudits = Number((await s.c.query<any[]>('SELECT COUNT(*) AS n FROM audit_log'))[0][0].n);
