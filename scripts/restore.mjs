@@ -23,6 +23,12 @@ import { listMigrations, migrate } from './migrate.mjs';
 const BATCH_BYTES = 4 * 1024 * 1024;
 /** Tables whose rows a migration seeds itself (R17: roles, 0012), so the migrations of step 1 have already put rows in them: the export's rows overwrite those (every non-key column), the others go in. */
 export const UPSERT_TABLES = new Set(['roles']);
+/**
+ * ON DUPLICATE KEY UPDATE fires on ANY unique key, not only the primary key: an exported role that now carries a seed's old name (Staff renamed to Stock, then another role named Staff) would match
+ * the seeded row by name and overwrite it instead of going in, silently. So before an upsert table is loaded its seeded rows give up their unique values for a parking value made from their own
+ * key (an UPDATE: the restore's user may never DELETE); every seeded key is in the export (nothing is ever deleted, S7) and gets its real values back from it, and step 6 compares every table.
+ */
+const PARK_BEFORE_UPSERT = { roles: "UPDATE roles SET name = CONCAT('~restore~', role_key)" };
 
 async function sha256OfLines(source, file) {
   const hash = createHash('sha256');
@@ -96,6 +102,7 @@ export async function restoreDatabase(conn, source, photos, opts = {}) {
     if (UPSERT_TABLES.has(name)) {
       const [pk] = await conn.query("SELECT COLUMN_NAME AS c FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'", [name]);
       const keys = new Set(pk.map((r) => r.c));
+      if (PARK_BEFORE_UPSERT[name]) await conn.query(PARK_BEFORE_UPSERT[name]);
       upsertSql = ` ON DUPLICATE KEY UPDATE ${cols.filter((c) => !keys.has(c.name)).map((c) => `${q(c.name)} = VALUES(${q(c.name)})`).join(', ')}`;
     }
     let batch = [];

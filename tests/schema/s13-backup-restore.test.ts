@@ -330,8 +330,9 @@ describe('directoryPhotos: the backup folder on the Hostinger plan (Harsh, 15 Oc
 });
 
 describe('restoreDatabase (B4, T-R02 database half)', () => {
-  async function roundTrip(name: string, opts: { optional?: boolean } = {}) {
+  async function roundTrip(name: string, opts: { optional?: boolean; prepare?: (c: Connection) => Promise<void> } = {}) {
     const s = await sourceShop(name, opts);
+    if (opts.prepare) await opts.prepare(s.c);
     const photos = memoryPhotos();
     await copyPhotosOnce(s.c, photos);
     const store = memoryStore();
@@ -372,6 +373,29 @@ describe('restoreDatabase (B4, T-R02 database half)', () => {
     expect(restored.find((r) => r.role_key === 'biller').updated_at).toBe(exported.find((r) => r.role_key === 'biller').updated_at);
     expect(manifest.tables.find((x: { name: string }) => x.name === 'roles')!.rows).toBe(4);
     expect(report.tables.find((x) => x.name === 'roles')).toEqual({ name: 'roles', rows_expected: 4, rows_restored: 4, hash_ok: true });
+    await s.c.end();
+    await t.c.end();
+  });
+
+  it('a role whose name was a seed\'s name before a rename is not lost (R17): Staff renamed to Stock, then a role keyed before staff named Staff', async () => {
+    const { s, t, report } = await roundTrip('s13_k5', {
+      prepare: async (c) => {
+        await c.query('UPDATE roles SET name = ? WHERE role_key = ?', ['Stock', 'staff']);
+        await insert(c, 'roles', { role_key: 'assistant', name: 'Staff', ticks: ['order_view'] });
+        await insert(c, 'users', V.user({ active: 1, role: 'assistant' }));
+      },
+    });
+    const restored = (await t.c.query<any[]>('SELECT role_key, name FROM roles ORDER BY role_key'))[0];
+    expect(restored).toEqual([
+      { role_key: 'assistant', name: 'Staff' },
+      { role_key: 'biller', name: 'Biller' },
+      { role_key: 'cashier', name: 'Cashier' },
+      { role_key: 'owner', name: 'Owner' },
+      { role_key: 'staff', name: 'Stock' },
+    ]);
+    expect((await t.c.query<any[]>('SELECT * FROM roles ORDER BY role_key'))[0]).toEqual((await s.c.query<any[]>('SELECT * FROM roles ORDER BY role_key'))[0]);
+    expect(report.problems).toEqual([]);
+    expect(report.ok).toBe(true);
     await s.c.end();
     await t.c.end();
   });
