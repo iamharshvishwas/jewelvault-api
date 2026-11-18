@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Action, MATRIX, READ_COLUMNS, type Role } from '../src/permissions/matrix';
+import { type Action, MATRIX, READ_COLUMNS, ROLES, type Role, mayCall } from '../src/permissions/matrix';
 import { CALLERS, type CallerName } from './api/cells';
 import { type EditWorld, editWorld } from './api/edit-support';
-import { SYNC_ROWS } from './api/sync-support';
+import { SYNC_ROWS, readsRow } from './api/sync-support';
 import { designPayload } from './api/stock-support';
 import { billBody, item, piece, setEstimate, addDesigns, addRate, type Designs } from './api/x01-support';
 import { addBill, addCustomer, addMoney, rows } from './api/x02-support';
@@ -196,7 +196,7 @@ describe('T-D09 the function matrix: X1 to X12 (and X13 of FB-E1) for the caller
   it('the matrix has exactly the twelve service functions of the spec and X13 create_order of FB-E1, with the roles they give: staff only X8 and X9, a biller X1, X2, X3, X6, X7 and X13 but not X4, X5, X10, X11 and X12, the owner all', () => {
     const fn = Object.entries(MATRIX).filter(([, r]) => r.kind === 'fn');
     expect(fn.map(([a]) => a).sort()).toEqual([...ACTIONS].sort());
-    for (const [action, row] of fn) expect([...row.roles].sort(), `${action} (${X[action].n})`).toEqual([...X[action].roles].sort());
+    for (const [action] of fn) expect(ROLES.filter((role) => mayCall(role, action as Action)).sort(), `${action} (${X[action].n})`).toEqual([...X[action].roles].sort());
     // the spec's sentence, as the roles of the typed table
     const may = (role: Role) => ACTIONS.filter((a) => X[a].roles.includes(role)).map((a) => X[a].n);
     expect(may('staff')).toEqual(['X8', 'X9']);
@@ -413,7 +413,7 @@ describe('T-D03 clause (API31): the generated function matrix scans every result
       for (const caller of CALLERS) {
         if (action === 'read:poll') {
           // the combined poll names every resource the caller may read, and (for the roles that may not read it) the one that is not theirs, which refuses the whole call
-          const mine = resources.filter((r) => r.roles.includes(caller));
+          const mine = resources.filter((r) => readsRow(r, caller));
           const names = (mine.length > 0 ? mine : resources).map((r) => r.name);
           const cursors = Object.fromEntries([...new Set([...names, 'sku-private'])].map((n) => [n, null]));
           keep(caller, action, await w.world.call(caller, 'POST', row.path, { payload: { cursors } }));
@@ -438,7 +438,7 @@ describe('T-D03 clause (API31): the generated function matrix scans every result
     expect(where).toContain('owner|read:sku_private');
     expect(where).toContain('owner|fn:create_design');
     expect(where).toContain('owner|edit:sku_private.update');
-    expect(READ_COLUMNS.sku_private.owner).toContain('original_net_weight');
+    expect(READ_COLUMNS.sku_private).toContain('original_net_weight');
   });
 
   it('the key original_net_weight and the weight itself appear in no result of staff, of a biller, or of any caller who has no session, and in no result of the owner but the owner\'s own reads and answers', () => {

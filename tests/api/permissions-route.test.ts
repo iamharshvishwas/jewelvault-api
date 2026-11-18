@@ -55,7 +55,7 @@ describe('T-D01 an endpoint is registered through route(), with an action of the
     route(app, { token: 'admin', method: 'POST', url: '/admin/v1/users', verify: () => undefined, handler });
     route(app, { token: 'job', method: 'GET', url: '/internal/jobs/health', verify: () => undefined, handler });
     const byUrl = Object.fromEntries(app.routeTable.map((r) => [r.url, r]));
-    expect(byUrl['/v1/receipts/:id/void']).toMatchObject({ kind: 'matrix', method: 'POST', action: 'fn:void_receipt', roles: ['owner'] });
+    expect(byUrl['/v1/receipts/:id/void']).toMatchObject({ kind: 'matrix', method: 'POST', action: 'fn:void_receipt', access: { anyOf: ['payment_void'] } });
     expect(byUrl['/readyz']).toMatchObject({ kind: 'public', method: 'GET', name: 'ready' });
     expect(byUrl['/admin/v1/users']).toMatchObject({ kind: 'token', method: 'POST', name: 'admin' });
     expect(byUrl['/internal/jobs/health']).toMatchObject({ kind: 'token', method: 'GET', name: 'job' });
@@ -121,8 +121,8 @@ describe('T-D01 an endpoint is registered through route(), with an action of the
   }, 120_000);
 });
 
-describe('T-D01 the route list is printed, with the roles of every route', () => {
-  it('describeRoutes names every registered route with its address, its kind, its action and its roles; unroutedActions names the rows that have no route yet', () => {
+describe('T-D01 the route list is printed, with who may call every route', () => {
+  it('describeRoutes names every registered route with its address, its kind, its action and its access (open, super, or the ticks any one of which opens it); unroutedActions names the rows that have no route yet', () => {
     const app = bare();
     registerStubs(app, []);
     const lines = describeRoutes(app);
@@ -130,7 +130,8 @@ describe('T-D01 the route list is printed, with the roles of every route', () =>
       const line = lines.find((l) => l.includes(` ${row.path} `) && l.startsWith(row.method));
       expect(line, action).toBeDefined();
       expect(line, action).toContain(action);
-      expect(line, action).toContain(`roles=${row.roles.join(',')}`);
+      const a = row.access;
+      expect(line, action).toContain(`access=${'open' in a ? 'open' : 'superAdmin' in a ? 'super' : `any(${a.anyOf.join(',')})`}`);
     }
     for (const [name, p] of Object.entries(PUBLIC_ROUTES)) expect(lines.some((l) => l.startsWith(p.method) && l.includes(` ${p.path} `) && l.includes('public') && l.includes(name)), name).toBe(true);
     expect(unroutedActions(app)).toEqual([]);
@@ -139,7 +140,7 @@ describe('T-D01 the route list is printed, with the roles of every route', () =>
     expect(unroutedPublic(bare()).sort()).toEqual(['login', 'photo-full', 'photo-thumb', 'ready']); // /healthz is the one public route the application has so far
   });
 
-  it('npm run check:routes (the compiled app) prints the routes with their roles and the rows still waiting for their route, and exits 0', () => {
+  it('npm run check:routes (the compiled app) prints the routes with their access and the rows still waiting for their route, and exits 0', () => {
     const dist = buildDist();
     const out = execFileSync(process.execPath, [join(REPO, 'scripts', 'check-routes.mjs'), dist], { cwd: REPO, encoding: 'utf8' });
     expect(out).toMatch(/GET\s+\/healthz\s+public/);
@@ -484,7 +485,7 @@ describe('T-D08 no route inserts or updates bills, bill_items, receipts or recei
 
   it('control: with a route that does PATCH /v1/bills/:id behind the wrapper the same probe finds it', async () => {
     const wrong = createRoute({
-      matrix: { 'edit:bills.update': { kind: 'edit', method: 'PATCH', path: '/v1/bills/:id', roles: ['owner'], mustChange: false, spec: 'a mutant', edit: { table: 'bills', op: 'update', shape: 'changes' } } },
+      matrix: { 'edit:bills.update': { kind: 'edit', method: 'PATCH', path: '/v1/bills/:id', access: { anyOf: ['bill_cancel'] }, mustChange: false, spec: 'a mutant', edit: { table: 'bills', op: 'update', shape: 'changes' } } },
       publicRoutes: {},
       tokenDoors: {},
     });

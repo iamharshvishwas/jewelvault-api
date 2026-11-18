@@ -645,7 +645,7 @@ describe('X0 the order of work inside the transaction, as the statements say it'
 
 describe('T-D09 the matrix row of X12 (POST /v1/customers/:id/opening-balance: the owner only) and its field rules', () => {
   it('the route is registered through route() with the action of the row', () => {
-    expect(w.world.app.routeTable.find((r) => r.action === 'fn:add_opening_balance')).toMatchObject({ method: 'POST', url: '/v1/customers/:id/opening-balance', kind: 'matrix', roles: ['owner'], mustChange: false });
+    expect(w.world.app.routeTable.find((r) => r.action === 'fn:add_opening_balance')).toMatchObject({ method: 'POST', url: '/v1/customers/:id/opening-balance', kind: 'matrix', access: { anyOf: ['opening_balance'] }, mustChange: false });
   });
 
   it('no session is 401, a user who must change the password 403 JV_PASSWORD_CHANGE_REQUIRED, the biller and staff 403 JV_FORBIDDEN, and none of them reads or writes the books', async () => {

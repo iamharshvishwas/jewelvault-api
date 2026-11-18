@@ -203,7 +203,7 @@ describe('T-D02 (API13b clause) the rows of the edits of rates, settings and cus
       for (const action of actions) {
         for (const c of Object.values(WRITE_COLUMNS[action] as Record<string, readonly string[]>).flat()) {
           expect(Object.hasOwn(t.fields, c), `${action}.${c}`).toBe(true);
-          expect(READ_COLUMNS[t.table as 'customers'].owner, `${t.table}.${c} is a column`).toContain(c);
+          expect(READ_COLUMNS[t.table as 'customers'], `${t.table}.${c} is a column`).toContain(c);
           listed.add(c);
         }
       }

@@ -6,9 +6,10 @@ import { type Clock, createClock, formatTimestamp } from '../../src/clock';
 import type { Config } from '../../src/config';
 import { type DbPool, createDbPool } from '../../src/db/pool';
 import { limits } from '../../src/limits';
-import { type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName, type Role } from '../../src/permissions/matrix';
+import { type Access, type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName, type Role } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, hashTicket, newTicket } from '../../src/permissions/session';
+import { BUILTIN_TICKS } from '../../src/permissions/ticks';
 import { type Scratch, scratchDatabase } from '../helpers';
 import { csrfHeaders, logSink, secret, testConfig } from './support';
 import { type Spy, spyOn } from './tx-support';
@@ -24,7 +25,18 @@ export type CallerName = (typeof CALLERS)[number];
 /** The answer the matrix gives a caller for a row. */
 export type Expected = { kind: 'unauthorized'; code: 'JV_UNAUTHENTICATED' | 'JV_SESSION_EXPIRED' } | { kind: 'password_change' } | { kind: 'forbidden' } | { kind: 'allowed' };
 
-export function expectedFor(row: Pick<MatrixRow, 'roles' | 'mustChange'>, caller: CallerName): Expected {
+/**
+ * Whether a built-in role passes a row's access: an open row, or a row one of whose ticks the role's built-in set holds (BUILTIN_TICKS). No built-in caller is the Super Admin, so a superAdmin
+ * row is never theirs. Asked of the tick sets directly, not of the matrix's own accessAllows, so a mistake there shows here.
+ */
+export function rowAllows(row: { access: Access }, caller: Role): boolean {
+  const a = row.access;
+  if ('open' in a) return true;
+  if ('superAdmin' in a) return false;
+  return a.anyOf.some((t) => BUILTIN_TICKS[caller].includes(t));
+}
+
+export function expectedFor(row: Pick<MatrixRow, 'access' | 'mustChange'>, caller: CallerName): Expected {
   switch (caller) {
     case 'anon':
     case 'ended':
@@ -35,9 +47,9 @@ export function expectedFor(row: Pick<MatrixRow, 'roles' | 'mustChange'>, caller
       return { kind: 'unauthorized', code: 'JV_SESSION_EXPIRED' };
     case 'must_change':
       // U11 and A6: the gate comes before the matrix row, so the answer does not depend on whether the staff role may call the row
-      return row.mustChange ? (row.roles.includes('staff') ? { kind: 'allowed' } : { kind: 'forbidden' }) : { kind: 'password_change' };
+      return row.mustChange ? (rowAllows(row, 'staff') ? { kind: 'allowed' } : { kind: 'forbidden' }) : { kind: 'password_change' };
     default:
-      return row.roles.includes(caller) ? { kind: 'allowed' } : { kind: 'forbidden' };
+      return rowAllows(row, caller) ? { kind: 'allowed' } : { kind: 'forbidden' };
   }
 }
 
@@ -277,7 +289,7 @@ export interface CellRoute {
   method: string;
   /** the route's pattern; :names are filled in */
   path: string;
-  roles: readonly Role[];
+  access: Access;
   mustChange: boolean;
   /** a body that is accepted for the route, if it needs one */
   payload?: unknown;

@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { migrate } from '../../scripts/migrate.mjs';
-import { MATRIX } from '../../src/permissions/matrix';
+import { type Access, MATRIX, ROLES, type Role } from '../../src/permissions/matrix';
 import { V, insert, ledgerWorld } from '../schema/support';
-import { type CallerName, type World, type WorldOptions, makeWorld } from './cells';
+import { type CallerName, type World, type WorldOptions, makeWorld, rowAllows } from './cells';
 
 // Shared by the tests of API11 (the read side, C3 and C4): a world with the application's real routes on a scratch database that holds the migrations, the seeds (the walk-in customer, the
 // ten settings, the 15 categories) and one fixed set of business rows (tests/schema/support.ts ledgerWorld: two customers, four bills one of them cancelled, nine receipts one of them voided,
@@ -15,7 +15,10 @@ export const ORIGINAL_WEIGHT = '7.131';
 /** The sync resources as the matrix names them: the address segment, the action, the READ_COLUMNS table. Read from the matrix, not typed again, so a resource added there is walked at once. */
 export const SYNC_ROWS = Object.entries(MATRIX)
   .filter(([, r]) => r.kind === 'read' && r.method === 'GET' && r.path.startsWith('/v1/sync/'))
-  .map(([action, r]) => ({ action, name: r.path.slice('/v1/sync/'.length), table: (r as { reads: readonly string[] }).reads[0], roles: r.roles as readonly string[] }));
+  .map(([action, r]) => ({ action, name: r.path.slice('/v1/sync/'.length), table: (r as { reads: readonly string[] }).reads[0], access: r.access }));
+
+/** Whether a caller of the fixture reads a sync resource: a built-in role whose tick set opens the resource's row (rowAllows); any other caller reads none. */
+export const readsRow = (r: { access: Access }, caller: string): boolean => (ROLES as readonly string[]).includes(caller) && rowAllows(r, caller as Role);
 
 export type Fixture = Awaited<ReturnType<typeof ledgerWorld>> & { skuPrivateFor: string };
 

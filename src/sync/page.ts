@@ -13,7 +13,7 @@
 import type { Reader } from '../db/tx.js';
 import type { Param } from '../db/stmt.js';
 import { JvError } from '../errors.js';
-import { READ_COLUMNS, readableSettingKeys } from '../permissions/matrix.js';
+import { readColumnsFor, readableSettingKeys } from '../permissions/matrix.js';
 import { formatRow, timestampToWire } from '../wire/format.js';
 import { billSummaryFigures, customerBalanceFigures } from './derived.js';
 import type { SyncResource } from './resources.js';
@@ -64,10 +64,9 @@ export function pageStatement(r: SyncResource, columns: readonly string[], after
   return `SELECT ${select} FROM \`${ident(r.from)}\` AS src${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY src.updated_at, src.${key} LIMIT ?`;
 }
 
-/** The columns a role reads of a resource (READ_COLUMNS), or a refusal: a role that is not on the resource's row reads nothing, whatever asked. */
+/** The columns a role reads of a resource (READ_COLUMNS), or a refusal: a role that may not call the resource's read row reads nothing, whatever asked. */
 function columnsFor(r: SyncResource, role: string): readonly string[] {
-  const byRole = READ_COLUMNS[r.table] as Partial<Record<string, readonly string[]>>;
-  const columns = Object.hasOwn(byRole, role) ? byRole[role] : undefined;
+  const columns = readColumnsFor(role, r.table);
   if (!columns) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
   return columns;
 }

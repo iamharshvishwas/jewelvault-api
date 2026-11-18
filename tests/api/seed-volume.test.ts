@@ -134,7 +134,7 @@ describe('T-F03 / T-D11 EXPLAIN on the volumes of C2: the (updated_at, key) inde
       const [[newest]] = await world.sql.query<any[][]>(`SELECT DATE_FORMAT(DATE_ADD(MAX(updated_at), INTERVAL 1 MICROSECOND), '%Y-%m-%d %H:%i:%s.%f') AS t FROM \`${r.from}\``);
       const at = (newest as any).t ?? '2026-10-17 00:00:00.000000';
       const key = r.keyType === 'uuid' ? '00000000-0000-4000-8000-000000000000' : 'a';
-      const columns = r.derived === null ? (Object.values(READ_COLUMNS[r.table]).find((c) => c) ?? []) : [];
+      const columns = r.derived === null ? READ_COLUMNS[r.table] : [];
       const forms: [string, Parameters<typeof pageStatement>[2], unknown[]][] = [
         ['no cursor', undefined, [1000]],
         ['stamp only', { updatedAt: at, key: null }, [at, 1000]],

@@ -1,12 +1,12 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { grantsOf, hasTick, type Grants } from '../../src/permissions/grants';
 import {
   FIELD_RIGHTS,
   MATRIX,
-  RATE_REVIEW_ROLES,
+  RATE_REVIEW,
   READ_COLUMNS,
-  ROLES,
   WRITE_COLUMNS,
   columnsOfTable,
   dailyTotalsWindowDays,
@@ -19,6 +19,7 @@ import {
   type FieldRight,
   type ReadResource,
 } from '../../src/permissions/matrix';
+import { BUILTIN_TICKS } from '../../src/permissions/ticks';
 
 // P1, golden equivalence (DESIGN.md section 8): what the three built-in roles may do TODAY, written down from the permission code as it stood on the live API (staging 4fe7a82)
 // before the roles-with-ticks work began, and compared with the code ever after. The fixture tests/api/fixtures/access-golden.json is recorded once (JV_RECORD_GOLDEN=1) and is never edited
@@ -63,22 +64,31 @@ const table = <K extends string, V>(keys: readonly K[], value: (key: K) => V): R
 /** A copy of a list the code holds (those are read-only, and a test may change what it gets); null when there is no list. */
 const copy = (list: readonly string[] | null | undefined): string[] | null => (list === undefined || list === null ? null : [...list]);
 
-/** Today's verdicts, asked of the permission code. A fresh value on every call. */
+/** Today's verdicts, asked of the permission code. A fresh value on every call. Each built-in role is asked as the grants its built-in tick set gives (BUILTIN_TICKS). */
 export function verdictsFromCode(): Golden {
-  const perRole = <V>(value: (role: Role) => V): Record<Role, V> => table<Role, V>(ROLES, value);
+  const ROLES: readonly Role[] = ['owner', 'biller', 'staff'];
+  const grants = table<Role, Grants>(ROLES, (role) => grantsOf({ roleKey: role, roleTicks: BUILTIN_TICKS[role], isSuperAdmin: false }));
+  const perRole = <V>(value: (g: Grants) => V): Record<Role, V> => table<Role, V>(ROLES, (role) => value(grants[role]));
+  // Ruling A: a role reads the columns of a resource when it may call the read row that serves the resource
+  const readRowOf = (resource: ReadResource): Action => {
+    const found = (Object.keys(MATRIX) as Action[]).find((a) => MATRIX[a].kind === 'read' && (MATRIX[a].reads ?? []).includes(resource));
+    if (found === undefined) throw new Error(`no read row serves ${resource}`);
+    return found;
+  };
   return {
-    rows: table(Object.keys(MATRIX) as Action[], (action) => perRole((role) => mayCall(role, action))),
-    fields: table(Object.keys(FIELD_RIGHTS) as FieldRight[], (field) => perRole((role) => mayUseField(role, field))),
-    settingKeys: perRole((role) => copy(readableSettingKeys(role))),
-    dailyTotalsDays: perRole((role) => dailyTotalsWindowDays(role)),
-    readColumns: table(Object.keys(READ_COLUMNS) as ReadResource[], (resource) => perRole((role) => copy(READ_COLUMNS[resource][role]))),
+    // Ruling G: the rows of the Super Admin did not exist when the fixture was recorded (P5 covers them)
+    rows: table((Object.keys(MATRIX) as Action[]).filter((a) => MATRIX[a].kind !== 'super'), (action) => perRole((g) => mayCall(g, action))),
+    fields: table(Object.keys(FIELD_RIGHTS) as FieldRight[], (field) => perRole((g) => mayUseField(g, field))),
+    settingKeys: perRole((g) => copy(readableSettingKeys(g))),
+    dailyTotalsDays: perRole((g) => dailyTotalsWindowDays(g)),
+    readColumns: table(Object.keys(READ_COLUMNS) as ReadResource[], (resource) => perRole((g) => (mayCall(g, readRowOf(resource)) ? copy(READ_COLUMNS[resource]) : null))),
     writeVerdicts: table(Object.keys(WRITE_COLUMNS) as EditAction[], (action) => {
       const edit = MATRIX[action].edit;
       if (edit === undefined) throw new Error(`${action} is a direct edit without an edit spec`);
       const asked = [...new Set([...Object.values(WRITE_COLUMNS[action]).flatMap((list) => list ?? []), ...columnsOfTable(edit.table), ...ALWAYS_ASKED])];
-      return perRole((role) => table(asked, (field) => writeFieldVerdict(action, role, field)));
+      return perRole((g) => table(asked, (field) => writeFieldVerdict(action, g, field)));
     }),
-    rateReviewRoles: [...RATE_REVIEW_ROLES],
+    rateReviewRoles: ROLES.filter((role) => hasTick(grants[role], RATE_REVIEW.holds) && !hasTick(grants[role], RATE_REVIEW.lacks)),
   };
 }
 

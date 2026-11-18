@@ -599,7 +599,7 @@ describe('X0 item 5: the ONE statement that locks the pieces names the pieces of
 
 describe('T-D09 the matrix row of X10 (POST /v1/bills/:id/reissue: owner only)', () => {
   it('the route is registered through route() with the action of the row', () => {
-    expect(w.world.app.routeTable.find((r) => r.action === 'fn:reissue_bill')).toMatchObject({ method: 'POST', url: '/v1/bills/:id/reissue', kind: 'matrix', roles: ['owner'], mustChange: false });
+    expect(w.world.app.routeTable.find((r) => r.action === 'fn:reissue_bill')).toMatchObject({ method: 'POST', url: '/v1/bills/:id/reissue', kind: 'matrix', access: { anyOf: ['bill_reissue'] }, mustChange: false });
   });
 
   it('no session is 401, staff and a biller are 403 JV_FORBIDDEN, a user who must change the password is 403 JV_PASSWORD_CHANGE_REQUIRED, and none of them reads or writes the books', async () => {

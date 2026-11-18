@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CATEGORIES, SUBCATEGORIES } from '../../src/edit/catalogue';
 import { DESIGNS } from '../../src/edit/designs';
 import { SKUS } from '../../src/edit/skus';
-import { MATRIX, READ_COLUMNS, WRITE_COLUMNS, writeFieldVerdict } from '../../src/permissions/matrix';
+import { READ_COLUMNS, ROLES, WRITE_COLUMNS, mayCall, writeColumnsFor, writeFieldVerdict, type EditAction } from '../../src/permissions/matrix';
 import { timestampToWire } from '../../src/wire/format';
 import { type EditWorld, STAMP_WIRE, addDesign, addPiece, body, codeOf, dbRow, detailsOf, editWorld, patch, snapshot } from './edit-support';
 import { getPage } from './sync-support';
@@ -204,22 +204,24 @@ describe('T-D02 (API13 clause) WRITE_COLUMNS of categories and subcategories: D5
   // D5 (spec line 121): categories hold `name` (unique ignoring case), `prefix` (2 to 6 capitals or digits) and `active`; subcategories hold `category_id`, `name` (unique per category) and `active`.
   // A4 (spec line 165, row `categories`, `subcategories`): owner S, I, U; biller S; staff S, I. The prototype's catalogStore.ts adds a category with its prefix, adds a subcategory under a category,
   // renames a subcategory and removes one (in this design a removal is `active` = false: nothing is deleted, S7); it never renames a category's prefix or moves a subcategory.
-  const list = (action: keyof typeof WRITE_COLUMNS, role: 'owner' | 'staff') => [...((WRITE_COLUMNS[action] as Record<string, readonly string[]>)[role] ?? [])].sort();
+  const list = (action: EditAction, role: 'owner' | 'staff') => [...writeColumnsFor(action, role)].sort();
+  /** The built-in roles that may call a row. */
+  const rolesOf = (action: EditAction) => ROLES.filter((role) => mayCall(role, action));
 
   it('an insert carries the columns a person types: the name and prefix of a category, the category and name of a subcategory; the owner and staff may insert (A4 `I`)', () => {
     expect(list('edit:categories.insert', 'owner')).toEqual(['name', 'prefix']);
     expect(list('edit:categories.insert', 'staff')).toEqual(['name', 'prefix']);
     expect(list('edit:subcategories.insert', 'owner')).toEqual(['category_id', 'name']);
     expect(list('edit:subcategories.insert', 'staff')).toEqual(['category_id', 'name']);
-    expect(MATRIX['edit:categories.insert'].roles).toEqual(['owner', 'staff']);
-    expect(MATRIX['edit:subcategories.insert'].roles).toEqual(['owner', 'staff']);
+    expect(rolesOf('edit:categories.insert')).toEqual(['owner', 'staff']);
+    expect(rolesOf('edit:subcategories.insert')).toEqual(['owner', 'staff']);
   });
 
   it('an update (A4 `U`, the owner only) renames and switches `active`; the prefix (the series of the design numbers, L3) and the category of a subcategory (the designs refer to the pair) never change', () => {
     expect(list('edit:categories.update', 'owner')).toEqual(['active', 'name']);
     expect(list('edit:subcategories.update', 'owner')).toEqual(['active', 'name']);
-    expect(MATRIX['edit:categories.update'].roles).toEqual(['owner']);
-    expect(MATRIX['edit:subcategories.update'].roles).toEqual(['owner']);
+    expect(rolesOf('edit:categories.update')).toEqual(['owner']);
+    expect(rolesOf('edit:subcategories.update')).toEqual(['owner']);
   });
 
   it('every column named is a column of D5 (read from READ_COLUMNS, which lists the table), and the lists are what the classification of an edit uses', () => {
@@ -229,7 +231,7 @@ describe('T-D02 (API13 clause) WRITE_COLUMNS of categories and subcategories: D5
       ['edit:subcategories.insert', 'subcategories'],
       ['edit:subcategories.update', 'subcategories'],
     ] as const) {
-      for (const role of ['owner', 'staff'] as const) for (const c of list(action, role)) expect(READ_COLUMNS[table].owner, `${action}.${c}`).toContain(c);
+      for (const role of ['owner', 'staff'] as const) for (const c of list(action, role)) expect(READ_COLUMNS[table], `${action}.${c}`).toContain(c);
     }
     expect(writeFieldVerdict('edit:categories.update', 'owner', 'name')).toBe('allowed');
     expect(writeFieldVerdict('edit:categories.update', 'owner', 'prefix')).toBe('forbidden');

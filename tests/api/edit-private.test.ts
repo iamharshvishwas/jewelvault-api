@@ -8,7 +8,7 @@ import { V, insert } from '../schema/support';
 import type { CallerName } from './cells';
 import { type EditWorld, STAMP_DB, STAMP_WIRE, addDesign, addPiece, body, codeOf, detailsOf, editWorld, patch, stampOf } from './edit-support';
 import { addPieceIn, addSoldPiece, createDesign, designPayload, setStatus } from './stock-support';
-import { SYNC_ROWS, pageAll, poll } from './sync-support';
+import { SYNC_ROWS, pageAll, poll, readsRow } from './sync-support';
 
 // API13c, the ordinary edit of the owner-only original weight: PUT /v1/sku-private/:sku_id (matrix row `edit:sku_private.update`, D9, A4, A5). The tests are named for the spec tests they extend:
 //   T-D02  the row of the owner-only edit is a route and the generated test walks it for nine callers (this file: what the route does for the one caller who may use it, the weight rules of D7,
@@ -53,7 +53,7 @@ describe('T-D02 (API13c) PUT /v1/sku-private/:sku_id: the owner sets the origina
     expect(res.statusCode, res.body).toBe(201);
     const answer = body(res);
     expect(Object.keys(answer)).toEqual(['row']);
-    expect(Object.keys(answer.row).sort()).toEqual([...READ_COLUMNS.sku_private.owner!].sort());
+    expect(Object.keys(answer.row).sort()).toEqual([...READ_COLUMNS.sku_private].sort());
     expect(answer.row).toMatchObject({ sku_id: piece, original_net_weight: '8.500', created_by: owner(), updated_by: owner() });
     expect(answer.row.created_at).toBe(answer.row.updated_at);
     const stored = await privateRow(piece);
@@ -409,7 +409,7 @@ describe('T-D03 (API13c) only the owner writes the original weight, and nobody e
     expect((await put('owner', piece, { original_net_weight: SECRET })).statusCode).toBe(201);
     const seen: [string, string][] = [];
     for (const caller of ['biller', 'staff'] as const) {
-      const readable = SYNC_ROWS.filter((r) => r.roles.includes(caller));
+      const readable = SYNC_ROWS.filter((r) => readsRow(r, caller));
       expect(readable.length).toBeGreaterThanOrEqual(7);
       expect(readable.map((r) => r.name)).not.toContain('sku-private');
       for (const r of readable) seen.push([`${caller} GET ${r.name}`, JSON.stringify((await pageAll(w.world, caller, r.name)).rows)]);
@@ -446,14 +446,14 @@ describe('T-D03 (API13c) only the owner writes the original weight, and nobody e
 describe('T-D02 (API13c) the route is part of the matrix: registered through route(), the weight is the only field, and the walk of the generated test covers it', () => {
   it('the row edit:sku_private.update is routed as PUT /v1/sku-private/:sku_id for the owner only', async () => {
     const route = w.world.app.routeTable.find((r) => r.action === 'edit:sku_private.update');
-    expect(route).toMatchObject({ method: 'PUT', url: '/v1/sku-private/:sku_id', kind: 'matrix', roles: ['owner'], mustChange: false });
+    expect(route).toMatchObject({ method: 'PUT', url: '/v1/sku-private/:sku_id', kind: 'matrix', access: { anyOf: ['secret_weight'] }, mustChange: false });
   });
 
   it('the engine\'s table and the matrix agree on the column: the field the owner may send has a FieldSpec, and the answer\'s columns are the owner\'s READ_COLUMNS', async () => {
     const { SKU_PRIVATE } = await import('../../src/edit/skuPrivate');
     const { WRITE_COLUMNS } = await import('../../src/permissions/matrix');
     expect(Object.keys(SKU_PRIVATE.fields)).toEqual(['original_net_weight']);
-    expect(WRITE_COLUMNS['edit:sku_private.update']).toEqual({ owner: ['original_net_weight'] });
-    for (const c of Object.keys(SKU_PRIVATE.fields)) expect(READ_COLUMNS.sku_private.owner).toContain(c);
+    expect(WRITE_COLUMNS['edit:sku_private.update']).toEqual({ secret_weight: ['original_net_weight'] });
+    for (const c of Object.keys(SKU_PRIVATE.fields)) expect(READ_COLUMNS.sku_private).toContain(c);
   });
 });

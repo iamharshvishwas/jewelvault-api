@@ -159,7 +159,7 @@ describe('T-F06 (X6) create_customer returns the customer', () => {
     expect(res.headers['idempotent-replay']).toBeUndefined();
     expect(Object.keys(body(res))).toEqual(['customer']);
     const customer = body(res).customer;
-    expect(Object.keys(customer).sort()).toEqual([...(READ_COLUMNS.customers.biller ?? [])].sort());
+    expect(Object.keys(customer).sort()).toEqual([...READ_COLUMNS.customers].sort());
     expect(customer).toMatchObject({
       name: 'Meera Soni',
       mobile: '9876512345',
@@ -241,8 +241,8 @@ describe('T-F06 (X6, D10) the other inputs: name 1 to 120 characters, a customer
 
 describe('T-D09 (API19 clause) the matrix row of X6 (POST /v1/customers: owner and biller) for the callers', () => {
   it('the route is registered through route() with the action of the row', () => {
-    expect(MATRIX['fn:create_customer']).toMatchObject({ method: 'POST', path: '/v1/customers', roles: ['owner', 'biller'] });
-    expect(w.world.app.routeTable.find((r) => r.action === 'fn:create_customer')).toMatchObject({ method: 'POST', url: '/v1/customers', kind: 'matrix', roles: ['owner', 'biller'], mustChange: false });
+    expect(MATRIX['fn:create_customer']).toMatchObject({ method: 'POST', path: '/v1/customers', access: { anyOf: ['customer_edit'] } });
+    expect(w.world.app.routeTable.find((r) => r.action === 'fn:create_customer')).toMatchObject({ method: 'POST', url: '/v1/customers', kind: 'matrix', access: { anyOf: ['customer_edit'] }, mustChange: false });
   });
 
   it('no session, an ended, expired or idle session and a user who is not active are 401, staff is 403 JV_FORBIDDEN, a user who must change the password is 403: nothing is written and no key is claimed', async () => {

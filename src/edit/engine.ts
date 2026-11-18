@@ -30,7 +30,7 @@ import { newId } from '../db/ids.js';
 import type { Param } from '../db/stmt.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
 import { JvError, unavailableError } from '../errors.js';
-import { type EditAction, READ_COLUMNS, type ReadResource, type Role, WRITE_COLUMNS, columnsOfTable, writeFieldVerdict } from '../permissions/matrix.js';
+import { type EditAction, type Role, columnsOfTable, readColumnsFor, writeColumnsFor, writeFieldVerdict } from '../permissions/matrix.js';
 import { type Auth, assertMayCall } from '../permissions/route.js';
 import { toWire } from '../sync/page.js';
 import { resourceByName } from '../sync/resources.js';
@@ -107,8 +107,7 @@ export const invalid = (field: string, reason: string) => new wire.InvalidInputE
 
 /** The columns the answer carries for a role: the ones its sync read gives (READ_COLUMNS). */
 function columnsFor(table: string, role: string): readonly string[] {
-  const byRole = READ_COLUMNS[table as ReadResource] as Partial<Record<string, readonly string[]>>;
-  const list = Object.hasOwn(byRole, role) ? byRole[role] : undefined;
+  const list = readColumnsFor(role, table);
   if (!list) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
   return list;
 }
@@ -177,10 +176,9 @@ export function checkFields(table: EditTable, action: EditAction, role: string, 
 
 // ------------------------------------------------------------------ the transaction
 
-/** The fields an insert by this role must carry: its whole list (a category needs its name and its prefix). */
+/** The fields an insert by this role must carry: every field it may send (a category needs its name and its prefix). */
 function insertFields(action: EditAction, role: string): readonly string[] {
-  const lists = WRITE_COLUMNS[action] as Partial<Record<string, readonly string[]>>;
-  return (Object.hasOwn(lists, role) ? lists[role] : undefined) ?? [];
+  return writeColumnsFor(action, role);
 }
 
 function contextOf(app: FastifyInstance, request: FastifyRequest, auth: Auth) {

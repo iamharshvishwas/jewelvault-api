@@ -8,13 +8,13 @@ import { timestampToWire } from '../../src/wire/format';
 import { txContext, withRead } from '../../src/db/tx';
 import { readPage } from '../../src/sync/page';
 import { SYNC_RESOURCES, resourceByName } from '../../src/sync/resources';
-import { INTERNAL_TABLES, READ_COLUMNS, STAFF_SETTING_KEYS, type ReadResource, type Role } from '../../src/permissions/matrix';
+import { INTERNAL_TABLES, READ_COLUMNS, STAFF_SETTING_KEYS, type ReadResource } from '../../src/permissions/matrix';
 import { V, insert } from '../schema/support';
 import { CALLERS, type CallerName, type World, T0 } from './cells';
 import { createClock } from '../../src/clock';
 import { type Catalogue, judgeLog, loadCatalogue } from './static-explain-lib';
 import { installStatementLog, readStatementLog } from './statement-log';
-import { ORIGINAL_WEIGHT, SYNC_ROWS, type Fixture, type PageBody, bodyOf, getPage, minusSeconds, pageAll, poll, syncWorld } from './sync-support';
+import { ORIGINAL_WEIGHT, SYNC_ROWS, type Fixture, type PageBody, bodyOf, getPage, minusSeconds, pageAll, poll, readsRow, syncWorld } from './sync-support';
 
 // API11, the read side (C3, C4): GET /v1/sync/<resource> and POST /v1/sync/poll on the application's real routes, a scratch database with the migrations, the seeds and the ledger fixture of
 // tests/schema/support.ts. The big paging cases (2,500 pieces, 30,000 random ids) are in sync-paging.test.ts, the snapshot of the poll in sync-snapshot.test.ts, the session clause in sync-session.test.ts.
@@ -40,7 +40,7 @@ const errorCode = (res: { body: string }) => (JSON.parse(res.body) as { error?: 
 /** Every row a caller can read of every resource it may read, by GET and by one poll: the text of all answers, for the searches of T-D16 and T-D03. */
 async function everythingReadBy(caller: Exclude<CallerName, 'anon'>): Promise<{ get: Map<string, string>; poll: string }> {
   const role = caller as string;
-  const mine = SYNC_ROWS.filter((r) => r.roles.includes(role));
+  const mine = SYNC_ROWS.filter((r) => readsRow(r, role));
   const get = new Map<string, string>();
   for (const r of mine) get.set(r.name, JSON.stringify((await pageAll(world, caller, r.name)).rows));
   const res = await poll(world, caller, { cursors: Object.fromEntries(mine.map((r) => [r.name, null])) });
@@ -263,7 +263,7 @@ describe('T-D02 clause (API11): the rows of the sync resources hold exactly the 
 
   for (const r of SYNC_ROWS) {
     for (const role of ROLE_CALLERS) {
-      const allowed = r.roles.includes(role);
+      const allowed = readsRow(r, role);
       it(`${r.name} for ${role}: ${allowed ? 'every row has exactly the READ_COLUMNS of the role, each value in its wire format' : '403 JV_FORBIDDEN'}`, async () => {
         const res = await getPage(world, role, r.name, { limit: 1000 });
         if (!allowed) {
@@ -274,7 +274,7 @@ describe('T-D02 clause (API11): the rows of the sync resources hold exactly the 
         expect(res.statusCode).toBe(200);
         const page = bodyOf(res);
         expect(page.rows.length, `the fixture holds rows of ${r.name}`).toBeGreaterThan(0);
-        const expected = [...(READ_COLUMNS[r.table as ReadResource][role as Role] ?? [])].sort();
+        const expected = [...READ_COLUMNS[r.table as ReadResource]].sort();
         const problems: string[] = [];
         for (const row of page.rows) {
           expect(Object.keys(row).sort()).toEqual(expected);
@@ -292,7 +292,7 @@ describe('T-D02 clause (API11): the rows of the sync resources hold exactly the 
   it('every column the code formats is declared with the kind the schema gives it, and no money, weight, id, stamp or date column is left to chance (src/sync/resources.ts against the migrated schema)', () => {
     const problems: string[] = [];
     for (const r of SYNC_RESOURCES) {
-      const widest = new Set(Object.values(READ_COLUMNS[r.table]).flatMap((c) => c ?? []));
+      const widest = new Set(READ_COLUMNS[r.table]);
       for (const column of widest) {
         const expected = kinds.get(`${r.table}.${column}`) ?? 'plain';
         const declared = r.kinds[column] as Kind | undefined;
@@ -353,7 +353,7 @@ describe('T-D03 / A9 the role sets of the read side: C3 names them, A4 draws the
   });
 
   it('the bytes of a photo are in no list and no resource: design_photos is read by the photo calls only', () => {
-    for (const r of SYNC_ROWS) for (const role of ROLE_CALLERS) expect(READ_COLUMNS[r.table as ReadResource][role as Role] ?? [], `${r.name}/${role}`).not.toContain('bytes');
+    for (const r of SYNC_ROWS) expect(READ_COLUMNS[r.table as ReadResource], r.name).not.toContain('bytes');
     expect(NAMES).not.toContain('design-photos');
   });
 
@@ -441,7 +441,7 @@ describe('T-F03 the poll (C4): one cursor per resource, one answer with server_t
 
   it('a poll of everything a role may read: owner 16 resources, biller 15, staff 8 (A4, and the orders of FB-E1)', async () => {
     for (const [caller, count] of [['owner', 16], ['biller', 15], ['staff', 8]] as const) {
-      const mine = SYNC_ROWS.filter((r) => r.roles.includes(caller));
+      const mine = SYNC_ROWS.filter((r) => readsRow(r, caller));
       expect(mine).toHaveLength(count);
       const res = await poll(world, caller, { cursors: Object.fromEntries(mine.map((r) => [r.name, null])) });
       expect(res.statusCode, caller).toBe(200);
@@ -754,7 +754,7 @@ describe('T-F03 / T-D11 EXPLAIN: the (updated_at, key) index serves the sync com
     try {
       for (const r of SYNC_ROWS) {
         const key = r.name === 'settings' ? 'numbering' : randomUUID();
-        const caller = r.roles.includes('staff') ? 'staff' : r.roles.includes('biller') ? 'biller' : 'owner';
+        const caller = readsRow(r, 'staff') ? 'staff' : readsRow(r, 'biller') ? 'biller' : 'owner';
         for (const q of [{}, { updated_after: '2026-10-01T00:00:00.000000Z' }, { updated_after: '2026-10-01T00:00:00.000000Z', after_key: key }] as const) {
           const res = await getPage(world, caller, r.name, { limit: 1000, ...q });
           expect(res.statusCode, `${r.name} ${JSON.stringify(q)}`).toBe(200);

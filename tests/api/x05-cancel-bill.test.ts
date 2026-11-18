@@ -441,7 +441,7 @@ describe('X0 the order of work inside the transaction, as the statements say it'
 
 describe('T-D09 the matrix row of X5 (POST /v1/bills/:id/cancel: owner only)', () => {
   it('the route is registered through route() with the action of the row', () => {
-    expect(w.world.app.routeTable.find((r) => r.action === 'fn:cancel_bill')).toMatchObject({ method: 'POST', url: '/v1/bills/:id/cancel', kind: 'matrix', roles: ['owner'], mustChange: false });
+    expect(w.world.app.routeTable.find((r) => r.action === 'fn:cancel_bill')).toMatchObject({ method: 'POST', url: '/v1/bills/:id/cancel', kind: 'matrix', access: { anyOf: ['bill_cancel'] }, mustChange: false });
   });
 
   it('no session is 401, staff and a biller are 403 JV_FORBIDDEN, a user who must change the password is 403 JV_PASSWORD_CHANGE_REQUIRED, and none of them reads or writes the books', async () => {

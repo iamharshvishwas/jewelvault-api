@@ -16,19 +16,26 @@ import {
   WRITE_COLUMNS,
   mayCall,
   mayUseField,
+  readColumnsFor,
   readableSettingKeys,
+  writeColumnsFor,
   type Action,
+  type EditAction,
   type Role,
 } from '../../src/permissions/matrix';
 import { type Scratch, laneDbSettings, laneRoot, scratchDatabase } from '../helpers';
 
 // T-D01 (the catalogue clause) and T-D02 (the data half): the matrix file against the spec's own tables, typed in below from A4, section 10 and P3 as an independent oracle, so that a cell
-// edited by mistake fails here before any route exists; the field allow-lists against the migrated schema; and the rights of the database user.
+// edited by mistake fails here before any route exists; the field allow-lists against the migrated schema; and the rights of the database user. The rows list ticks now, not roles: the oracle
+// stays the spec's roles, and each built-in role is asked through its built-in tick set (P1), so this file still says what A4 says about the three roles of today.
 
 const O: Role[] = ['owner'];
 const OB: Role[] = ['owner', 'biller'];
 const OS: Role[] = ['owner', 'staff'];
 const OBS: Role[] = ['owner', 'biller', 'staff'];
+
+/** The built-in roles that may call a row, in the order of ROLES. */
+const rolesOf = (action: Action): Role[] => ROLES.filter((role) => mayCall(role, action));
 
 /** Spec A4 (the table), section 10 (X1 to X12 with their routes), P2 and P3 (the photo calls), B3 (the download record), C3 and C4 (the named reads) and NODE-DESIGN 3.3 / 4.2 / 4.4 (the paths of the rest). */
 const ORACLE: Record<string, readonly [Role[], string]> = {
@@ -95,7 +102,7 @@ describe('T-D02 the matrix file says what A4 and section 10 say', () => {
     expect(Object.keys(MATRIX).sort()).toEqual(Object.keys(ORACLE).sort());
     for (const [action, [roles, address]] of Object.entries(ORACLE)) {
       const row = MATRIX[action as Action];
-      expect([...row.roles].sort(), `${action} roles`).toEqual([...roles].sort());
+      expect(rolesOf(action as Action).sort(), `${action} roles`).toEqual([...roles].sort());
       expect(`${row.method} ${row.path}`, `${action} route`).toBe(address);
     }
   });
@@ -115,7 +122,7 @@ describe('T-D02 the matrix file says what A4 and section 10 say', () => {
     const open = Object.entries(MATRIX).filter(([, r]) => r.mustChange).map(([a]) => a).sort();
     expect(open).toEqual(['session:change-password', 'session:logout', 'session:me']);
     // the session calls are open to every signed-in user (A4)
-    for (const a of ['session:me', 'session:logout', 'session:change-password', 'session:activity'] as const) expect([...MATRIX[a].roles].sort()).toEqual([...ROLES].sort());
+    for (const a of ['session:me', 'session:logout', 'session:change-password', 'session:activity'] as const) expect(MATRIX[a].access, a).toEqual({ open: true });
   });
 
   it('nobody has a direct write to bills, bill_items, receipts, receipt_allocations or users, and nobody a direct insert into designs, skus or customers (A4, A8, D11, D13)', () => {
@@ -138,14 +145,16 @@ describe('T-D02 the matrix file says what A4 and section 10 say', () => {
     expect(Object.values(TOKEN_DOORS).map((d) => d.prefix).sort()).toEqual(['/admin/v1/', '/internal/jobs/']);
   });
 
-  it('mayCall answers from the matrix, and a name that is not a role (a cookie, a header, a body can say anything) may do nothing', () => {
+  // Changed on purpose with the ticks (DESIGN.md 6.2, R4): a name that is not a built-in role holds no tick, and the rows that need no tick are open to everyone signed in. Such a name never
+  // reaches the matrix from a request: the session refuses a user whose role it does not know with 401 before any row is asked (session.ts).
+  it('mayCall answers from the matrix, and a name that is not a role (a cookie, a header, a body can say anything) holds no tick: it may call the open rows and nothing else', () => {
     expect(mayCall('owner', 'fn:void_receipt')).toBe(true);
     expect(mayCall('biller', 'fn:void_receipt')).toBe(false);
     expect(mayCall('staff', 'fn:create_design')).toBe(true);
     expect(mayCall('staff', 'fn:create_bill')).toBe(false);
     for (const odd of ['admin', 'OWNER', 'Owner ', '', 'root', 'owner,biller', '__proto__', 'constructor']) {
+      for (const action of Object.keys(MATRIX) as Action[]) expect(mayCall(odd, action), `${odd} ${action}`).toBe('open' in MATRIX[action].access);
       expect(mayCall(odd, 'fn:create_bill'), odd).toBe(false);
-      expect(mayCall(odd, 'session:me'), odd).toBe(false);
     }
     expect(mayCall('owner', 'fn:no_such_function' as Action)).toBe(false);
   });
@@ -197,7 +206,8 @@ afterAll(async () => {
   await scratch?.drop();
 });
 
-const listFor = (resource: string, role: Role) => (READ_COLUMNS as Record<string, Partial<Record<Role, readonly string[]>>>)[resource]?.[role];
+/** The columns a built-in role reads of a resource; undefined when it reads none. */
+const listFor = (resource: string, role: Role) => readColumnsFor(role, resource) ?? undefined;
 
 describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the columns of the schema', () => {
   it('every resource of READ_COLUMNS is read by a row of the matrix, and every row that reads says which resources', () => {
@@ -210,8 +220,8 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
     for (const [action, row] of Object.entries(MATRIX)) {
       for (const resource of row.reads ?? []) {
         // a call that serves several resources (the poll) is allowed to a role when it may read at least some of them; the resource's own row decides which
-        const own = MATRIX[`read:${resource}` as Action];
-        const roles = own ? own.roles : row.roles;
+        const own = ORACLE[`read:${resource}`];
+        const roles = own ? own[0] : ORACLE[action][0];
         for (const role of ROLES) {
           const list = listFor(resource, role);
           if (!roles.includes(role)) expect(list, `${action}/${resource}/${role}`).toBeUndefined();
@@ -276,12 +286,13 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
     }
   });
 
-  it('readableSettingKeys: the owner and the biller read every key (null), staff the seven keys of A4, a name that is not a role reads none (A4, C3)', () => {
+  // Changed on purpose with the ticks (DESIGN.md 6.2 "Always on"): the seven keys staff read are open to everyone signed in, so a name that is not a role (no tick) reads those seven, not none.
+  it('readableSettingKeys: the owner and the biller read every key (null), staff the seven keys of A4, a name that is not a role holds no tick and reads the seven (A4, C3)', () => {
     expect(readableSettingKeys('owner')).toBeNull();
     expect(readableSettingKeys('biller')).toBeNull();
     expect(readableSettingKeys('staff')).toEqual(STAFF_SETTING_KEYS);
     expect(readableSettingKeys('staff')).toHaveLength(7);
-    for (const notARole of ['admin', 'OWNER', '', 'constructor', '__proto__']) expect(readableSettingKeys(notARole), notARole).toEqual([]);
+    for (const notARole of ['admin', 'OWNER', '', 'constructor', '__proto__']) expect(readableSettingKeys(notARole), notARole).toEqual(STAFF_SETTING_KEYS);
   });
 
   it('the owner-only weight (D9): original_net_weight is listed for the owner of sku_private and nowhere else; no list holds a hash, a token hash or photo bytes', () => {
@@ -319,29 +330,33 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
   });
 });
 
-describe('T-D02 WRITE_COLUMNS: the editable fields per role (A5), and a field outside the list is refused, not ignored', () => {
-  const editRows = Object.entries(MATRIX).filter(([, r]) => r.edit) as [Extract<Action, `edit:${string}`>, (typeof MATRIX)[Action]][];
+describe('T-D02 WRITE_COLUMNS: the editable fields per tick and so per role (A5), and a field outside the list is refused, not ignored', () => {
+  const editRows = Object.entries(MATRIX).filter(([, r]) => r.edit) as [EditAction, (typeof MATRIX)[Action]][];
+  const listsOf = (action: EditAction) => Object.entries(WRITE_COLUMNS[action]) as [string, readonly string[]][];
 
-  it('has one entry for each edit row, and only for the roles of that row', () => {
+  it('has one entry for each edit row, with a list for each tick of that row and for no other tick; a built-in role has fields exactly on the rows the spec gives it', () => {
     expect(Object.keys(WRITE_COLUMNS).sort()).toEqual(editRows.map(([a]) => a).sort());
     for (const [action, row] of editRows) {
+      const ticks = 'anyOf' in row.access ? [...row.access.anyOf] : [];
+      expect(listsOf(action).map(([t]) => t).sort(), action).toEqual(ticks.sort());
+      for (const [tick, list] of listsOf(action)) {
+        expect(list.length, `${action}/${tick}`).toBeGreaterThan(0);
+        expect(new Set(list).size, `${action}/${tick} duplicates`).toBe(list.length);
+      }
       for (const role of ROLES) {
-        const list = (WRITE_COLUMNS as Record<string, Partial<Record<Role, readonly string[]>>>)[action][role];
-        if (!row.roles.includes(role)) expect(list, `${action}/${role}`).toBeUndefined();
-        else {
-          expect(list?.length ?? 0, `${action}/${role}`).toBeGreaterThan(0);
-          expect(new Set(list).size).toBe(list!.length);
-        }
+        const fields = writeColumnsFor(action, role);
+        if (!ORACLE[action][0].includes(role)) expect(fields, `${action}/${role}`).toEqual([]);
+        else expect(fields.length, `${action}/${role}`).toBeGreaterThan(0);
       }
     }
   });
 
   it('every column exists in the table, and none is a stamp, a person column or a state that only a function changes (S6, A5: skus.status and skus.archived_at change only through X9)', () => {
     for (const [action, row] of editRows) {
-      for (const role of ROLES) {
-        for (const c of (WRITE_COLUMNS as Record<string, Partial<Record<Role, readonly string[]>>>)[action][role] ?? []) {
+      for (const [tick, list] of listsOf(action)) {
+        for (const c of list) {
           expect(schema.get(row.edit!.table), `${action}.${c}`).toContain(c);
-          expect(c, `${action}/${role}`).not.toMatch(/^(id|created_at|updated_at|created_by|updated_by|confirmed_by|set_by|import_batch_id|request_id|password_hash)$/);
+          expect(c, `${action}/${tick}`).not.toMatch(/^(id|created_at|updated_at|created_by|updated_by|confirmed_by|set_by|import_batch_id|request_id|password_hash)$/);
           if (row.edit!.table === 'skus') expect(['status', 'archived_at', 'sold_bill_id']).not.toContain(c);
         }
       }
@@ -349,20 +364,20 @@ describe('T-D02 WRITE_COLUMNS: the editable fields per role (A5), and a field ou
   });
 
   it('A5: the content columns of designs, skus and customers are exactly the spec\'s, with the owner-only exceptions', () => {
-    const w = WRITE_COLUMNS as Record<string, Partial<Record<Role, readonly string[]>>>;
+    const w = (action: EditAction, role: Role) => [...writeColumnsFor(action, role)].sort();
     // designs: staff may edit the content columns and archived_at; only the owner changes material, purity and selling_method (A4)
-    expect([...w['edit:designs.update'].staff!].sort()).toEqual([...A5.designs].sort());
-    expect([...w['edit:designs.update'].owner!].sort()).toEqual([...A5.designs, 'material', 'purity', 'selling_method'].sort());
-    expect(w['edit:designs.update'].staff).not.toContain('material');
-    expect(w['edit:designs.update'].staff).not.toContain('purity');
-    expect(w['edit:designs.update'].staff).not.toContain('selling_method');
+    expect(w('edit:designs.update', 'staff')).toEqual([...A5.designs].sort());
+    expect(w('edit:designs.update', 'owner')).toEqual([...A5.designs, 'material', 'purity', 'selling_method'].sort());
+    expect(w('edit:designs.update', 'staff')).not.toContain('material');
+    expect(w('edit:designs.update', 'staff')).not.toContain('purity');
+    expect(w('edit:designs.update', 'staff')).not.toContain('selling_method');
     // skus: the content columns for the owner and staff
-    expect([...w['edit:skus.update'].owner!].sort()).toEqual([...A5.skus].sort());
-    expect([...w['edit:skus.update'].staff!].sort()).toEqual([...A5.skus].sort());
+    expect(w('edit:skus.update', 'owner')).toEqual([...A5.skus].sort());
+    expect(w('edit:skus.update', 'staff')).toEqual([...A5.skus].sort());
     // customers: the content columns for the owner and a biller; archived_at only for the owner
-    expect([...w['edit:customers.update'].biller!].sort()).toEqual([...A5.customers].sort());
-    expect([...w['edit:customers.update'].owner!].sort()).toEqual([...A5.customers, 'archived_at'].sort());
-    expect(w['edit:customers.update'].biller).not.toContain('archived_at');
+    expect(w('edit:customers.update', 'biller')).toEqual([...A5.customers].sort());
+    expect(w('edit:customers.update', 'owner')).toEqual([...A5.customers, 'archived_at'].sort());
+    expect(w('edit:customers.update', 'biller')).not.toContain('archived_at');
   });
 
   it('a user is never edited (A8) and neither is a bill, a bill line, a receipt or an allocation: no entry names them', () => {
@@ -387,9 +402,9 @@ async function catalogueProblems(c: Connection, database: string): Promise<strin
 }
 
 describe('T-D01 every table has a primary key and InnoDB', () => {
-  it('the migrated schema: all 27 tables (the 26 of the code, with the orders of FB-E1, and schema_migrations)', async () => {
+  it('the migrated schema: all 28 tables (the 26 of the code, with the orders of FB-E1, the roles of 0012, and schema_migrations)', async () => {
     const [tables] = await conn.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [scratch.database]);
-    expect(Number(tables[0].n)).toBe(27);
+    expect(Number(tables[0].n)).toBe(28);
     expect(await catalogueProblems(conn, scratch.database)).toEqual([]);
   });
 
