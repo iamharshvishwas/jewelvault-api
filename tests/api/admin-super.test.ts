@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { migrate } from '../../scripts/migrate.mjs';
 import { passwords } from '../../src/auth/password';
 import { createClock } from '../../src/clock';
@@ -9,6 +9,7 @@ import { txContext, withTx } from '../../src/db/tx';
 import { assertActiveRole, getRole, roleKeyField } from '../../src/permissions/roleStore';
 import { TICK_KEYS } from '../../src/permissions/ticks';
 import { T0, type World, makeWorld } from './cells';
+import { type GateTrigger, rolesLockWaiters, until, withGate, withGates } from './gate-support';
 import { csrfHeaders, secret } from './support';
 
 // Task 10 of the access plan (R2, R3, R12, R13, R14; DESIGN.md 6.1, 6.3, 6.6): the admin door and the Super Admin.
@@ -80,46 +81,34 @@ const login = (email: string, password: string) => world.app.inject({ method: 'P
 const meOf = (cookie: string) => world.app.inject({ method: 'GET', url: '/v1/auth/me', headers: { cookie } });
 
 /**
- * Runs `run` while the database takes 0.4 s to make a login an ACTIVE Super Admin (a BEFORE trigger on the insert of a flagged login and on the update that flags a login or switches a flagged one on): the time
- * between a call's check for another Super Admin and its commit becomes wide, so calls made at the same moment overlap there for sure, and a missing lock shows. The triggers are dropped again whatever happens.
+ * The gate of the Super Admin races (tests/api/gate-support.ts): a call is held inside the statement that makes a login an ACTIVE Super Admin (a BEFORE trigger on the insert of a flagged login and on the update that flags
+ * a login or switches a flagged one on) until the test has SEEN what it needs to see, so calls made at the same moment overlap there for sure and a missing lock shows. There is no fixed sleep: the hold lasts as long as
+ * the test wants it to, however busy the machine is. The triggers are dropped again whatever happens.
  */
-async function whileFlaggingIsSlow<T>(run: () => Promise<T>): Promise<T> {
-  const drop = async () => {
-    await world.sql.query('DROP TRIGGER IF EXISTS trg_test_slow_flag_insert');
-    await world.sql.query('DROP TRIGGER IF EXISTS trg_test_slow_flag_update');
-  };
-  await drop();
-  await world.sql.query('CREATE TRIGGER trg_test_slow_flag_insert BEFORE INSERT ON users FOR EACH ROW BEGIN IF NEW.is_super_admin = 1 THEN DO SLEEP(0.4); END IF; END');
-  await world.sql.query('CREATE TRIGGER trg_test_slow_flag_update BEFORE UPDATE ON users FOR EACH ROW BEGIN IF NEW.is_super_admin = 1 AND NEW.active = 1 AND (OLD.is_super_admin = 0 OR OLD.active = 0) THEN DO SLEEP(0.4); END IF; END');
-  try {
-    return await run();
-  } finally {
-    await drop();
-  }
-}
+const FLAGGING: GateTrigger[] = [
+  { name: 'trg_test_gate_flag_insert', when: 'BEFORE INSERT', table: 'users', condition: 'NEW.is_super_admin = 1' },
+  { name: 'trg_test_gate_flag_update', when: 'BEFORE UPDATE', table: 'users', condition: 'NEW.is_super_admin = 1 AND NEW.active = 1 AND (OLD.is_super_admin = 0 OR OLD.active = 0)' },
+];
 
 /**
- * Runs `run` while the database takes `seconds` to switch a login on (a BEFORE trigger on the update that sets `active` from 0 to 1): the call that switches it on sits inside its transaction, holding its locks,
- * for that long, and the test can do something at that moment (see untilSleeping). The trigger is dropped again whatever happens.
+ * Starts `calls` at the same moment, holds them at the gate, and proves that the race HAPPENED before it opens the gate: ONE call is inside the guard (held in the statement that makes the Super Admin) and every other call
+ * waits for the lock of the Owner role's row, which is the guard (R13). Without that lock they would all be inside the gate and the check fails, so the test cannot pass without the race. Returns the answers.
  */
-async function whileActivationIsSlow<T>(seconds: number, run: () => Promise<T>): Promise<T> {
-  await world.sql.query('DROP TRIGGER IF EXISTS trg_test_slow_activation');
-  await world.sql.query(`CREATE TRIGGER trg_test_slow_activation BEFORE UPDATE ON users FOR EACH ROW BEGIN IF OLD.active = 0 AND NEW.active = 1 THEN DO SLEEP(${seconds}); END IF; END`);
+async function raceAtTheGuard(calls: (() => Promise<LightMyRequestResponse>)[]): Promise<LightMyRequestResponse[]> {
+  // the temporary password is not what is raced: a stand-in hash keeps the calls from queueing for a free place to hash in, so that the time between "held" and "waiting" is a few round trips
+  const hashing = vi.spyOn(passwords, 'hash').mockResolvedValue('stand-in-hash-of-a-temporary-password');
   try {
-    return await run();
+    return await withGates(world, FLAGGING, async (gate) => {
+      const running = calls.map((c) => c());
+      await until(`one call is held at the gate and the other ${calls.length - 1} wait for the Owner row`, async () => (await gate.waiting()) + (await rolesLockWaiters(world)) >= calls.length);
+      expect(await gate.waiting(), 'exactly one call is inside the guard').toBe(1);
+      expect(await rolesLockWaiters(world), 'every other call waits for the guard\'s lock, the Owner role\'s row').toBe(calls.length - 1);
+      await gate.open();
+      return await Promise.all(running);
+    });
   } finally {
-    await world.sql.query('DROP TRIGGER IF EXISTS trg_test_slow_activation');
+    hashing.mockRestore();
   }
-}
-
-/** Waits until a statement of this database is inside SLEEP() (the slow trigger), so that what the test does next happens while the call holds its locks. */
-async function untilSleeping(): Promise<void> {
-  for (let i = 0; i < 200; i++) {
-    const n = Number((await world.sql.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE STATE LIKE 'User sleep%'"))[0][0].n);
-    if (n > 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error('no statement reached the slow trigger');
 }
 
 /** Runs `run` with the foreign keys of this test connection off (a hand edit of the database), and puts them back whatever happens. */
@@ -420,7 +409,7 @@ describe('POST /admin/v1/super-admin (make-super-admin, R14): a new login, or th
 
   it('five calls at the same moment make exactly one Super Admin: one 201 and four 409, and one flagged login is active at the end (the lock of the Owner role row, not luck: the insert is made slow)', async () => {
     await noSuperAdmin();
-    const results = await whileFlaggingIsSlow(() => Promise.all(Array.from({ length: 5 }, (_, i) => call('POST', '/admin/v1/super-admin', { email: newEmail(`race${i}`), full_name: `Race ${i}` }))));
+    const results = await raceAtTheGuard(Array.from({ length: 5 }, (_, i) => () => call('POST', '/admin/v1/super-admin', { email: newEmail(`race${i}`), full_name: `Race ${i}` })));
     expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409, 409, 409, 409]);
     expect(await activeSuperAdmins()).toHaveLength(1);
   });
@@ -428,9 +417,7 @@ describe('POST /admin/v1/super-admin (make-super-admin, R14): a new login, or th
   it('a promotion and a creation at the same moment make one Super Admin too: the login that is promoted and the login that is made cannot both end up active', async () => {
     await noSuperAdmin();
     const biller = await addLogin('biller');
-    const results = await whileFlaggingIsSlow(() =>
-      Promise.all([call('POST', '/admin/v1/super-admin', { email: biller.email, full_name: 'Made biller' }), call('POST', '/admin/v1/super-admin', { email: newEmail('raceb'), full_name: 'Race B' })]),
-    );
+    const results = await raceAtTheGuard([() => call('POST', '/admin/v1/super-admin', { email: biller.email, full_name: 'Made biller' }), () => call('POST', '/admin/v1/super-admin', { email: newEmail('raceb'), full_name: 'Race B' })]);
     expect(results.filter((r) => r.statusCode === 409), 'one of the two is refused').toHaveLength(1);
     expect(results.filter((r) => r.statusCode === 200 || r.statusCode === 201), 'and the other goes through').toHaveLength(1);
     expect(await activeSuperAdmins()).toHaveLength(1);
@@ -525,7 +512,7 @@ describe('activate refuses a login with the flag while another ACTIVE Super Admi
     await noSuperAdmin();
     const x = await world.addUser({ role: 'owner', superAdmin: true, active: false });
     const y = await world.addUser({ role: 'owner', superAdmin: true, active: false });
-    const results = await whileFlaggingIsSlow(() => Promise.all([call('POST', `/admin/v1/users/${x.userId}/activate`), call('POST', `/admin/v1/users/${y.userId}/activate`)]));
+    const results = await raceAtTheGuard([() => call('POST', `/admin/v1/users/${x.userId}/activate`), () => call('POST', `/admin/v1/users/${y.userId}/activate`)]);
     expect(results.map((r) => r.statusCode).sort()).toEqual([200, 409]);
     expect(await activeSuperAdmins()).toHaveLength(1);
   });
@@ -628,11 +615,12 @@ describe('activate refuses a login whose role is switched off: it would be a log
     const other = await world.scratch.connect();
     try {
       await other.query('SET SESSION innodb_lock_wait_timeout = 1');
-      // the activation sleeps 3 s holding its locks and the other connection gives up after 1 s: a wide margin, however busy the machine is
-      const res = await whileActivationIsSlow(3, async () => {
+      // the activation is held at a gate, inside its update and holding its locks, until the test has seen the switch-off wait and give up (after 1 s): the hold does not depend on how busy the machine is
+      const res = await withGate(world, 'trg_test_gate_activation', 'BEFORE UPDATE', 'users', `OLD.active = 0 AND NEW.active = 1 AND NEW.id = '${asleep.id}'`, async (gate) => {
         const pending = call('POST', `/admin/v1/users/${asleep.id}/activate`);
-        await untilSleeping();
+        await until('the activation is inside its update, holding the role row', async () => (await gate.waiting()) === 1);
         await expect(other.query('UPDATE roles SET active = 0 WHERE role_key = ?', [asleep.role])).rejects.toMatchObject({ errno: 1205 });
+        await gate.open();
         return pending;
       });
       expect(res.statusCode, res.body).toBe(200);
@@ -778,6 +766,38 @@ describe('list shows is_super_admin; every call writes its event and no password
       expect(rows.filter((r) => r.action !== 'event'), `${what}: one trigger row, for the insert`).toHaveLength(1);
       expect(JSON.stringify(rows), what).not.toMatch(/\$argon2|\$scrypt|password_hash|temporary/);
     }
+  });
+
+  it('three calls for the same NEW e-mail made together queue on the guard: one makes the login (201) and the two that waited look again once they hold it and answer as a promotion (200, created false, no temporary password) instead of being refused with their own e-mail', async () => {
+    await noSuperAdmin();
+    const email = newEmail('overlap');
+    const usersBefore = await countOf('users');
+    const answers = await raceAtTheGuard([
+      () => call('POST', '/admin/v1/super-admin', { email, full_name: 'Overlap One' }),
+      () => call('POST', '/admin/v1/super-admin', { email: email.toUpperCase(), full_name: 'Overlap Two' }),
+      () => call('POST', '/admin/v1/super-admin', { email: email.replace('@example.test', '@exampl\u00e9.test'), full_name: 'Overlap Three' }), // an accent the database counts as no difference
+    ]);
+    expect(answers.map((r) => r.statusCode).sort(), answers.map((r) => r.body).join(' ')).toEqual([200, 200, 201]);
+    const made = answers.find((r) => r.statusCode === 201) as LightMyRequestResponse;
+    expect(Object.keys(made.json()).sort()).toEqual(['created', 'temporary_password', 'user']);
+    for (const retry of answers.filter((r) => r.statusCode === 200)) {
+      expect(Object.keys(retry.json()).sort(), 'a retry gets the promote answer: no temporary password').toEqual(['created', 'user']);
+      expect(retry.json().created).toBe(false);
+      expect(retry.json().user).toMatchObject({ id: made.json().user.id, role: 'owner', active: true, must_change_password: true, is_super_admin: true });
+    }
+    expect(await countOf('users'), 'one login was made').toBe(usersBefore + 1);
+    expect(await userByEmail(email)).toMatchObject({ id: made.json().user.id, role: 'owner', is_super_admin: 1, active: 1, must_change_password: 1 });
+    expect(await activeSuperAdmins()).toHaveLength(1);
+    // every call left its one event, and the only row a trigger wrote is the insert of the login (promoting a Super Admin changes nothing)
+    const rows = (await Promise.all(answers.map((r) => auditOf(requestIdOf(r))))).flat();
+    const events = rows.filter((r) => r.action === 'event').map((r) => asObject(r.new_row));
+    expect(events.filter((e) => e.created === true)).toEqual([{ event: 'admin_make_super_admin', created: true }]);
+    expect(events.filter((e) => e.created === false)).toEqual([
+      { event: 'admin_make_super_admin', created: false, from: 'owner' },
+      { event: 'admin_make_super_admin', created: false, from: 'owner' },
+    ]);
+    expect(rows.filter((r) => r.action !== 'event'), 'one trigger row, for the insert').toHaveLength(1);
+    expect(JSON.stringify(rows)).not.toMatch(/\$argon2|\$scrypt|password_hash|stand-in-hash|temporary/);
   });
 
   it('a refused make-super-admin or activate leaves no event row', async () => {

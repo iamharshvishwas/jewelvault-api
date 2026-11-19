@@ -6,6 +6,7 @@ import { passwords } from '../../src/auth/password';
 import { grantsOf } from '../../src/permissions/grants';
 import type { Auth } from '../../src/permissions/route';
 import { type EditWorld, editWorld } from './edit-support';
+import { type Gate, rolesLockWaiters, until, withGate } from './gate-support';
 import { csrfHeaders, secret } from './support';
 
 // Task 13 of the access plan (DESIGN.md 6.3, 6.6; R2, R9; Review Focus 1, 2 and 5): the ROLE WRITES of the Super Admin's own API. Four calls under /v1/super, each a row of the permission matrix of kind `super`
@@ -1037,47 +1038,35 @@ describe('what a write answers, and the order in which it takes its locks', () =
     }
   });
 
-  /** The slow triggers of the race tests: a statement sleeps inside the database, so that two calls overlap for sure. Dropped again whatever happens. */
-  async function withTrigger<T>(name: string, ddl: string, run: () => Promise<T>): Promise<T> {
-    await w.world.sql.query(`DROP TRIGGER IF EXISTS ${name}`);
-    await w.world.sql.query(ddl);
-    try {
-      return await run();
-    } finally {
-      await w.world.sql.query(`DROP TRIGGER IF EXISTS ${name}`);
-    }
-  }
-  async function until(what: string, ready: () => Promise<boolean>): Promise<void> {
-    for (let i = 0; i < 300; i++) {
-      if (await ready()) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`never reached: ${what}`);
-  }
-  const sleeping = async () => Number((await sql<{ n: string }>("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE STATE LIKE 'User sleep%'"))[0].n) > 0;
-  /** A transaction of this database waits for a row lock now (read as root: the ten-box user cannot see other sessions). */
-  async function lockWaiting(): Promise<boolean> {
-    const root = await w.world.scratch.root();
-    try {
-      const [rows] = await root.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT' AND trx_query LIKE '%FROM roles%'");
-      return Number((rows as any[])[0].n) > 0;
-    } finally {
-      await root.end();
-    }
-  }
+  // The races below hold a call inside the database at a NAMED GATE (tests/api/gate-support.ts) and open it only after the test has SEEN what it needs to see: no fixed sleep, so no window of wall-clock time that a busy
+  // machine can close, and each race test proves that the race happened (it waits for the other call to be inside the database too, or counts the statements that were sent).
+  const waitingForARole = async () => (await rolesLockWaiters(w.world)) > 0;
   let doorCalls = 0;
   const door = (url: string, payload: object) =>
     w.world.app.inject({ method: 'POST', url, payload, headers: { authorization: `Bearer ${DOOR_TOKEN}`, 'x-real-ip': `198.51.${Math.floor(++doorCalls / 250)}.${(doorCalls % 250) + 1}` } });
+  /**
+   * Starts `calls` at the same moment, holds every one of them at the gate (inside its INSERT or UPDATE: each has chosen what it writes and passed its checks, and none has written), then opens the gate. Returns the answers
+   * and how many statements of the kind `write` were SENT, failed ones included (the spy sees every statement): the count says whether the race happened.
+   */
+  async function heldTogether(gate: Gate, calls: (() => Promise<LightMyRequestResponse>)[], write: RegExp): Promise<{ answers: LightMyRequestResponse[]; sent: number }> {
+    const from = w.world.spy.sent.length;
+    const running = calls.map((call) => call());
+    await until(`all ${calls.length} calls are held at the gate, inside their statement`, async () => (await gate.waiting()) === calls.length);
+    await gate.open();
+    const answers = await Promise.all(running);
+    return { answers, sent: w.world.spy.sqls().slice(from).filter((sql) => write.test(sql)).length };
+  }
 
   it('lock order against the terminal door: a login given this role while it is being switched off is counted (the switch-off waits for the door\'s lock and refuses), and a login given the role after it is refused', async () => {
-    // A. the door holds the role row (it is inside its INSERT of the login, which the database is made to hold for two seconds); the switch-off arrives, WAITS for that lock, and then counts the new login
+    // A. the door holds the role row (it is inside its INSERT of the login, held at the gate); the switch-off arrives, WAITS for that lock, and then counts the new login
     const a = await madeRole({ name: fresh('RaceA') });
     const emailA = `race-a-${letters(6)}@example.test`;
-    await withTrigger('trg_test_slow_login', "CREATE TRIGGER trg_test_slow_login BEFORE INSERT ON users FOR EACH ROW BEGIN IF NEW.full_name = 'Slow Newcomer' THEN DO SLEEP(2.5); END IF; END", async () => {
+    await withGate(w.world, 'trg_gate_login', 'BEFORE INSERT', 'users', "NEW.full_name = 'Slow Newcomer'", async (gate) => {
       const adding = door('/admin/v1/users', { email: emailA, full_name: 'Slow Newcomer', role: a.key });
-      await until('the door call is inside its slow insert', sleeping);
+      await until('the door call is inside its insert, held at the gate', async () => (await gate.waiting()) === 1);
       const switching = setActive(a.key, { expected_updated_at: a.updated_at, active: false });
-      await until('the switch-off waits for the role row', lockWaiting);
+      await until('the switch-off waits for the role row', waitingForARole);
+      await gate.open();
       const [added, off] = await Promise.all([adding, switching]);
       expect(added.statusCode, added.body).toBe(201);
       const e = refused(off, 409, 'JV_NOT_ALLOWED', {});
@@ -1086,14 +1075,15 @@ describe('what a write answers, and the order in which it takes its locks', () =
     expect((await listed(a.key)).active, 'the role is still on').toBe(true);
     expect(await sql('SELECT role, active FROM users WHERE email = ?', [emailA])).toEqual([{ role: a.key, active: 1 }]);
 
-    // B. the switch-off holds the role row (inside its UPDATE, held for two seconds, after it counted nobody); the door arrives, WAITS for the lock, then finds the role off and refuses: no login ends up on a switched-off role
+    // B. the switch-off holds the role row (it is inside its UPDATE, held at the gate, after it counted nobody); the door arrives, WAITS for the lock, then finds the role off and refuses: no login ends up on a switched-off role
     const b = await madeRole({ name: fresh('RaceB') });
     const emailB = `race-b-${letters(6)}@example.test`;
-    await withTrigger('trg_test_slow_off', 'CREATE TRIGGER trg_test_slow_off BEFORE UPDATE ON roles FOR EACH ROW BEGIN IF OLD.active = 1 AND NEW.active = 0 THEN DO SLEEP(2.5); END IF; END', async () => {
+    await withGate(w.world, 'trg_gate_off', 'BEFORE UPDATE', 'roles', `OLD.active = 1 AND NEW.active = 0 AND NEW.role_key = '${b.key}'`, async (gate) => {
       const switching = setActive(b.key, { expected_updated_at: b.updated_at, active: false });
-      await until('the switch-off is inside its slow update', sleeping);
+      await until('the switch-off is inside its update, held at the gate', async () => (await gate.waiting()) === 1);
       const adding = door('/admin/v1/users', { email: emailB, full_name: 'Late Newcomer', role: b.key });
-      await until('the door call waits for the role row', lockWaiting);
+      await until('the door call waits for the role row', waitingForARole);
+      await gate.open();
       const [off, added] = await Promise.all([switching, adding]);
       expect(off.statusCode, off.body).toBe(200);
       const e = refused(added, 422, 'JV_INVALID_INPUT', { field: 'role' });
@@ -1107,47 +1097,51 @@ describe('what a write answers, and the order in which it takes its locks', () =
 
   it('two roles made at the same moment: the same key is chosen again by the one that lost (no 500), the same name in two spellings is 422 on name (the database\'s 1062 under the race)', async () => {
     const slow = 'slow race';
-    await withTrigger('trg_test_slow_role', `CREATE TRIGGER trg_test_slow_role BEFORE INSERT ON roles FOR EACH ROW BEGIN IF NEW.description = '${slow}' THEN DO SLEEP(0.6); END IF; END`, async () => {
-      // different sources, so that the two calls do not queue on the lock of one source row and really overlap
-      // 1. two names that fold to one key: both read the keys before either has inserted; the loser is refused by the PRIMARY key, and chooses again
-      const stem = letters(5);
-      const [x, y] = await Promise.all([
-        create({ copy_of: 'biller', name: `${stem} 1`, description: slow }),
-        create({ copy_of: 'staff', name: `${stem} 2`, description: slow }),
-      ]);
+    // different sources, so that the two calls do not queue on the lock of one source row and really overlap; each pair is held at a gate of its own, inside its INSERT, so that both have chosen their key and passed the check for a clash
+
+    // 1. two names that fold to one key: both read the keys before either has inserted; the loser is refused by the PRIMARY key, and chooses again
+    const stem = letters(5);
+    await withGate(w.world, 'trg_gate_role_key', 'BEFORE INSERT', 'roles', `NEW.description = '${slow}'`, async (gate) => {
+      const keyed = await heldTogether(gate, [() => create({ copy_of: 'biller', name: `${stem} 1`, description: slow }), () => create({ copy_of: 'staff', name: `${stem} 2`, description: slow })], /^INSERT INTO roles\b/);
+      const [x, y] = keyed.answers;
       expect([x.statusCode, y.statusCode], `${x.body} ${y.body}`).toEqual([201, 201]);
       const keys = [x.json().role.key, y.json().role.key].sort();
       expect(keys[0]).toBe(stem);
       expect(keys[1]).toMatch(new RegExp(`^${stem}-[a-z]$`));
       expect(x.json().role.key).not.toBe(y.json().role.key);
+      expect(keyed.sent, 'three INSERTs were sent: both creates inserted, and the one that lost was refused by the PRIMARY key and inserted again: the race happened').toBe(3);
+    });
 
-      // 2. one name in two spellings the table takes for the same (a zero-width space is ignorable), with keys that differ: both pass the check for a clash, the second INSERT meets the unique key uq_roles_name
-      const word = letters(7);
-      const [p, q] = await Promise.all([
-        create({ copy_of: 'biller', name: word, description: slow }),
-        create({ copy_of: 'staff', name: `${word.slice(0, 3)}\u200b${word.slice(3)}`, description: slow }),
-      ]);
+    // 2. one name in two spellings the table takes for the same (a zero-width space is ignorable), with keys that differ: both pass the check for a clash, the second INSERT meets the unique key uq_roles_name
+    const word = letters(7);
+    await withGate(w.world, 'trg_gate_role_name', 'BEFORE INSERT', 'roles', `NEW.description = '${slow}'`, async (gate) => {
+      const named = await heldTogether(gate, [() => create({ copy_of: 'biller', name: word, description: slow }), () => create({ copy_of: 'staff', name: `${word.slice(0, 3)}\u200b${word.slice(3)}`, description: slow })], /^INSERT INTO roles\b/);
+      const [p, q] = named.answers;
       const statuses = [p.statusCode, q.statusCode].sort();
       expect(statuses, `${p.body} ${q.body}`).toEqual([201, 422]);
       const loser = p.statusCode === 422 ? p : q;
       const e = refused(loser, 422, 'JV_INVALID_INPUT', { field: 'name' });
       expect(e.message, 'the same words as the check made first').toBe(CLASH_SENTENCE);
-      expect(await sql('SELECT role_key FROM roles WHERE name = ?', [word])).toHaveLength(1);
+      expect(named.sent, 'two INSERTs were sent: the loser got past the check for a clash and was refused by the unique key, not by the check: the race happened').toBe(2);
     });
+    expect(await sql('SELECT role_key FROM roles WHERE name = ?', [word])).toHaveLength(1);
   }, 60_000);
 
   it('a rename that meets the unique key under a race is 422 on name too', async () => {
     const one = await madeRole({ name: fresh('RenA') });
     const two = await madeRole({ name: fresh('RenB') });
     const target = fresh('Target');
-    await withTrigger('trg_test_slow_rename', `CREATE TRIGGER trg_test_slow_rename BEFORE UPDATE ON roles FOR EACH ROW BEGIN IF NEW.name = '${target}' OR NEW.name = '${target}x' THEN DO SLEEP(0.6); END IF; END`, async () => {
-      const [a, b] = await Promise.all([
-        edit(one.key, { expected_updated_at: one.updated_at, changes: { name: target } }),
-        edit(two.key, { expected_updated_at: two.updated_at, changes: { name: target.toUpperCase() } }),
-      ]);
+    await withGate(w.world, 'trg_gate_rename', 'BEFORE UPDATE', 'roles', `NEW.name = '${target}'`, async (gate) => {
+      const { answers, sent } = await heldTogether(
+        gate,
+        [() => edit(one.key, { expected_updated_at: one.updated_at, changes: { name: target } }), () => edit(two.key, { expected_updated_at: two.updated_at, changes: { name: target.toUpperCase() } })],
+        /^UPDATE roles SET name = /,
+      );
+      const [a, b] = answers;
       expect([a.statusCode, b.statusCode].sort(), `${a.body} ${b.body}`).toEqual([200, 422]);
       const loser = a.statusCode === 422 ? a : b;
       expect(refused(loser, 422, 'JV_INVALID_INPUT', { field: 'name' }).message).toBe(CLASH_SENTENCE);
+      expect(sent, 'two UPDATEs were sent: the loser got past the check for a clash and was refused by the unique key, not by the check: the race happened').toBe(2);
     });
   }, 60_000);
 });

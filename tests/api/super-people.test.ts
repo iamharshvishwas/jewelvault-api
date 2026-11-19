@@ -8,6 +8,7 @@ import { grantsOf } from '../../src/permissions/grants';
 import { MATRIX } from '../../src/permissions/matrix';
 import type { Auth } from '../../src/permissions/route';
 import { type EditWorld, editWorld } from './edit-support';
+import { type Gate, type GateTrigger, rolesLockWaiters, until, withGate as sharedGate } from './gate-support';
 import { REPO, csrfHeaders, secret } from './support';
 
 // Task 14 of the access plan (DESIGN.md 6.3 and 6.6 rules 2 and 6; R9, R11, R12; Review Focus 3 and 4; P6, A8): the PEOPLE WRITES of the Super Admin's own API. Five calls under /v1/super/people, each a row of the
@@ -1069,55 +1070,10 @@ interface Ctx {
 }
 
 describe('a person that is given a role while the role is being switched off: the two are serialised (the switch-off counts the person, or the person is refused)', () => {
-  /** A slow trigger that waits on a NAMED LOCK the test holds (GET_LOCK on a connection of its own), instead of sleeping for a fixed time: the call under test is held inside its statement until the test has SEEN the other call
-   *  waiting and opens the gate. The trigger gives the lock back at once, so that a second waiter passes too. The name of the lock is made up for this run; the trigger is dropped whatever happens. */
-  async function withGate<T>(trigger: string, when: string, table: string, condition: string, run: (gate: { waiting(): Promise<number>; open(): Promise<void> }) => Promise<T>): Promise<T> {
-    const lockName = `jv-gate-${randomBytes(6).toString('hex')}`;
-    const holder = await w.world.scratch.connect();
-    const root = await w.world.scratch.root();
-    let closed = true;
-    const open = async () => {
-      if (!closed) return;
-      closed = false;
-      await holder.query('SELECT RELEASE_LOCK(?)', [lockName]);
-    };
-    try {
-      const [rows] = await holder.query<any[]>('SELECT GET_LOCK(?, 0) AS got', [lockName]);
-      expect(Number((rows as any[])[0].got), 'the gate is closed').toBe(1);
-      await w.world.sql.query(`DROP TRIGGER IF EXISTS ${trigger}`);
-      await w.world.sql.query(`CREATE TRIGGER ${trigger} ${when} ON ${table} FOR EACH ROW BEGIN IF ${condition} THEN DO GET_LOCK('${lockName}', 60); DO RELEASE_LOCK('${lockName}'); END IF; END`);
-      return await run({
-        waiting: async () => Number(((await root.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE STATE = 'User lock' AND INFO LIKE ?", [`%${lockName}%`]))[0] as any[])[0].n),
-        open,
-      });
-    } finally {
-      await open().catch(() => undefined);
-      await w.world.sql.query(`DROP TRIGGER IF EXISTS ${trigger}`).catch(() => undefined);
-      await holder.end().catch(() => undefined);
-      await root.end().catch(() => undefined);
-    }
-  }
-  /** Polls for a thing that happens in the database; there is no clock in it but the bound after which the test gives up. */
-  async function until(what: string, ready: () => Promise<boolean>): Promise<void> {
-    for (let i = 0; i < 2400; i++) {
-      if (await ready()) return;
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    throw new Error(`never reached: ${what}`);
-  }
-  /** A call of this database waits for a row lock of the roles table now (read as root: the ten-box user cannot see other sessions). */
-  async function waitingForARole(): Promise<boolean> {
-    const root = await w.world.scratch.root();
-    try {
-      const [rows] = await root.query<any[]>(
-        "SELECT COUNT(*) AS n FROM information_schema.INNODB_TRX t JOIN information_schema.PROCESSLIST p ON p.ID = t.trx_mysql_thread_id WHERE t.trx_state = 'LOCK WAIT' AND t.trx_query LIKE '%FROM roles%' AND p.DB = ?",
-        [w.world.scratch.database],
-      );
-      return Number((rows as any[])[0].n) > 0;
-    } finally {
-      await root.end();
-    }
-  }
+  // The gate, `until` and the poll for a call that waits for a role row are shared with the other race tests (tests/api/gate-support.ts): a slow trigger that waits on a NAMED LOCK the test holds, instead of a fixed sleep.
+  // These two are the same functions with this file's world filled in.
+  const withGate = <T>(trigger: string, when: GateTrigger['when'], table: string, condition: string, run: (gate: Gate) => Promise<T>): Promise<T> => sharedGate(w.world, trigger, when, table, condition, run);
+  const waitingForARole = async (): Promise<boolean> => (await rolesLockWaiters(w.world)) > 0;
   const stateOf = async (email: string) => {
     const [row] = await sql<{ role: string; active: number }>('SELECT role, active FROM users WHERE email = ?', [email]);
     return row === undefined ? { role: null, active: null } : { role: row.role, active: Number(row.active) === 1 };
