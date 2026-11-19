@@ -1383,7 +1383,8 @@ describe('A8', () => {
     expect(found['src/super/people.ts']).toHaveLength(5);
     for (const h of found['src/super/people.ts']) {
       expect(h, 'a statement of the people calls').not.toMatch(/is_super_admin/i);
-      expect(h).toMatch(/^(INSERT INTO users \(id, email, full_name, role, active, password_hash, must_change_password, created_at, updated_at, created_by, updated_by\)|UPDATE users SET (full_name = \?, email = \?|role = \?|active = \?|password_hash = \?, must_change_password = 1), updated_at = \?, updated_by = \? WHERE id = \?)/);
+      // anchored at both ends: the whole statement is one of these five texts, so an appended `OR 1=1`, an extra `SET` clause or a changed `VALUES` list fails
+      expect(h).toMatch(/^(INSERT INTO users \(id, email, full_name, role, active, password_hash, must_change_password, created_at, updated_at, created_by, updated_by\) VALUES \(\?, \?, \?, \?, 1, \?, 1, \?, \?, \?, \?\)|UPDATE users SET (full_name = \?, email = \?|role = \?|active = \?|password_hash = \?, must_change_password = 1), updated_at = \?, updated_by = \? WHERE id = \?)$/);
     }
     const flagWriters = Object.entries(found).filter(([, hits]) => hits.some((h) => /is_super_admin/i.test(h))).map(([file]) => file);
     expect(flagWriters.length, 'the flag is written by the terminal door').toBeGreaterThan(0);

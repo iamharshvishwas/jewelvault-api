@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import Fastify from 'fastify';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -632,19 +632,44 @@ describe('T-D10b the permission functions are given the grants the session read,
     return found;
   }
 
-  /** Whether the source holds a call `assertMayCall(grants, ...)`: the second check of X0 item 2, made inside the transaction. The same text in a comment or in a string is not a call. */
+  /** The text of an expression that is a string literal, or an identifier that a module-level `const NAME = '...'` gives one (`as const` and brackets looked through): how a function file spells its action, `'fn:create_bill'` or `ACTION`. */
+  function stringOf(sf: ts.SourceFile, expression: ts.Expression | undefined): string | undefined {
+    let e = expression;
+    while (e !== undefined && (ts.isAsExpression(e) || ts.isParenthesizedExpression(e) || ts.isSatisfiesExpression(e))) e = e.expression;
+    if (e === undefined) return undefined;
+    if (ts.isStringLiteralLike(e)) return e.text;
+    if (!ts.isIdentifier(e)) return undefined;
+    for (const statement of sf.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const d of statement.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === e.text && d.initializer !== undefined) return stringOf(sf, d.initializer);
+    }
+    return undefined;
+  }
+
+  /**
+   * Whether the source holds the second check of X0 item 2 FOR ITS OWN ROW: a call `assertMayCall(grants, <the action of the file's own route>)`, made inside the transaction. The file's own row is the `action: ...` of its route
+   * registration (the other `action:` keys of these files are audit verbs, `'insert'` and `'update'`, and never start with `fn:`); the call may spell it as the same literal or as the constant the registration names.
+   * A call for another row does not count: x01CreateBill.ts holds two calls, one in assertMayUseBody for `fn:record_payment` (payment lines) and its own for `fn:create_bill` at the end of createBill, and deleting the
+   * second must leave this false. The same text in a comment or in a string is not a call.
+   */
   function hasSecondCheck(file: string, source: string): boolean {
     const sf = parse(file, source);
-    let found = false;
+    const own = new Set<string>();
+    const checked = new Set<string>();
     const visit = (n: ts.Node) => {
+      if (ts.isPropertyAssignment(n) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && n.name.text === 'action') {
+        const action = stringOf(sf, n.initializer);
+        if (action !== undefined && action.startsWith('fn:')) own.add(action);
+      }
       if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'assertMayCall') {
         const first = n.arguments[0];
-        if (first !== undefined && ts.isIdentifier(first) && first.text === 'grants') found = true;
+        const second = stringOf(sf, n.arguments[1]);
+        if (first !== undefined && ts.isIdentifier(first) && first.text === 'grants' && second !== undefined) checked.add(second);
       }
       ts.forEachChild(n, visit);
     };
     visit(sf);
-    return found;
+    return own.size === 1 && [...checked].some((action) => own.has(action));
   }
 
   it('the scanner can see a role handed to a gate function (control): it flags every spelling in a sample and leaves the calls that pass grants and the uses of the role that are not a check', () => {
@@ -673,26 +698,65 @@ describe('T-D10b the permission functions are given the grants the session read,
     expect(hits.map((h) => `${relative(REPO, h.file)}:${h.line} ${h.text}`)).toEqual([]);
   });
 
-  it('the second-check scanner sees a missing call (control): the call is found in a function and not in a comment, a string, another name or another first argument', () => {
-    const real = "export async function f(grants: Grants) { return withTx(ctx, async (tx) => { await claim(tx); assertMayCall(grants, ACTION); }); }";
-    expect(hasSecondCheck('real.ts', real)).toBe(true);
-    expect(hasSecondCheck('real.ts', "assertMayCall(grants, 'fn:create_bill'); assertMayCall(grants, 'fn:record_payment');")).toBe(true);
-    for (const [what, source] of [
-      ['a comment', "export async function f(grants: Grants) { /* assertMayCall(grants, ACTION) */ // assertMayCall(grants, ACTION)\n}"],
-      ['a string', "export async function f(grants: Grants) { log('assertMayCall(grants, ACTION)'); }"],
-      ['another name', 'export async function f(grants: Grants) { mayCall(grants, ACTION); }'],
-      ['another first argument', 'export async function f(grants: Grants, auth: Auth) { assertMayCall(auth.user.grants, ACTION); assertMayCall(ACTION, grants); }'],
-      ['no call at all', 'export async function f(grants: Grants) { return grants; }'],
+  // How a function file looks to the scanner: the route registration names the row the file answers, and the second check is a call for that row. The x01 shape is the one with two calls (the payment lines' and its own).
+  const X01_SHAPE = (own: boolean) =>
+    [
+      "export function assertMayUseBody(grants: Grants, input: Body): void {",
+      "  if (hasPayments(input)) assertMayCall(grants, 'fn:record_payment');",
+      '}',
+      'export async function createBill(grants: Grants, input: Body) {',
+      '  return withTx(ctx, async (tx) => {',
+      '    await claim(tx);',
+      own ? "    assertMayCall(grants, 'fn:create_bill'); // X0 item 2" : '',
+      '    assertMayUseBody(grants, input);',
+      "    await auditChange(tx, { table: 'bills', action: 'insert', before: null, after: row });",
+      '  });',
+      '}',
+      "route(app, { action: 'fn:create_bill', handler: createBill });",
+    ].join('\n');
+
+  it('the second-check scanner sees a missing call (control): the call is found in a function, for the file\'s own row, and not in a comment, a string, another name, another first argument or another row', () => {
+    const constant = "const ACTION = 'fn:void_receipt';\nexport async function f(grants: Grants) { return withTx(ctx, async (tx) => { await claim(tx); assertMayCall(grants, ACTION); }); }\nroute(app, { action: ACTION, handler: f });";
+    expect(hasSecondCheck('constant.ts', constant), 'the constant spelling (ACTION)').toBe(true);
+    expect(hasSecondCheck('literal.ts', X01_SHAPE(true)), 'the literal spelling, with the audit verbs of the file in the way').toBe(true);
+    const own = "assertMayCall(grants, ACTION);";
+    const registration = "const ACTION = 'fn:void_receipt'; route(app, { action: ACTION, handler });";
+    for (const [what, call] of [
+      ['a comment', "/* assertMayCall(grants, ACTION) */ // assertMayCall(grants, ACTION)"],
+      ['a string', "log('assertMayCall(grants, ACTION)');"],
+      ['another name', 'mayCall(grants, ACTION);'],
+      ['another first argument', 'assertMayCall(auth.user.grants, ACTION); assertMayCall(ACTION, grants);'],
+      ['another row', "assertMayCall(grants, 'fn:record_payment');"],
+      ['an argument it cannot read', 'assertMayCall(grants, action);'],
+      ['no call at all', 'return grants;'],
     ] as const) {
-      expect(hasSecondCheck('missing.ts', source), what).toBe(false);
+      expect(hasSecondCheck('missing.ts', `${registration}\nexport async function f(grants: Grants) {\n${call}\n}`), what).toBe(false);
+      expect(hasSecondCheck('present.ts', `${registration}\nexport async function f(grants: Grants) {\n${call}\n${own}\n}`), `${what}, and the call for the file's own row next to it`).toBe(true);
     }
+    expect(hasSecondCheck('unrouted.ts', 'export async function f(grants: Grants) { assertMayCall(grants, ACTION); }'), 'no route registration: the file\'s own row cannot be known').toBe(false);
+    expect(hasSecondCheck('two.ts', "route(app, { action: 'fn:a', handler }); route(app, { action: 'fn:b', handler }); assertMayCall(grants, 'fn:a');"), 'two rows in one file: not the shape of these files').toBe(false);
   });
 
-  it('every money function (src/money/x01 to x07 and x10 to x12) checks the caller again with assertMayCall(grants, ...), so a deleted second check is noticed (X0 item 2)', () => {
-    const dir = join(srcDir, 'money');
-    const functions = tsFiles(dir).filter((f) => /^x\d{2}[A-Za-z0-9]*\.ts$/.test(relative(dir, f)));
-    const numbers = functions.map((f) => relative(dir, f).slice(0, 3)).sort();
-    expect(numbers, 'the ten files of the money functions are the ones scanned (a new one is added to this list on purpose)').toEqual(['x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x10', 'x11', 'x12']);
+  it('x01 holds two calls and the scanner counts only its own (control): with the call of createBill gone, the one for payment lines in assertMayUseBody is not enough', () => {
+    expect(hasSecondCheck('x01.ts', X01_SHAPE(true)), 'both calls').toBe(true);
+    expect(hasSecondCheck('x01.ts', X01_SHAPE(false)), 'only the call for fn:record_payment is left').toBe(false);
+    // the same on the real file, in memory: take out the line of createBill's own call and the scanner must notice
+    const file = join(srcDir, 'money', 'x01CreateBill.ts');
+    const real = readFileSync(file, 'utf8');
+    const lines = real.split('\n');
+    const ownCalls = lines.filter((l) => /assertMayCall\(grants, 'fn:create_bill'\)/.test(l));
+    const paymentCalls = lines.filter((l) => /assertMayCall\(grants, 'fn:record_payment'\)/.test(l));
+    expect(ownCalls, 'x01 makes its own second check on one line').toHaveLength(1);
+    expect(paymentCalls, 'and the one for payment lines on another').toHaveLength(1);
+    expect(hasSecondCheck(file, real), 'the real x01').toBe(true);
+    expect(hasSecondCheck(file, lines.filter((l) => !ownCalls.includes(l)).join('\n')), 'the real x01 without its own call').toBe(false);
+    expect(hasSecondCheck(file, lines.filter((l) => !paymentCalls.includes(l)).join('\n')), 'the real x01 without the call for payment lines: its own is still there').toBe(true);
+  });
+
+  it('every function that writes under a claim (src/money x01 to x07 and x10 to x12, src/stock x08 and x09, src/orders x13) checks the caller again for its own row with assertMayCall(grants, <its action>), so a deleted second check is noticed (X0 item 2)', () => {
+    const functions = ['money', 'stock', 'orders'].flatMap((d) => tsFiles(join(srcDir, d)).filter((f) => /^x\d{2}[A-Za-z0-9]*\.ts$/.test(basename(f))));
+    const numbers = functions.map((f) => basename(f).slice(0, 3)).sort();
+    expect(numbers, 'the thirteen files of the functions are the ones scanned (a new one is added to this list on purpose)').toEqual(['x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13']);
     expect(functions.filter((f) => !hasSecondCheck(f, readFileSync(f, 'utf8'))).map((f) => relative(REPO, f))).toEqual([]);
   });
 });

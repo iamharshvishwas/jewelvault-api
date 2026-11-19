@@ -856,7 +856,7 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
   // A8 CHANGED ON PURPOSE (access plan Task 14): the admin door was the only way to create or change a person. The Super Admin's own five calls under /v1/super/people now do as well (add, edit the name or e-mail,
   // change the role, switch off or on, reset the password); they are `super` rows that only the one Super Admin passes, and never on her own login but for the edit (tests/api/super-people.test.ts says all of it).
   it('the route table: the routes that create or change a person are the token routes of the admin door and the five rows of the Super Admin under /v1/super/people; no other session route writes under /users or /people', () => {
-    const writes = world.app.routeTable.filter((r) => r.method !== 'GET' && /\/(users|people)\b/.test(r.url));
+    const writes = world.app.routeTable.filter((r) => r.method !== 'GET' && /(users|people)/.test(r.url)); // a substring, as the filter was before the people calls: any write whose address holds either word
     expect(writes.length).toBeGreaterThan(0);
     const FIVE = ['super:people.active', 'super:people.add', 'super:people.edit', 'super:people.reset', 'super:people.role'];
     for (const r of writes.filter((x) => x.kind === 'token')) expect(r, `${r.method} ${r.url}`).toMatchObject({ kind: 'token', name: 'admin' });
@@ -885,6 +885,7 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
       if (file.startsWith(`src${'/'}admin${'/'}`)) continue;
       expect(['src/auth/loginRoutes.ts', 'src/super/people.ts'], 'a statement that writes users outside the admin door and the Super Admin\'s people calls').toContain(file);
       for (const h of hits) expect(h, `${file} sets the Super Admin flag`).not.toMatch(/is_super_admin/i); // DESIGN 6.6 rule 3: the flag is set by the admin door only
+      if (file === 'src/super/people.ts') expect(hits, 'the five statements of the people calls (the add, and the edit, role, switch and reset updates): a sixth is a new way to write a login and is added here on purpose').toHaveLength(5);
       if (file === 'src/auth/loginRoutes.ts') {
         for (const h of hits) {
           expect(h).toMatch(/SET\s+password_hash\s*=\s*\?,\s*must_change_password\s*=\s*0\s+WHERE\s+id\s*=\s*\?/i);
