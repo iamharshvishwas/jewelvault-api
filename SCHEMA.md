@@ -4,6 +4,8 @@ Date: Friday 16 October 2026 (aligned with spec **draft 5.2**; first written on 
 
 **Nothing here was run on Hostinger.** Everything was run on a local MariaDB 11.8.9 with Hostinger's isolation level. Applying it to the real database is a separate, small step (section 6).
 
+**Note of 19 November 2026.** The table counts in this draft stop at migrations 0001 to 0010 (26 tables). The tables `orders` (0011) and `roles` (0012) are not listed in them (the line about the audit triggers in section 1 does name them); the counts after 0012 are in `docs/handoffs.md`, in the last entry (Roles with ticks and the Super Admin).
+
 ## 1. What is in the folder
 
 | Path | What |
