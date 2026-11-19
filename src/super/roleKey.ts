@@ -7,7 +7,8 @@
 //   cleanRoleDescription  the description as it is stored: trimmed, at most 200 characters (the column), no control character; 422 on `description` otherwise. It may be empty.
 //   makeRoleKey           the key of a new role (R2), made once from its first name and never changed: the lower-case letters of the name (an accent goes to its letter), every other run of characters one hyphen,
 //                         the ends trimmed, cut to 10 characters, `role` when nothing is left; when that key is taken a hyphen and one random lower-case letter are added (so 12 characters at most) until one is
-//                         free. The key always matches ROLE_KEY_PATTERN (`^[a-z][a-z-]{0,11}$`): it fits `users.role` and the actor role of the audit rows.
+//                         free. The key always matches ROLE_KEY_PATTERN (`^[a-z][a-z-]{0,11}$`): it fits `users.role` and the actor role of the audit rows. The keys of the system actors of the Activity Log (RESERVED_KEYS)
+//                         count as taken, so that no role is mistaken for them on the screen.
 //
 // Characters are counted as the database counts them (code points, not UTF-16 units): a name of 40 emoji is 40 characters.
 import { randomInt } from 'node:crypto';
@@ -45,6 +46,12 @@ const drawLetter = (): string => LETTERS[randomInt(LETTERS.length)];
 /** How many times a random letter is tried before the letters are walked in order. */
 const RANDOM_TRIES = 12;
 
+/**
+ * Keys that no role may have: the `actor_role` values of the system actors of the Activity Log (audit_log.actor_role): `sql` (a hand edit in phpMyAdmin, no actor: src/db/audit.ts), `job` (the hourly tick) and `admin-cli`
+ * (the terminal door). A role with one of them would be shown beside those actors as if it were one. A name that folds to one is treated like a taken key and gets a letter.
+ */
+export const RESERVED_KEYS: ReadonlySet<string> = new Set(['sql', 'job', 'admin-cli']);
+
 /** The key a name gives before any clash: its letters, the rest hyphens, trimmed, at most 10 characters, `role` when none is left. */
 function baseKey(name: string): string {
   const folded = name
@@ -64,19 +71,20 @@ function* tails(): Generator<string> {
 }
 
 /**
- * The key of a new role named `name`, free among `taken` (the keys that exist, all lower case). `randomLetter` is the source of the letter that follows a clash (a test passes its own).
+ * The key of a new role named `name`, free among `taken` (the keys that exist, all lower case) and not one of RESERVED_KEYS. `randomLetter` is the source of the letter that follows a clash (a test passes its own).
  * It always ends: after a dozen random tries the letters are tried in order, then pairs of letters; a name whose keys are ALL taken (702 clashes) is an Error, which no shop reaches.
  */
 export function makeRoleKey(name: string, taken: ReadonlySet<string>, randomLetter: () => string = drawLetter): string {
+  const unavailable = (key: string): boolean => taken.has(key) || RESERVED_KEYS.has(key);
   const base = baseKey(name);
-  if (!taken.has(base)) return base;
+  if (!unavailable(base)) return base;
   for (let tries = 0; tries < RANDOM_TRIES; tries++) {
     const key = `${base}-${randomLetter()}`;
-    if (!taken.has(key)) return key;
+    if (!unavailable(key)) return key;
   }
   for (const tail of tails()) {
     const key = `${base.slice(0, 11 - tail.length).replace(/-+$/, '')}-${tail}`; // 12 characters at most whatever the length of the tail
-    if (!taken.has(key)) return key;
+    if (!unavailable(key)) return key;
   }
   throw new Error('every role key of this name is taken');
 }

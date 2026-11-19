@@ -70,7 +70,7 @@ export function judgeCash(o: JudgeInput, limit: bigint = CASH_LIMIT_PAISE): Cash
   if (o.mayOverride && reason.length > 0) return { reason };
   const who = o.mayOverride
     ? 'Give the reason in cash_override_reason (at least 10 characters) to save it.'
-    : 'Your role cannot enter this payment, with a reason.';
+    : 'Your role cannot take cash over the limit.';
   throw new JvError('JV_CASH_LIMIT', `Cash from this customer on one day would reach the limit of ₹${inRupees(limit)}. ${who}`, {
     details: { limit: fromUnits(limit, MONEY), cash_today: fromUnits(o.before, MONEY), this_call: fromUnits(o.cash, MONEY), date: o.day },
   });

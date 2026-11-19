@@ -471,6 +471,33 @@ describe('POST /v1/super/roles (super:roles.create)', () => {
     for (const r of await sql<{ role_key: string }>('SELECT role_key FROM roles')) expect(r.role_key).toMatch(KEY_SHAPE);
   });
 
+  it('role keys: the keys of the system actors of the Activity Log (sql, job, admin-cli) are reserved: a name that folds to one gets a letter like a taken key, and no role has one (final review)', async () => {
+    const { RESERVED_KEYS, makeRoleKey } = await import('../../src/super/roleKey');
+    expect([...RESERVED_KEYS].sort()).toEqual(['admin-cli', 'job', 'sql']);
+    const free = new Set<string>();
+    expect(makeRoleKey('SQL', free, () => 'x')).toBe('sql-x');
+    expect(makeRoleKey('  sql  ', free, () => 'x')).toBe('sql-x');
+    expect(makeRoleKey('Job', free, () => 'x')).toBe('job-x');
+    expect(makeRoleKey('Admin CLI', free, () => 'x')).toBe('admin-cli-x');
+    expect(makeRoleKey('admin-cli', free, () => 'x')).toBe('admin-cli-x');
+    // a name that only starts with one, or contains it, is not reserved
+    expect(makeRoleKey('Jobs', free)).toBe('jobs');
+    expect(makeRoleKey('SQL Reader', free)).toBe('sql-reader');
+    // the letter that follows is chosen as for any taken key: `sql-x` taken goes on to the next letter drawn, and the walk through the letters ends
+    const drawn = ['x', 'y'];
+    expect(makeRoleKey('SQL', new Set(['sql-x']), () => drawn.shift() as string)).toBe('sql-y');
+    const letterTails = [...'abcdefghijklmnopqrstuvwxyz'];
+    expect(makeRoleKey('Job', new Set(letterTails.map((l) => `job-${l}`)), () => 'a')).toBe('job-aa');
+    expect(makeRoleKey('Admin CLI', new Set(letterTails.map((l) => `admin-cli-${l}`)), () => 'a')).toBe('admin-cli-aa'); // 12 characters
+    // through the API: the three names make roles whose keys are not the reserved ones, and the table holds no reserved key
+    for (const [name, pattern] of [['SQL', /^sql-[a-z]$/], ['Job', /^job-[a-z]$/], ['Admin CLI', /^admin-cli-[a-z]$/]] as const) {
+      const made = await madeRole({ name });
+      expect(made.key, name).toMatch(pattern);
+      expect(made.key, name).toMatch(KEY_SHAPE);
+    }
+    expect(await sql('SELECT role_key FROM roles WHERE role_key IN (?, ?, ?)', ['sql', 'job', 'admin-cli']), 'no role has a reserved key').toEqual([]);
+  });
+
   it('names: Cashier, cashier, " Cashier " and "Cashier\u200b" are duplicates; "", "   ", "\u00b7\u00b7\u00b7" and 41 characters are 422 (Review Focus 5)', async () => {
     const label = `Dupe ${letters(6)}`;
     const first = await madeRole({ name: label });

@@ -275,7 +275,7 @@ describe('cash over the limit: a reason is accepted only for a role holding cash
     const stopped = await send(plain, call);
     expect(stopped.statusCode, stopped.body).toBe(409);
     expect(codeOf(stopped)).toBe('JV_CASH_LIMIT');
-    expect(body(stopped).error.message, 'a role without the tick is told so in words that name no role').toContain('Your role cannot enter this payment, with a reason.');
+    expect(body(stopped).error.message, 'a role without the tick is told so in words that name no role').toContain('Your role cannot take cash over the limit.');
     const stoppedToo = await send(allowed, call);
     expect(stoppedToo.statusCode, stoppedToo.body).toBe(409);
     expect(codeOf(stoppedToo)).toBe('JV_CASH_LIMIT');

@@ -73,6 +73,36 @@ describe('logging: cookies, authorization and password fields never reach the lo
     });
   });
 
+  it('redacts temporary_password (what add-user, reset and make-super-admin answer with) at the top, one, two and three levels down, in both spellings (defence in depth: the answer is never logged)', async () => {
+    await withApp(async (app, sink) => {
+      const values = Array.from({ length: 6 }, (_, i) => secret(`t${i}`));
+      const [a, b, c, d, e, f] = values;
+      toyRoutes(app).post('/echo', async (req) => {
+        req.log.info(
+          {
+            temporary_password: a,
+            body: { email: 'owner@example.test', temporary_password: b },
+            deep: { one: { temporary_password: c }, two: { three: { temporary_password: d } } },
+            camel: { temporaryPassword: e, nested: { temporaryPassword: f } },
+          },
+          'echo',
+        );
+        return { ok: true };
+      });
+      await app.inject({ method: 'POST', url: '/echo', headers: csrfHeaders(), payload: { email: 'owner@example.test' } });
+      const text = sink.text();
+      for (const v of values) expect(text, v).not.toContain(v);
+      const line = sink.lines().find((x) => x.msg === 'echo')!;
+      expect(line.temporary_password).toBe('[Redacted]');
+      expect(line.body.temporary_password).toBe('[Redacted]');
+      expect(line.deep.one.temporary_password).toBe('[Redacted]');
+      expect(line.deep.two.three.temporary_password).toBe('[Redacted]');
+      expect(line.camel.temporaryPassword).toBe('[Redacted]');
+      expect(line.camel.nested.temporaryPassword).toBe('[Redacted]');
+      expect(line.body.email).toBe('owner@example.test'); // control: the e-mail stays, so the line was written and only secrets are cut
+    });
+  });
+
   it('control: without the redact list the same line would carry the secret (the test can fail)', async () => {
     const { default: pino } = await import('pino');
     const sink = logSink();

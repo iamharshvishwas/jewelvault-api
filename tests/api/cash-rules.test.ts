@@ -57,7 +57,7 @@ describe('T-A12 / T-B23 Z1: a named customer\'s cash reaching the limit or more 
     expect(refusal(() => judgeCash({ ...named, mayOverride: true, reason: null, cash: LAKH2, before: 0n })).code).toBe('JV_CASH_LIMIT');
     const biller = refusal(() => judgeCash({ ...named, mayOverride: false, reason: 'ten people paid', cash: LAKH2, before: 0n }));
     expect(biller.code).toBe('JV_CASH_LIMIT');
-    expect(biller.message).toContain('Your role cannot enter this payment, with a reason.');
+    expect(biller.message).toContain('Your role cannot take cash over the limit.');
     expect(biller.message, 'the words name no role: a custom role without the tick reads them too').not.toMatch(/owner/i);
   });
 
