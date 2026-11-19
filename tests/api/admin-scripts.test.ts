@@ -11,7 +11,7 @@ import { createClock } from '../../src/clock';
 import { T0, type World, makeWorld } from './cells';
 import { REPO, buildDist, csrfHeaders } from './support';
 
-// API09: the three commands on Harsh's Mac. T-E09 (HTTP side): `npm run admin -- add-user|reset|role|deactivate|activate|clear-counters|record-pull|list` asks and prints, against the real door of a
+// API09: the three commands on Harsh's Mac. T-E09 (HTTP side): `npm run admin -- add-user|reset|role|deactivate|activate|clear-counters|record-pull|list|make-super-admin` asks and prints, against the real door of a
 // real listening application; `npm run make-token` and `npm run keygen` (the files scripts/make-token.mjs and scripts/keygen.mjs). The DRILL half of T-E09 (Harsh follows the runbook once) is OPS06.
 
 const TOKEN = randomBytes(32).toString('base64url');
@@ -192,7 +192,7 @@ describe('T-E09 `npm run keygen` makes the backup key pair: the private key to a
 
 // ------------------------------------------------------------------------------------------------ admin
 
-describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|activate|clear-counters|record-pull|list` asks for what it needs, calls the door and prints the temporary password', () => {
+describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|activate|clear-counters|record-pull|list|make-super-admin` asks for what it needs, calls the door and prints the temporary password', () => {
   let world: World;
   let base: string;
   let seq = 0;
@@ -302,6 +302,33 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
     expect((await userRow(e))?.role).toBe('biller');
   });
 
+  it('add-user and role take the key of any active role: the command keeps no list of roles, writes the key in lower case whatever case it was typed in, and prints the door\'s sentence for a key that is not an active role', async () => {
+    await world.addRole({ key: 'cashiertwo', name: 'Cashier Two', ticks: ['customer_view'] });
+    await world.addRole({ key: 'retiredtwo', name: 'Retired Two', ticks: [], active: false });
+    const e = email('cli-custom');
+    const made = await run(['add-user'], { answers: { email: e, name: 'Custom Role', role: '  CashierTwo ' } });
+    expect(made.code, made.err).toBe(0);
+    expect(made.out).toContain('cashiertwo');
+    expect((await userRow(e))?.role).toBe('cashiertwo');
+    const moved = await run(['role'], { answers: { email: e, role: 'staff' } });
+    expect(moved.code, moved.err).toBe(0);
+    expect(moved.out).toMatch(/cashiertwo/);
+    expect((await userRow(e))?.role).toBe('staff');
+    const back = await run(['role'], { answers: { email: e, role: 'cashiertwo' } });
+    expect(back.code, back.err).toBe(0);
+    expect((await userRow(e))?.role).toBe('cashiertwo');
+    for (const [role, tool] of [['nosuchrole', ['add-user']], ['retiredtwo', ['add-user']], ['nosuchrole', ['role']], ['retiredtwo', ['role']]] as const) {
+      const fresh = email('cli-refused');
+      const answers: Record<string, string> = tool[0] === 'add-user' ? { email: fresh, name: 'Refused Role', role } : { email: e, role };
+      const refused = await run([...tool], { answers });
+      expect(refused.code, `${tool[0]} ${role}`).toBe(1);
+      expect(refused.err, `${tool[0]} ${role}`).toContain('role is not an active role');
+      expect(refused.err).not.toContain(TOKEN);
+      expect(await userRow(fresh), 'the refused add-user made no user').toBeUndefined();
+    }
+    expect((await userRow(e))?.role, 'the refused role changes left the role as it was').toBe('cashiertwo');
+  });
+
   it('deactivate and activate: a user who is not active reads nothing, and signs in again after the activation', async () => {
     const e = email('cli-active');
     const made = await run(['add-user'], { answers: { email: e, name: 'On Off', role: 'biller' } });
@@ -365,6 +392,80 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
     }
   });
 
+  it('make-super-admin asks the token, the e-mail and the name, prints the temporary password once; the login is a Super Admin (role owner) who must change the password, and list says so', async () => {
+    await world.sql.query('UPDATE users SET active = 0 WHERE is_super_admin = 1'); // the fixture holds an active Super Admin, and the door refuses a second one
+    const e = email('cli-super');
+    const r = await run(['make-super-admin'], { answers: { email: e, name: 'Siddhi Test' } });
+    expect(r.code, r.err).toBe(0);
+    expect(r.asked).toEqual(['token', 'email', 'name']);
+    const temporary = passwordIn(r.out);
+    expect(r.out).toContain(e);
+    expect(r.out).toMatch(/Super Admin/);
+    expect(r.out).not.toContain(TOKEN);
+    expect(r.err).toBe('');
+    expect(await userRow(e)).toMatchObject({ role: 'owner', is_super_admin: 1, active: 1, must_change_password: 1, full_name: 'Siddhi Test' });
+    const signedIn = await login(e, temporary);
+    expect(signedIn.statusCode, signedIn.body).toBe(200);
+    expect(signedIn.json().user.must_change_password).toBe(true);
+    const listed = await run(['list']);
+    expect(listed.out.split('\n').find((l) => l.startsWith(e))).toMatch(/Super Admin/i);
+    expect(listed.out.split('\n').filter((l) => /Super Admin/i.test(l))).toHaveLength(Number((await world.sql.query<any[]>('SELECT COUNT(*) AS n FROM users WHERE is_super_admin = 1'))[0][0].n));
+  });
+
+  it('make-super-admin for an e-mail that already has a login promotes it: no temporary password is printed, the password is kept, and a login that is not active is said to stay so', async () => {
+    await world.sql.query('UPDATE users SET active = 0 WHERE is_super_admin = 1');
+    const e = email('cli-promote');
+    const made = await run(['add-user'], { answers: { email: e, name: 'Promote Me', role: 'biller' } });
+    const temporary = passwordIn(made.out);
+    const before = (await userRow(e))?.password_hash;
+    const r = await run(['make-super-admin'], { answers: { email: e.toUpperCase(), name: 'Someone Else' } });
+    expect(r.code, r.err).toBe(0);
+    expect(r.out.match(PASSWORD_SHAPE), 'no temporary password is printed for a login that already has one').toBeNull();
+    expect(r.out).toMatch(/Super Admin/);
+    expect(r.out).toMatch(/password is (kept|unchanged)/i);
+    expect(r.out).not.toMatch(/not active/i);
+    expect(await userRow(e)).toMatchObject({ role: 'owner', is_super_admin: 1, active: 1, full_name: 'Promote Me' });
+    expect((await userRow(e))?.password_hash).toBe(before);
+    expect((await login(e, temporary)).statusCode, 'the password it had still works').toBe(200);
+
+    // not active: it stays not active, and the command says what to do
+    await world.sql.query('UPDATE users SET active = 0 WHERE is_super_admin = 1');
+    const asleep = email('cli-asleep');
+    await run(['add-user'], { answers: { email: asleep, name: 'Asleep', role: 'staff' } });
+    await run(['deactivate'], { answers: { email: asleep } });
+    const off = await run(['make-super-admin'], { answers: { email: asleep, name: 'Asleep' } });
+    expect(off.code, off.err).toBe(0);
+    expect(off.out).toMatch(/not active/i);
+    expect(off.out).toMatch(/activate/);
+    expect(await userRow(asleep)).toMatchObject({ role: 'owner', is_super_admin: 1, active: 0 });
+  });
+
+  it('make-super-admin and activate print the door\'s sentence when another Super Admin is active, exit 1 and change nothing', async () => {
+    await world.sql.query('UPDATE users SET active = 0 WHERE is_super_admin = 1');
+    const first = (await world.addUser({ role: 'owner', superAdmin: true })).email;
+    const asleep = await world.addUser({ role: 'owner', superAdmin: true, active: false });
+    const sentence = `Another Super Admin is active (${first}). Switch that login off first with deactivate.`;
+
+    const e = email('cli-second');
+    const refused = await run(['make-super-admin'], { answers: { email: e, name: 'Second One' } });
+    expect(refused.code).toBe(1);
+    expect(refused.out).toBe('');
+    expect(refused.err).toBe(`${sentence}\n`);
+    expect(await userRow(e)).toBeUndefined();
+
+    const activate = await run(['activate'], { answers: { email: asleep.email } });
+    expect(activate.code).toBe(1);
+    expect(activate.err).toBe(`${sentence}\n`);
+    expect((await userRow(asleep.email))?.active).toBe(0);
+
+    // after the first is switched off, the same command works
+    const off = await run(['deactivate'], { answers: { email: first } });
+    expect(off.code, off.err).toBe(0);
+    const ok = await run(['make-super-admin'], { answers: { email: e, name: 'Second One' } });
+    expect(ok.code, ok.err).toBe(0);
+    expect(ok.out.match(PASSWORD_SHAPE)).toHaveLength(1);
+  });
+
   it('a wrong token: prints that the token was refused (never the door\'s detail), exits 1, and changes nothing', async () => {
     const e = email('cli-nobody');
     const r = await run(['add-user'], { token: randomBytes(32).toString('base64url'), answers: { email: e, name: 'Nobody', role: 'staff' } });
@@ -373,19 +474,20 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
     expect(await userRow(e)).toBeUndefined();
   });
 
-  it('an e-mail that is not a user: says so and exits 1; a role that does not exist: says so before any call', async () => {
+  it('an e-mail that is not a user: says so and exits 1; a role that is not an active role: the door is asked (the command keeps no list of roles) and its sentence is printed', async () => {
     const r = await run(['reset'], { answers: { email: email('cli-ghost') } });
     expect(r.code).toBe(1);
     expect(r.err).toMatch(/no user/i);
     const calls: string[] = [];
     const spyFetch = ((url: string | URL | Request, init?: RequestInit) => {
-      calls.push(`${init?.method ?? 'GET'} ${String(url)}`);
-      return fetch(url, init);
+      calls.push(`${init?.method ?? 'GET'} ${new URL(String(url)).pathname}`);
+      return fetch(url, { ...init, headers: { ...(init?.headers as Record<string, string>), 'x-real-ip': ipFor() } });
     }) as typeof fetch;
     const bad = await run(['add-user'], { answers: { email: email('cli-bad'), name: 'Bad Role', role: 'admin' }, fetch: spyFetch });
     expect(bad.code).toBe(1);
     expect(bad.err).toMatch(/role/i);
-    expect(calls).toEqual([]);
+    expect(bad.err).toContain('role is not an active role');
+    expect(calls, 'the command made the call and the door refused it').toEqual(['POST /admin/v1/users']);
   });
 
   it('never sends the token over plain http to another computer: the call is not made and the token is not sent', async () => {
@@ -416,7 +518,7 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
       const r = await run(argv);
       expect(r.code, argv.join(' ')).toBe(1);
       expect(r.asked).toEqual([]);
-      for (const word of ['add-user', 'reset', 'role', 'deactivate', 'activate', 'clear-counters', 'record-pull', 'list']) expect(r.err).toContain(word);
+      for (const word of ['add-user', 'reset', 'role', 'deactivate', 'activate', 'clear-counters', 'record-pull', 'list', 'make-super-admin']) expect(r.err).toContain(word);
     }
   });
 
@@ -437,10 +539,10 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
     expect((await login(e, temporary)).statusCode).toBe(200);
   }, 60_000);
 
-  it('`npm run check:routes` lists the eight routes of the admin door as token routes (A1: every route the built app can have is on the page)', () => {
+  it('`npm run check:routes` lists the nine routes of the admin door as token routes (A1: every route the built app can have is on the page)', () => {
     const out = execFileSync(process.execPath, [join(REPO, 'scripts', 'check-routes.mjs'), buildDist()], { cwd: REPO, encoding: 'utf8' });
     const door = out.split('\n').filter((l) => /\/admin\/v1\//.test(l));
-    expect(door).toHaveLength(8);
+    expect(door).toHaveLength(9);
     for (const l of door) expect(l).toMatch(/token\s+admin/);
   }, 120_000);
 
