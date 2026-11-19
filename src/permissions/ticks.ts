@@ -121,7 +121,7 @@ const DEFS: Record<TickKey, TickDef> = {
     group: 'Money',
     label: 'Re-issue a bill',
     sensitive: true,
-    needs: ['customer_view', 'bill_view'],
+    needs: ['customer_view', 'bill_view', 'bill_make'], // R21: the Re-issue button opens the billing screen
     help: 'Without "Use a date other than today", only bills dated today can be re-issued (the new bill keeps the old date). Without "Receive payments and settle fine", the re-issue takes no new payment.',
   },
   payment_void: { group: 'Money', label: 'Void a payment', sensitive: true, needs: ['customer_view', 'bill_view'] },

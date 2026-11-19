@@ -39,7 +39,7 @@ const TABLE: readonly (readonly [string, string, string, readonly string[]])[] =
   ['rate_correct', 'Money', 'Correct a daily rate', ['rate_enter']],
   ['back_date', 'Money', 'Use a date other than today (back-date)', []],
   ['bill_cancel', 'Money', 'Cancel a bill', ['customer_view', 'bill_view']],
-  ['bill_reissue', 'Money', 'Re-issue a bill', ['customer_view', 'bill_view']],
+  ['bill_reissue', 'Money', 'Re-issue a bill', ['customer_view', 'bill_view', 'bill_make']], // R21: the Re-issue button opens the billing screen
   ['payment_void', 'Money', 'Void a payment', ['customer_view', 'bill_view']],
   ['refund_give', 'Money', 'Give a refund', ['customer_view', 'bill_view']],
   ['opening_balance', 'Money', 'Add an opening balance', ['customer_view', 'bill_view']],
@@ -152,6 +152,13 @@ describe('needs', () => {
     expect(closeOverNeeds(['activity_log'])).toEqual(['secret_weight', 'customer_view', 'bill_view', 'order_view', 'activity_log']);
     expect(closeOverNeeds(['customer_archive'])).toEqual(['customer_view', 'bill_view', 'customer_archive']); // R19: the archive refusal names balances, which are data of the bills read
     expect(closeOverNeeds(['download_all'])).toEqual(['customer_view', 'bill_view', 'download_all']); // R20: the zip is built from what the person may read, customers and bills included
+  });
+
+  it("closeOverNeeds(['bill_reissue']) is customer_view, bill_view, bill_make, bill_reissue", () => {
+    // R21: the Re-issue button opens the billing screen (/billing-pos), which needs bill_make, so the tick pulls it in: the roles screen says so in its "Also needs" line
+    expect(closeOverNeeds(['bill_reissue'])).toEqual(['customer_view', 'bill_view', 'bill_make', 'bill_reissue']);
+    // what the API saved before R21 (re-issue without making bills) is now a set it refuses: bill_make is what it lacks
+    expect(brokenNeeds(['customer_view', 'bill_view', 'bill_reissue'])).toEqual([{ tick: 'bill_reissue', missing: ['bill_make'] }]);
   });
 
   it('closeOverNeeds of any one tick is that tick and everything it needs, however deep, in catalogue order', () => {
