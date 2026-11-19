@@ -39,7 +39,7 @@ export const ORDERS: EditTable = {
 
 const orderRules: UpdateRule = async ({ tx, grants, id, current, diff }) => {
   if ('status' in diff && CLOSED_STATUSES.includes(String(current.status)) && !mayUseField(grants, 'change_closed_order')) {
-    throw notAllowed('changes.status', `This order is ${String(current.status)}. Only the owner can change its status now.`);
+    throw notAllowed('changes.status', `This order is ${String(current.status)}. Your role cannot change its status now.`);
   }
   if (!('photo_ids' in diff)) return;
   const before = f.parseList(current.photo_ids) as string[];

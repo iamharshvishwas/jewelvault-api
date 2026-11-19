@@ -275,10 +275,12 @@ describe('cash over the limit: a reason is accepted only for a role holding cash
     const stopped = await send(plain, call);
     expect(stopped.statusCode, stopped.body).toBe(409);
     expect(codeOf(stopped)).toBe('JV_CASH_LIMIT');
+    expect(body(stopped).error.message, 'a role without the tick is told so in words that name no role').toContain('Your role cannot enter this payment, with a reason.');
     const stoppedToo = await send(allowed, call);
     expect(stoppedToo.statusCode, stoppedToo.body).toBe(409);
     expect(codeOf(stoppedToo)).toBe('JV_CASH_LIMIT');
     expect(body(stoppedToo).error.message, 'the answer says what lets it through').toMatch(/reason/i);
+    expect(body(stoppedToo).error.message, 'what a permitted person reads is unchanged').toContain('Give the reason in cash_override_reason (at least 10 characters) to save it.');
 
     const key = randomUUID();
     const before = await trace();
@@ -286,6 +288,7 @@ describe('cash over the limit: a reason is accepted only for a role holding cash
     expect(refused.statusCode, refused.body).toBe(403);
     expect(codeOf(refused)).toBe('JV_FORBIDDEN');
     expect(errorField(refused)).toBe('cash_override_reason');
+    expect(body(refused).error.message).toBe('Your role cannot give a reason for cash over the limit.');
     expect(await trace(), 'the refused reason left something behind').toEqual(before);
 
     const done = await send(allowed, withReason, key); // the same key: the claim of the refused call was rolled back, so this is a first use

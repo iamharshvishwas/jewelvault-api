@@ -220,7 +220,7 @@ export interface PaymentPlan {
 export function assertMayUseBody(grants: Grants, input: Pick<CreateBillBody, 'payments' | 'cash_override_reason'>): void {
   if ((input.payments ?? []).some((p) => toUnits(p.amount, MONEY) > 0n)) assertMayCall(grants, 'fn:record_payment');
   if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
-    throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
+    throw new JvError('JV_FORBIDDEN', 'Your role cannot give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
   }
 }
 

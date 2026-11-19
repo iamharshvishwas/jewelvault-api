@@ -167,7 +167,7 @@ export async function settleFine(
     const c = await claim(tx, { key, fn: 'settle_fine', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
     assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
-      throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
+      throw new JvError('JV_FORBIDDEN', 'Your role cannot give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
     }
     if (!c.first) return { value: c.result as SettleFineResult, replayed: true };
 

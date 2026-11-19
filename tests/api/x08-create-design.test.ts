@@ -165,6 +165,7 @@ describe('X8 create_design', () => {
       expect(res.statusCode, res.body).toBe(403);
       expect(errorCode(res)).toBe('JV_FORBIDDEN');
       expect(errorField(res)).toBe('pieces[0].original_net_weight');
+      expect(body(res).error.message).toBe('Your role cannot enter the original net weight.');
       expect(res.body).not.toContain('9.876');
       expect(await footprint(w)).toEqual(before); // the claim was rolled back with everything else (X0 item 2)
       expect(await counterOf(w, 'design:PAY')).toBe(0); // the series row is made before the transaction (L3); the number taken inside it was rolled back

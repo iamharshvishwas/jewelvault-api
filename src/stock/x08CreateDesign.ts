@@ -254,7 +254,7 @@ export async function createDesign(app: FastifyInstance, request: FastifyRequest
     assertMayCall(grants, 'fn:create_design'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     const mayEnterWeight = mayUseField(grants, 'original_net_weight');
     if (!mayEnterWeight && prepared.firstOriginal >= 0) {
-      throw new JvError('JV_FORBIDDEN', 'The original net weight can only be entered by the owner.', { details: { field: `pieces[${prepared.firstOriginal}].original_net_weight` } });
+      throw new JvError('JV_FORBIDDEN', 'Your role cannot enter the original net weight.', { details: { field: `pieces[${prepared.firstOriginal}].original_net_weight` } });
     }
     if (!c.first) return { value: c.result as CreateDesignResult, replayed: true };
 

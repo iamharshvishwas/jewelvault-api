@@ -231,6 +231,7 @@ describe('FB-E1 PATCH /v1/orders/:id (the edit, A5)', () => {
     const id = await addOrder(w, { status: 'delivered' });
     const biller = await edit('biller', id, STAMP_WIRE, { status: 'cancelled' });
     expect([biller.statusCode, codeOf(biller), detailsOf(biller)?.field]).toEqual([409, 'JV_NOT_ALLOWED', 'changes.status']);
+    expect(body(biller).error.message).toBe('This order is delivered. Your role cannot change its status now.');
     expect(await stampOf(w, 'orders', id)).toBe(STAMP_WIRE);
     const owner = await edit('owner', id, STAMP_WIRE, { status: 'cancelled' });
     expect([owner.statusCode, body(owner).row.status]).toEqual([200, 'cancelled']);
