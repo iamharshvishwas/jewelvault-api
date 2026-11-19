@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { READ_COLUMNS } from '../../src/permissions/matrix';
-import { TICK_KEYS, type TickKey, closeOverNeeds } from '../../src/permissions/ticks';
+import { TICK_KEYS, type TickKey, brokenNeeds, closeOverNeeds } from '../../src/permissions/ticks';
 import { insert } from '../schema/support';
 import { dbCounts } from './download-support';
 import { TODAY, TOMORROW, YESTERDAY, addCustomer, addRate, allRows, rateBody } from './edit-13b-support';
@@ -550,12 +550,12 @@ describe('create_design, set_sku_status, create_order and the photo routes ask t
 
 // ------------------------------------------------------------------ the download record
 
-describe('owner:download_record: a custom role with download_all alone completes the call end to end', () => {
+describe('owner:download_record: a custom role with download_all and what it needs (R20) completes the call end to end', () => {
   const URL = '/v1/owner/download-record';
 
-  it('download_all alone records the download: the answer is the record, the setting is stored and audited under the person and the role key; settings_change is not needed', async () => {
+  it('download_all with the customers and bills it needs records the download: the answer is the record, the setting is stored and audited under the person and the role key; settings_change is not needed', async () => {
     const downloader = await person(['download_all']);
-    expect(closeOverNeeds(['download_all'])).toEqual(['download_all']);
+    expect(closeOverNeeds(['download_all'])).toEqual(['customer_view', 'bill_view', 'download_all']); // R20
     const counts = await dbCounts(w.world.sql);
     const before = await trace();
 
@@ -573,6 +573,29 @@ describe('owner:download_record: a custom role with download_all alone completes
     const again = await send(downloader, 'POST', URL, { date: TODAY, counts: await dbCounts(w.world.sql) });
     expect(again.statusCode, again.body).toBe(200);
     expect((await rows(w, 'SELECT action FROM audit_log WHERE request_id = ?', [requestIdOf(again)])).map((r) => r.action)).toEqual(['update']);
+  });
+
+  it('R20, ruling U: download_all needs customer_view and bill_view; the role the API saves with it reads the five customer and bill files of the zip and records the download, while download_all alone now breaks a need', async () => {
+    expect(closeOverNeeds(['download_all'])).toEqual(['customer_view', 'bill_view', 'download_all']);
+    expect(brokenNeeds(['download_all'])).toEqual([{ tick: 'download_all', missing: ['customer_view', 'bill_view'] }]);
+    const downloader = await person(['download_all']);
+    const oldStyle = await bare(['download_all']); // what a hand edit could still leave: only the download tick
+    await addCustomer(w);
+    const reads = (who: { cookie: string }, file: string) => w.world.app.inject({ method: 'GET', url: `/v1/sync/${file}?limit=1000`, headers: { cookie: who.cookie } });
+    // the browser builds the zip from what the person reads: these are the files that hold customers and bills
+    for (const file of ['customers', 'bills', 'bill-items', 'receipts', 'receipt-allocations']) {
+      const read = await reads(downloader, file);
+      expect([file, read.statusCode], read.body).toEqual([file, 200]);
+      expect([file, (await reads(oldStyle, file)).statusCode]).toEqual([file, 403]); // an empty file in the zip, and counts the API cannot accept
+    }
+    expect(((await reads(downloader, 'customers')).json() as { rows: unknown[] }).rows.length).toBeGreaterThan(0);
+    const counts = await dbCounts(w.world.sql);
+    expect(counts.customers).toBeGreaterThan(0);
+    const emptyFile = await send(oldStyle, 'POST', URL, { date: TODAY, counts: { ...counts, customers: 0 } }); // what the browser sends when it could read no customer
+    expect([emptyFile.statusCode, codeOf(emptyFile), detailsOf(emptyFile)?.field]).toEqual([422, 'JV_INVALID_INPUT', 'counts.customers']);
+    const done = await send(downloader, 'POST', URL, { date: TODAY, counts });
+    expect(done.statusCode, done.body).toBe(200);
+    expect(body(done)).toEqual({ last_download: { at: expect.stringMatching(/^2026-10-17T10:00:00\.\d{3}Z$/), by: downloader.userId, counts } });
   });
 
   it('a role with every other tick (settings_change included) is refused and nothing is written; the key of the setting is not a thing settings_change gives', async () => {

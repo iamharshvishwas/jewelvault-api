@@ -54,7 +54,7 @@ const TABLE: readonly (readonly [string, string, string, readonly string[]])[] =
     'See the Activity Log and health checks (shows every change ever made, including customers, money and the secret weight)',
     ['secret_weight', 'customer_view', 'bill_view', 'order_view'],
   ],
-  ['download_all', 'Records', 'Download everything', []],
+  ['download_all', 'Records', 'Download everything', ['customer_view', 'bill_view']],
   ['settings_change', 'Shop', 'Change shop settings', []],
 ];
 
@@ -151,6 +151,7 @@ describe('needs', () => {
     expect(closeOverNeeds(['cash_over_limit'])).toEqual(['customer_view', 'bill_view', 'payment_receive', 'cash_over_limit']);
     expect(closeOverNeeds(['activity_log'])).toEqual(['secret_weight', 'customer_view', 'bill_view', 'order_view', 'activity_log']);
     expect(closeOverNeeds(['customer_archive'])).toEqual(['customer_view', 'bill_view', 'customer_archive']); // R19: the archive refusal names balances, which are data of the bills read
+    expect(closeOverNeeds(['download_all'])).toEqual(['customer_view', 'bill_view', 'download_all']); // R20: the zip is built from what the person may read, customers and bills included
   });
 
   it('closeOverNeeds of any one tick is that tick and everything it needs, however deep, in catalogue order', () => {

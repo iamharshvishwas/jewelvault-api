@@ -140,7 +140,7 @@ const DEFS: Record<TickKey, TickDef> = {
     sensitive: true,
     needs: ['secret_weight', 'customer_view', 'bill_view', 'order_view'],
   },
-  download_all: { group: 'Records', label: 'Download everything', sensitive: true },
+  download_all: { group: 'Records', label: 'Download everything', sensitive: true, needs: ['customer_view', 'bill_view'] }, // R20: the zip is built in the browser from what the person may read; without these it holds empty customer and bill files
   // Shop
   settings_change: { group: 'Shop', label: 'Change shop settings', sensitive: true },
 };
