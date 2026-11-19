@@ -6,11 +6,12 @@ import { type Clock, createClock, formatTimestamp } from '../../src/clock';
 import type { Config } from '../../src/config';
 import { type DbPool, createDbPool } from '../../src/db/pool';
 import { limits } from '../../src/limits';
-import { type Access, type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName, type Role } from '../../src/permissions/matrix';
+import { type Access, type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, hashTicket, newTicket } from '../../src/permissions/session';
 import { BUILTIN_TICKS } from '../../src/permissions/ticks';
 import { type Scratch, scratchDatabase } from '../helpers';
+import type { BuiltinRole } from './builtin-roles';
 import { csrfHeaders, logSink, secret, testConfig } from './support';
 import { type Spy, spyOn } from './tx-support';
 
@@ -32,7 +33,7 @@ export type Expected = { kind: 'unauthorized'; code: 'JV_UNAUTHENTICATED' | 'JV_
  * Whether a built-in role passes a row's access: an open row, or a row one of whose ticks the role's built-in set holds (BUILTIN_TICKS). No built-in caller is the Super Admin, so a superAdmin
  * row is never theirs. Asked of the tick sets directly, not of the matrix's own accessAllows, so a mistake there shows here.
  */
-export function rowAllows(row: { access: Access }, caller: Role): boolean {
+export function rowAllows(row: { access: Access }, caller: BuiltinRole): boolean {
   const a = row.access;
   if ('open' in a) return true;
   if ('superAdmin' in a) return false;
@@ -348,7 +349,7 @@ export async function checkPublicCell(world: World, route: { method: string; pat
 }
 
 /** The keys of the rows in a read answer ({rows: [...]}) must be among the columns the matrix lists for the caller's role (A4: a read names its columns). */
-export async function checkReadColumns(world: World, route: CellRoute, caller: Role, allowed: readonly string[]): Promise<string | null> {
+export async function checkReadColumns(world: World, route: CellRoute, caller: BuiltinRole, allowed: readonly string[]): Promise<string | null> {
   const res = await world.call(caller, route.method, `${concreteUrl(route.path)}${route.query ?? '?limit=1000'}`);
   if (res.statusCode !== 200) return `${caller} on ${route.method} ${route.path}: status ${res.statusCode}, expected a 200 read`;
   const keys = new Set<string>();
@@ -364,7 +365,7 @@ export async function checkReadColumns(world: World, route: CellRoute, caller: R
 export async function checkWriteColumns(
   world: World,
   route: CellRoute & { shape: 'changes' | 'fields' },
-  caller: Role,
+  caller: BuiltinRole,
   columns: { allowed: readonly string[]; forbidden: readonly string[] },
 ): Promise<string[]> {
   const body = (column: string) => (route.shape === 'changes' ? { expected_updated_at: '2026-10-17T10:00:00.000000Z', changes: { [column]: null } } : { [column]: null });

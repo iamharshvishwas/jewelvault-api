@@ -7,11 +7,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { buildApp } from '../../src/app';
 import { JvError } from '../../src/errors';
+import { NO_GRANTS } from '../../src/permissions/grants';
 import { MATRIX, PUBLIC_ROUTES } from '../../src/permissions/matrix';
 import { RouteDeclarationError, createRoute, describeRoutes, installRouteGuard, route, unroutedActions, unroutedPublic } from '../../src/permissions/route';
 import { SESSION_COOKIE } from '../../src/permissions/session';
 import * as wire from '../../src/wire/zod';
+import { builtinGrants } from './builtin-roles';
 import { CALLERS, type CallerName, type World, makeWorld, registerStubs } from './cells';
+import { sourceFiles as listSources } from './static-lib';
 import { REPO, buildDist, csrfHeaders, secret, testConfig } from './support';
 
 /** The application with its wrapper and its error handling and none of its own routes (routes: false), so a test can register what it likes. */
@@ -582,14 +585,114 @@ describe('T-D10 roles are checked in one place: no role string outside the permi
 
   it('a service function checks the role again at its start through the matrix, with no role string of its own (A6, X0 item 2)', async () => {
     const { assertMayCall } = await import('../../src/permissions/route');
-    expect(() => assertMayCall('biller', 'fn:void_receipt')).toThrow(JvError);
+    expect(() => assertMayCall(builtinGrants('biller'), 'fn:void_receipt')).toThrow(JvError);
     try {
-      assertMayCall('biller', 'fn:void_receipt');
+      assertMayCall(builtinGrants('biller'), 'fn:void_receipt');
     } catch (e) {
       expect((e as JvError).code).toBe('JV_FORBIDDEN');
       expect((e as JvError).status).toBe(403);
     }
-    expect(() => assertMayCall('owner', 'fn:void_receipt')).not.toThrow();
-    expect(() => assertMayCall('whoever', 'fn:void_receipt')).toThrow(JvError);
+    expect(() => assertMayCall(builtinGrants('owner'), 'fn:void_receipt')).not.toThrow();
+    expect(() => assertMayCall(NO_GRANTS, 'fn:void_receipt')).toThrow(JvError); // a person with no tick at all
+  });
+});
+
+// ------------------------------------------------------------------ T-D10b
+
+describe('T-D10b the permission functions are given the grants the session read, never a role: no call outside src/permissions/ passes the role, and every money function checks again', () => {
+  // The functions that decide who may do what. Each takes the person's Grants (src/permissions/grants.ts). The role KEY (`auth.user.role`) is kept for the audit trail and for display and is never an
+  // argument of these: the types refuse a string now, and this test is the second wall, so that a role name cannot come back into a check by a widened type or a cast.
+  const GATES = new Set(['mayCall', 'mayUseField', 'assertMayCall', 'readableSettingKeys', 'dailyTotalsWindowDays', 'writeFieldVerdict', 'checkBillDate']);
+  const ROLE_NAMES = new Set(['role', 'roleKey', 'roleName']);
+
+  interface Found {
+    file: string;
+    line: number;
+    text: string;
+  }
+
+  const parse = (file: string, source: string) => ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  const srcDir = join(REPO, 'src');
+  const tsFiles = (dir: string) => listSources(dir, /\.(ts|mts)$/).filter((f) => !f.endsWith('.d.ts'));
+
+  /** A call of one of the gate functions with an argument that names a role: `auth.user.role`, `user['role']` or a bare `role` (also `roleKey` and `roleName`). */
+  function roleArguments(file: string, source: string): Found[] {
+    const sf = parse(file, source);
+    const found: Found[] = [];
+    const namesRole = (n: ts.Node): boolean =>
+      (ts.isIdentifier(n) && ROLE_NAMES.has(n.text)) || (ts.isElementAccessExpression(n) && ts.isStringLiteralLike(n.argumentExpression) && ROLE_NAMES.has(n.argumentExpression.text)) || ts.forEachChild(n, namesRole) === true;
+    const visit = (n: ts.Node) => {
+      if (ts.isCallExpression(n)) {
+        const callee = ts.isIdentifier(n.expression) ? n.expression.text : ts.isPropertyAccessExpression(n.expression) ? n.expression.name.text : '';
+        if (GATES.has(callee) && n.arguments.some(namesRole)) found.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, text: n.getText(sf) });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return found;
+  }
+
+  /** Whether the source holds a call `assertMayCall(grants, ...)`: the second check of X0 item 2, made inside the transaction. The same text in a comment or in a string is not a call. */
+  function hasSecondCheck(file: string, source: string): boolean {
+    const sf = parse(file, source);
+    let found = false;
+    const visit = (n: ts.Node) => {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'assertMayCall') {
+        const first = n.arguments[0];
+        if (first !== undefined && ts.isIdentifier(first) && first.text === 'grants') found = true;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return found;
+  }
+
+  it('the scanner can see a role handed to a gate function (control): it flags every spelling in a sample and leaves the calls that pass grants and the uses of the role that are not a check', () => {
+    const sample = [
+      "mayCall(auth.user.role, 'fn:create_bill');",
+      "mayUseField(request.auth!.user.role, 'back_dates');",
+      "assertMayCall(user['role'], 'fn:void_receipt');",
+      'readableSettingKeys(role);',
+      'dailyTotalsWindowDays(auth.user.roleKey);',
+      "writeFieldVerdict('edit:designs.update', auth.user.roleName, 'name');",
+      "checkBillDate(sent, today, auth.user.role, 'paid_on');",
+      "matrix.mayCall(session.role.toLowerCase(), 'x');",
+      // none of these is a role handed to a gate
+      "mayCall(auth.user.grants, 'fn:create_bill');",
+      "assertMayCall(grants, 'fn:void_receipt');",
+      "const shown = auth.user.role; log({ role: auth.user.role }); somethingElse(auth.user.role);",
+      "// mayCall(auth.user.role, 'x') is only a comment",
+    ].join('\n');
+    expect(roleArguments('sample.ts', sample).map((h) => h.line)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('src/ outside src/permissions/ passes no role to mayCall, mayUseField, assertMayCall, readableSettingKeys, dailyTotalsWindowDays, writeFieldVerdict or checkBillDate', () => {
+    const files = tsFiles(srcDir).filter((f) => !relative(srcDir, f).startsWith('permissions/'));
+    expect(files.length, 'the scan found the source files').toBeGreaterThan(40);
+    const hits = files.flatMap((f) => roleArguments(f, readFileSync(f, 'utf8')));
+    expect(hits.map((h) => `${relative(REPO, h.file)}:${h.line} ${h.text}`)).toEqual([]);
+  });
+
+  it('the second-check scanner sees a missing call (control): the call is found in a function and not in a comment, a string, another name or another first argument', () => {
+    const real = "export async function f(grants: Grants) { return withTx(ctx, async (tx) => { await claim(tx); assertMayCall(grants, ACTION); }); }";
+    expect(hasSecondCheck('real.ts', real)).toBe(true);
+    expect(hasSecondCheck('real.ts', "assertMayCall(grants, 'fn:create_bill'); assertMayCall(grants, 'fn:record_payment');")).toBe(true);
+    for (const [what, source] of [
+      ['a comment', "export async function f(grants: Grants) { /* assertMayCall(grants, ACTION) */ // assertMayCall(grants, ACTION)\n}"],
+      ['a string', "export async function f(grants: Grants) { log('assertMayCall(grants, ACTION)'); }"],
+      ['another name', 'export async function f(grants: Grants) { mayCall(grants, ACTION); }'],
+      ['another first argument', 'export async function f(grants: Grants, auth: Auth) { assertMayCall(auth.user.grants, ACTION); assertMayCall(ACTION, grants); }'],
+      ['no call at all', 'export async function f(grants: Grants) { return grants; }'],
+    ] as const) {
+      expect(hasSecondCheck('missing.ts', source), what).toBe(false);
+    }
+  });
+
+  it('every money function (src/money/x01 to x07 and x10 to x12) checks the caller again with assertMayCall(grants, ...), so a deleted second check is noticed (X0 item 2)', () => {
+    const dir = join(srcDir, 'money');
+    const functions = tsFiles(dir).filter((f) => /^x\d{2}[A-Za-z0-9]*\.ts$/.test(relative(dir, f)));
+    const numbers = functions.map((f) => relative(dir, f).slice(0, 3)).sort();
+    expect(numbers, 'the ten files of the money functions are the ones scanned (a new one is added to this list on purpose)').toEqual(['x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x10', 'x11', 'x12']);
+    expect(functions.filter((f) => !hasSecondCheck(f, readFileSync(f, 'utf8'))).map((f) => relative(REPO, f))).toEqual([]);
   });
 });

@@ -18,12 +18,13 @@
 // A route registered any other way fails the start: installRouteGuard() makes every route that did not come through route() throw. A call with no action, an action that is not in the matrix,
 // a public name that is not on the list, a token route outside its door or without its check throws a RouteDeclarationError, and the types of the specs below make the compiler refuse the
 // same calls, so a route without an action fails the build and not only the start. Nothing here holds a role string or a tick: who may call is read from the matrix, and a service function that
-// wants to check again at its start calls assertMayCall(who, action).
+// wants to check again at its start calls assertMayCall(grants, action).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodType, output } from 'zod';
 import { throttleSessionCall } from '../auth/throttle.js';
 import { JvError, errorBody } from '../errors.js';
 import * as wire from '../wire/zod.js';
+import type { Grants } from './grants.js';
 import {
   type Access,
   type Action,
@@ -37,7 +38,6 @@ import {
   TOKEN_DOORS,
   type TokenDoor,
   type TokenDoorName,
-  type Who,
   accessAllows,
   describeAccess,
   mayCall,
@@ -282,10 +282,10 @@ export function installPermissions(app: FastifyInstance): void {
 
 /**
  * A service function checks the caller again at its start (X0 item 2, A6): after the idempotency claim, whose row the rollback removes when this refuses. It asks the matrix for the action, so
- * it holds no role string and no tick. (`who` is still the session's role key for most callers; Task 6 passes Grants.)
+ * it holds no role string and no tick. It takes the person's Grants (the ticks of their role and the Super Admin flag, as the session read them), never the role key.
  */
-export function assertMayCall(who: Who, action: Action): void {
-  if (!mayCall(who, action)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
+export function assertMayCall(grants: Grants, action: Action): void {
+  if (!mayCall(grants, action)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
 }
 
 /** The route list (T-D01, A1), one line for every registered route: method, address, what it is, its action and who may call it. */

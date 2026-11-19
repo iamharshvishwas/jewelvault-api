@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type Action, MATRIX, READ_COLUMNS, ROLES, type Role, mayCall } from '../src/permissions/matrix';
+import { type Action, MATRIX, READ_COLUMNS, mayCall } from '../src/permissions/matrix';
+import { BUILTIN_ROLES, type BuiltinRole, builtinGrants } from './api/builtin-roles';
 import { CALLERS, type CallerName } from './api/cells';
 import { type EditWorld, editWorld } from './api/edit-support';
 import { SYNC_ROWS, readsRow } from './api/sync-support';
@@ -26,7 +27,7 @@ import { line, reissueBody, sell } from './api/x10-support';
 
 // ------------------------------------------------------------------ the expectation, from the spec (T-D09)
 
-const X: Record<string, { n: string; roles: readonly Role[] }> = {
+const X: Record<string, { n: string; roles: readonly BuiltinRole[] }> = {
   'fn:create_bill': { n: 'X1', roles: ['owner', 'biller'] },
   'fn:record_payment': { n: 'X2', roles: ['owner', 'biller'] },
   'fn:settle_fine': { n: 'X3', roles: ['owner', 'biller'] },
@@ -198,9 +199,9 @@ describe('T-D09 the function matrix: X1 to X12 (and X13 of FB-E1) for the caller
   it('the matrix has exactly the twelve service functions of the spec and X13 create_order of FB-E1, with the roles they give: staff only X8 and X9, a biller X1, X2, X3, X6, X7 and X13 but not X4, X5, X10, X11 and X12, the owner all', () => {
     const fn = Object.entries(MATRIX).filter(([, r]) => r.kind === 'fn');
     expect(fn.map(([a]) => a).sort()).toEqual([...ACTIONS].sort());
-    for (const [action] of fn) expect(ROLES.filter((role) => mayCall(role, action as Action)).sort(), `${action} (${X[action].n})`).toEqual([...X[action].roles].sort());
+    for (const [action] of fn) expect(BUILTIN_ROLES.filter((role) => mayCall(builtinGrants(role), action as Action)).sort(), `${action} (${X[action].n})`).toEqual([...X[action].roles].sort());
     // the spec's sentence, as the roles of the typed table
-    const may = (role: Role) => ACTIONS.filter((a) => X[a].roles.includes(role)).map((a) => X[a].n);
+    const may = (role: BuiltinRole) => ACTIONS.filter((a) => X[a].roles.includes(role)).map((a) => X[a].n);
     expect(may('staff')).toEqual(['X8', 'X9']);
     expect(may('biller')).toEqual(['X1', 'X2', 'X3', 'X6', 'X7', 'X13']);
     expect(may('owner')).toEqual(['X1', 'X2', 'X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'X11', 'X12', 'X13']);

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
-import { type Access, type Action, type EditAction, MATRIX, PUBLIC_ROUTES, type PublicName, READ_COLUMNS, ROLES, WRITE_COLUMNS, writeColumnsFor } from '../src/permissions/matrix';
+import { type Access, type Action, type EditAction, MATRIX, PUBLIC_ROUTES, type PublicName, READ_COLUMNS, WRITE_COLUMNS, writeColumnsFor } from '../src/permissions/matrix';
+import { BUILTIN_ROLES, builtinGrants } from './api/builtin-roles';
 import { CALLERS, type World, checkCell, checkPublicCell, checkReadColumns, checkWriteColumns, makeWorld, registerStubs, rowAllows } from './api/cells';
 import { testConfig } from './api/support';
 
@@ -56,7 +57,7 @@ describe('T-D02 the real routes: every registered route, every caller', () => {
       }
       if ('reads' in row && row.reads) {
         for (const resource of row.reads) {
-          for (const role of ROLES) {
+          for (const role of BUILTIN_ROLES) {
             if (!rowAllows(row, role)) continue;
             it(`READ_COLUMNS ${resource} for ${role}: the rows hold no other column`, async () => {
               expect(await checkReadColumns(world, cellRoute(action), role, READ_COLUMNS[resource])).toBeNull();
@@ -66,10 +67,10 @@ describe('T-D02 the real routes: every registered route, every caller', () => {
       }
       if ('edit' in row && row.edit) {
         const edit = row.edit;
-        for (const role of ROLES) {
+        for (const role of BUILTIN_ROLES) {
           if (!rowAllows(row, role)) continue;
           it(`WRITE_COLUMNS for ${role}: an allowed column works, a forbidden one is 403 JV_FORBIDDEN, an unknown one 422`, async () => {
-            const allowed = writeColumnsFor(action as EditAction, role);
+            const allowed = writeColumnsFor(action as EditAction, builtinGrants(role));
             const everyone = new Set(Object.values(WRITE_COLUMNS[action as EditAction]).flatMap((l) => l ?? []));
             const forbidden = [...everyone].filter((c) => !allowed.includes(c));
             expect(await checkWriteColumns(world, { ...cellRoute(action), shape: edit.shape }, role, { allowed, forbidden })).toEqual([]);

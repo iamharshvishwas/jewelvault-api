@@ -203,6 +203,37 @@ describe('grants (R4, R5)', () => {
     for (const bad of ['not json', '{"a":1}', 7, null, undefined, {}]) expect(sortedTicks(grantsOf({ roleKey: 'x', roleTicks: bad, isSuperAdmin: false })), String(bad)).toEqual([]);
   });
 
+  it('a Grants value cannot be changed, so no caller can change what another is given: a tick added, taken away or cleared through a cast (the types forbid it) changes nothing, for the value itself, for a later grantsOf of the same role and for NO_GRANTS', () => {
+    // the hazard this closes: Object.freeze does not freeze a Set, and ReadonlySet stops .add at compile time only, so one holder of a shared value could widen what every later holder may do
+    const tamper = (g: Grants): void => {
+      const set = g.ticks as Set<TickKey>;
+      for (const attempt of [() => set.add('settings_change'), () => set.delete('bill_view'), () => set.clear(), () => ((g as { isSuperAdmin: boolean }).isSuperAdmin = true)]) {
+        try {
+          attempt();
+        } catch {
+          // a set with no add, delete or clear, and a frozen value, refuse: that is as good as ignoring it
+        }
+      }
+    };
+    const clerk = { roleKey: 'clerk', roleTicks: ['bill_view'], isSuperAdmin: false };
+    const owner = { roleKey: 'owner', roleTicks: [], isSuperAdmin: false };
+    for (const [what, input, held] of [['a role with one tick', clerk, ['bill_view']], ['the Owner', owner, [...TICK_KEYS]]] as const) {
+      const first = grantsOf(input);
+      tamper(first);
+      expect(sortedTicks(first), `${what}: the value that was tampered with`).toEqual(held);
+      expect(first.isSuperAdmin, `${what}: the flag of the value that was tampered with`).toBe(false);
+      const later = grantsOf(input);
+      expect(sortedTicks(later), `${what}: a later grantsOf`).toEqual(held);
+      expect(later.isSuperAdmin, `${what}: the flag of a later grantsOf`).toBe(false);
+      expect(later.ticks, `${what}: every call makes a set of its own`).not.toBe(first.ticks);
+    }
+    tamper(NO_GRANTS); // the one value that is shared
+    expect(sortedTicks(NO_GRANTS)).toEqual([]);
+    expect(NO_GRANTS.isSuperAdmin).toBe(false);
+    expect(mayCall(NO_GRANTS, 'read:customers')).toBe(false);
+    expect(mayCall(NO_GRANTS, 'edit:settings.update')).toBe(false);
+  });
+
   it('hasTick and hasAnyTick', () => {
     const g = ticksOnly(['bill_view']);
     expect(hasTick(g, 'bill_view')).toBe(true);

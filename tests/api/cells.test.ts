@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { JvError } from '../../src/errors';
-import { type Access, MATRIX, READ_COLUMNS, WRITE_COLUMNS, type Role, writeColumnsFor } from '../../src/permissions/matrix';
+import { type Access, MATRIX, READ_COLUMNS, WRITE_COLUMNS, writeColumnsFor } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { InvalidInputError, strictObject, timestamp } from '../../src/wire/zod';
+import { type BuiltinRole, builtinGrants } from './builtin-roles';
 import { CALLERS, type CellRoute, type World, checkCell, checkPublicCell, checkReadColumns, checkWriteColumns, expectedFor, makeWorld, registerStubs } from './cells';
 
 // T-D02, the negative control: the generated test is only worth something if it FAILS on a cell that differs from the matrix. These tests give the same checks a wrong expectation (a mutated copy of
@@ -30,7 +31,7 @@ beforeAll(async () => {
         body: patchBody,
         handler: async ({ body, auth }) => {
           const changes = body.changes;
-          const own = writeColumnsFor('edit:customers.update', auth.user.role);
+          const own = writeColumnsFor('edit:customers.update', auth.user.grants);
           for (const key of Object.keys(changes)) {
             if (own.includes(key)) continue;
             if (CUSTOMER_FIELDS.has(key)) throw new JvError('JV_FORBIDDEN', 'That field cannot be changed by this role.');
@@ -118,7 +119,7 @@ describe('T-D02 the column cells: READ_COLUMNS', () => {
 });
 
 describe('T-D02 the column cells: WRITE_COLUMNS', () => {
-  const columnsFor = (action: 'edit:customers.update', role: Role) => ({ allowed: writeColumnsFor(action, role), forbidden: [...CUSTOMER_FIELDS].filter((c) => !writeColumnsFor(action, role).includes(c)) });
+  const columnsFor = (action: 'edit:customers.update', role: BuiltinRole) => ({ allowed: writeColumnsFor(action, builtinGrants(role)), forbidden: [...CUSTOMER_FIELDS].filter((c) => !writeColumnsFor(action, builtinGrants(role)).includes(c)) });
 
   it('an edit that does what A5 says passes: the allowed columns work, archived_at is 403 JV_FORBIDDEN for a biller, an unknown column is 422', async () => {
     const cols = columnsFor('edit:customers.update', 'biller');

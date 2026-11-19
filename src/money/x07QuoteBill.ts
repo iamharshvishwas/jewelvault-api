@@ -47,7 +47,8 @@ import {
   priceBill,
 } from '../domain/pricing.js';
 import { unavailableError } from '../errors.js';
-import { type Who, mayUseField } from '../permissions/matrix.js';
+import type { Grants } from '../permissions/grants.js';
+import { mayUseField } from '../permissions/matrix.js';
 import { assertMayCall, route } from '../permissions/route.js';
 import { formatMoneyFromPaise, formatWeightFromMilligrams } from '../wire/format.js';
 import * as wire from '../wire/zod.js';
@@ -316,10 +317,10 @@ export function assertEachPieceOnce(items: readonly { sku_id: string }[]): void 
 }
 
 /** Y8: a future date is refused; a past date only for a caller whose grants hold back_date. Returns the date (today when none was sent). `field` names the input in the refusal: `bill_date` (X1, X7), `paid_on` (X2, X3, X11) or `as_of` (X12). */
-export function checkBillDate(sent: string | null | undefined, today: string, who: Who, field = 'bill_date'): string {
+export function checkBillDate(sent: string | null | undefined, today: string, grants: Grants, field = 'bill_date'): string {
   const date = sent ?? today;
   if (date > today) throw new wire.InvalidInputError(field, 'must not be in the future');
-  if (date < today && !mayUseField(who, 'back_dates')) throw new wire.InvalidInputError(field, 'must be today');
+  if (date < today && !mayUseField(grants, 'back_dates')) throw new wire.InvalidInputError(field, 'must be today');
   return date;
 }
 

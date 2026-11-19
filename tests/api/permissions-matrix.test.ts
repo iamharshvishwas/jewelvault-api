@@ -10,7 +10,6 @@ import {
   PUBLIC_ROUTES,
   READ_COLUMNS,
   READ_RESOURCES,
-  ROLES,
   STAFF_SETTING_KEYS,
   TOKEN_DOORS,
   WRITE_COLUMNS,
@@ -21,24 +20,25 @@ import {
   writeColumnsFor,
   type Action,
   type EditAction,
-  type Role,
 } from '../../src/permissions/matrix';
+import { NO_GRANTS } from '../../src/permissions/grants';
 import { type Scratch, laneDbSettings, laneRoot, scratchDatabase } from '../helpers';
+import { BUILTIN_ROLES, type BuiltinRole, builtinGrants } from './builtin-roles';
 
 // T-D01 (the catalogue clause) and T-D02 (the data half): the matrix file against the spec's own tables, typed in below from A4, section 10 and P3 as an independent oracle, so that a cell
 // edited by mistake fails here before any route exists; the field allow-lists against the migrated schema; and the rights of the database user. The rows list ticks now, not roles: the oracle
 // stays the spec's roles, and each built-in role is asked through its built-in tick set (P1), so this file still says what A4 says about the three roles of today.
 
-const O: Role[] = ['owner'];
-const OB: Role[] = ['owner', 'biller'];
-const OS: Role[] = ['owner', 'staff'];
-const OBS: Role[] = ['owner', 'biller', 'staff'];
+const O: BuiltinRole[] = ['owner'];
+const OB: BuiltinRole[] = ['owner', 'biller'];
+const OS: BuiltinRole[] = ['owner', 'staff'];
+const OBS: BuiltinRole[] = ['owner', 'biller', 'staff'];
 
-/** The built-in roles that may call a row, in the order of ROLES. */
-const rolesOf = (action: Action): Role[] => ROLES.filter((role) => mayCall(role, action));
+/** The built-in roles that may call a row, in the order of the catalogue (BUILTIN_ROLES). */
+const rolesOf = (action: Action): BuiltinRole[] => BUILTIN_ROLES.filter((role) => mayCall(builtinGrants(role), action));
 
 /** Spec A4 (the table), section 10 (X1 to X12 with their routes), P2 and P3 (the photo calls), B3 (the download record), C3 and C4 (the named reads) and NODE-DESIGN 3.3 / 4.2 / 4.4 (the paths of the rest). */
-const ORACLE: Record<string, readonly [Role[], string]> = {
+const ORACLE: Record<string, readonly [BuiltinRole[], string]> = {
   'read:users': [OBS, 'GET /v1/sync/users'],
   'read:settings': [OBS, 'GET /v1/sync/settings'],
   'read:daily_rates': [OBS, 'GET /v1/sync/daily-rates'],
@@ -145,27 +145,23 @@ describe('T-D02 the matrix file says what A4 and section 10 say', () => {
     expect(Object.values(TOKEN_DOORS).map((d) => d.prefix).sort()).toEqual(['/admin/v1/', '/internal/jobs/']);
   });
 
-  // Changed on purpose with the ticks (DESIGN.md 6.2, R4): a name that is not a built-in role holds no tick, and the rows that need no tick are open to everyone signed in. Such a name never
-  // reaches the matrix from a request: the session refuses a user whose role it does not know with 401 before any row is asked (session.ts).
-  it('mayCall answers from the matrix, and a name that is not a role (a cookie, a header, a body can say anything) holds no tick: it may call the open rows and nothing else', () => {
-    expect(mayCall('owner', 'fn:void_receipt')).toBe(true);
-    expect(mayCall('biller', 'fn:void_receipt')).toBe(false);
-    expect(mayCall('staff', 'fn:create_design')).toBe(true);
-    expect(mayCall('staff', 'fn:create_bill')).toBe(false);
-    for (const odd of ['admin', 'OWNER', 'Owner ', '', 'root', 'owner,biller', '__proto__', 'constructor']) {
-      for (const action of Object.keys(MATRIX) as Action[]) expect(mayCall(odd, action), `${odd} ${action}`).toBe('open' in MATRIX[action].access);
-      expect(mayCall(odd, 'fn:create_bill'), odd).toBe(false);
-    }
-    expect(mayCall('owner', 'fn:no_such_function' as Action)).toBe(false);
+  // mayCall takes the person's Grants and nothing else (the role shim is gone, T-D10b): the answers for the three built-in roles are asked through their tick sets, as a request asks them. A text that is
+  // not a role can no longer be handed to it, so the check that such a name holds no tick has nothing left to ask; a person with no tick at all is NO_GRANTS, in tests/api/access-matrix.test.ts.
+  it('mayCall answers from the matrix', () => {
+    expect(mayCall(builtinGrants('owner'), 'fn:void_receipt')).toBe(true);
+    expect(mayCall(builtinGrants('biller'), 'fn:void_receipt')).toBe(false);
+    expect(mayCall(builtinGrants('staff'), 'fn:create_design')).toBe(true);
+    expect(mayCall(builtinGrants('staff'), 'fn:create_bill')).toBe(false);
+    expect(mayCall(builtinGrants('owner'), 'fn:no_such_function' as Action)).toBe(false);
   });
 
   it('the field rules of section 10 and A5 are owner-only: cash_override_reason (Z1), original_net_weight (X8), a date other than today (Y8), removing, reordering or replacing the photo ids of a design or an order (A5, P3), and the status of a delivered or cancelled order (FB-D8)', () => {
     expect(Object.keys(FIELD_RIGHTS).sort()).toEqual(['back_dates', 'cash_override_reason', 'change_closed_order', 'original_net_weight', 'rewrite_photo_ids']);
     for (const field of Object.keys(FIELD_RIGHTS) as (keyof typeof FIELD_RIGHTS)[]) {
-      expect(mayUseField('owner', field), field).toBe(true);
-      expect(mayUseField('biller', field), field).toBe(false);
-      expect(mayUseField('staff', field), field).toBe(false);
-      expect(mayUseField('nobody', field), field).toBe(false);
+      expect(mayUseField(builtinGrants('owner'), field), field).toBe(true);
+      expect(mayUseField(builtinGrants('biller'), field), field).toBe(false);
+      expect(mayUseField(builtinGrants('staff'), field), field).toBe(false);
+      expect(mayUseField(NO_GRANTS, field), field).toBe(false);
     }
   });
 
@@ -207,7 +203,7 @@ afterAll(async () => {
 });
 
 /** The columns a built-in role reads of a resource; undefined when it reads none. */
-const listFor = (resource: string, role: Role) => readColumnsFor(role, resource) ?? undefined;
+const listFor = (resource: string, role: BuiltinRole) => readColumnsFor(builtinGrants(role), resource) ?? undefined;
 
 describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the columns of the schema', () => {
   it('every resource of READ_COLUMNS is read by a row of the matrix, and every row that reads says which resources', () => {
@@ -222,7 +218,7 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
         // a call that serves several resources (the poll) is allowed to a role when it may read at least some of them; the resource's own row decides which
         const own = ORACLE[`read:${resource}`];
         const roles = own ? own[0] : ORACLE[action][0];
-        for (const role of ROLES) {
+        for (const role of BUILTIN_ROLES) {
           const list = listFor(resource, role);
           if (!roles.includes(role)) expect(list, `${action}/${resource}/${role}`).toBeUndefined();
           else {
@@ -238,8 +234,8 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
     for (const resource of READ_RESOURCES) {
       const real = derived.get(resource) ?? schema.get(resource);
       expect(real, `${resource} is neither a table nor a derived read`).toBeDefined();
-      for (const role of ROLES) for (const c of listFor(resource, role) ?? []) expect(real, `${resource}.${c} (${role})`).toContain(c);
-      if (derived.has(resource)) for (const role of ROLES) if (listFor(resource, role)) expect([...listFor(resource, role)!].sort(), `${resource} for ${role}`).toEqual([...real!].sort());
+      for (const role of BUILTIN_ROLES) for (const c of listFor(resource, role) ?? []) expect(real, `${resource}.${c} (${role})`).toContain(c);
+      if (derived.has(resource)) for (const role of BUILTIN_ROLES) if (listFor(resource, role)) expect([...listFor(resource, role)!].sort(), `${resource} for ${role}`).toEqual([...real!].sort());
     }
   });
 
@@ -247,7 +243,7 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
     for (const resource of READ_RESOURCES) {
       if (derived.has(resource)) continue;
       const all = schema.get(resource)!;
-      const widest = new Set(ROLES.flatMap((r) => listFor(resource, r) ?? []));
+      const widest = new Set(BUILTIN_ROLES.flatMap((r) => listFor(resource, r) ?? []));
       const hidden = Object.keys((HIDDEN_COLUMNS as Record<string, Record<string, string>>)[resource] ?? {});
       for (const c of all) expect(widest.has(c) !== hidden.includes(c), `${resource}.${c} must be listed or hidden, not both and not neither`).toBe(true);
       for (const c of hidden) expect(all, `${resource}.${c} is hidden but is not a column`).toContain(c);
@@ -269,15 +265,15 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
   it('users: id, full_name, role and active, plus the stamp updated_at that C3 and C4 need, and never the hash or the e-mail (A4, D1)', () => {
     // A4 gives the content of a users row as id, full_name, role and active (never the hash). C3 orders EVERY sync resource by (updated_at, key) and C4 takes the cursor "from the data" and
     // merges "keeping the row with the greater updated_at": a row without its stamp cannot be placed in the order or merged, so users carry updated_at too (API11 confirmed this against C3/C4).
-    for (const role of ROLES) expect([...listFor('users', role)!].sort()).toEqual(['active', 'full_name', 'id', 'role', 'updated_at']);
-    for (const role of ROLES) for (const secret of ['email', 'password_hash', 'must_change_password', 'last_login_at', 'created_at', 'created_by', 'updated_by']) expect(listFor('users', role), `${role} ${secret}`).not.toContain(secret);
+    for (const role of BUILTIN_ROLES) expect([...listFor('users', role)!].sort()).toEqual(['active', 'full_name', 'id', 'role', 'updated_at']);
+    for (const role of BUILTIN_ROLES) for (const secret of ['email', 'password_hash', 'must_change_password', 'last_login_at', 'created_at', 'created_by', 'updated_by']) expect(listFor('users', role), `${role} ${secret}`).not.toContain(secret);
   });
 
   it('every sync resource lists the stamp and the key its cursor needs (C3, C4): updated_at for all, and the key named in C3 (id, setting_key, sku_id)', () => {
     const KEY: Record<string, string> = { settings: 'setting_key', sku_private: 'sku_id' };
     const synced = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'bill_summary', 'customer_balances'] as const;
     for (const resource of synced) {
-      for (const role of ROLES) {
+      for (const role of BUILTIN_ROLES) {
         const list = listFor(resource, role);
         if (!list) continue;
         expect(list, `${resource}/${role} needs the stamp`).toContain('updated_at');
@@ -286,18 +282,18 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
     }
   });
 
-  // Changed on purpose with the ticks (DESIGN.md 6.2 "Always on"): the seven keys staff read are open to everyone signed in, so a name that is not a role (no tick) reads those seven, not none.
-  it('readableSettingKeys: the owner and the biller read every key (null), staff the seven keys of A4, a name that is not a role holds no tick and reads the seven (A4, C3)', () => {
-    expect(readableSettingKeys('owner')).toBeNull();
-    expect(readableSettingKeys('biller')).toBeNull();
-    expect(readableSettingKeys('staff')).toEqual(STAFF_SETTING_KEYS);
-    expect(readableSettingKeys('staff')).toHaveLength(7);
-    for (const notARole of ['admin', 'OWNER', '', 'constructor', '__proto__']) expect(readableSettingKeys(notARole), notARole).toEqual(STAFF_SETTING_KEYS);
+  // The seven keys staff read are open to everyone signed in (DESIGN.md 6.2 "Always on"), so a person with no tick reads those seven too (NO_GRANTS: tests/api/access-matrix.test.ts); the text of a role that is
+  // not one can no longer be handed to the function, so the loop over such names is gone with the shim.
+  it('readableSettingKeys: the owner and the biller read every key (null), staff the seven keys of A4 (A4, C3)', () => {
+    expect(readableSettingKeys(builtinGrants('owner'))).toBeNull();
+    expect(readableSettingKeys(builtinGrants('biller'))).toBeNull();
+    expect(readableSettingKeys(builtinGrants('staff'))).toEqual(STAFF_SETTING_KEYS);
+    expect(readableSettingKeys(builtinGrants('staff'))).toHaveLength(7);
   });
 
   it('the owner-only weight (D9): original_net_weight is listed for the owner of sku_private and nowhere else; no list holds a hash, a token hash or photo bytes', () => {
     for (const resource of READ_RESOURCES) {
-      for (const role of ROLES) {
+      for (const role of BUILTIN_ROLES) {
         const list = listFor(resource, role) ?? [];
         for (const c of list) {
           expect(c, `${resource}/${role}`).not.toMatch(/^(password_hash|token_hash|claim_token|args_hash)$/);
@@ -323,7 +319,7 @@ describe('T-D02 READ_COLUMNS: a read names its columns (A4), and they are the co
   it('control: a column added to a table and not decided is found by the same check', async () => {
     await conn.query('ALTER TABLE customers ADD COLUMN IF NOT EXISTS secret_marker VARCHAR(10) NULL');
     const [cols] = await conn.query<any[]>("SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'customers'", [scratch.database]);
-    const widest = new Set(ROLES.flatMap((r) => listFor('customers', r) ?? []));
+    const widest = new Set(BUILTIN_ROLES.flatMap((r) => listFor('customers', r) ?? []));
     const hidden = Object.keys(HIDDEN_COLUMNS.customers);
     const undecided = cols.map((r) => r.c as string).filter((c) => !widest.has(c) && !hidden.includes(c));
     expect(undecided).toEqual(['secret_marker']);
@@ -343,8 +339,8 @@ describe('T-D02 WRITE_COLUMNS: the editable fields per tick and so per role (A5)
         expect(list.length, `${action}/${tick}`).toBeGreaterThan(0);
         expect(new Set(list).size, `${action}/${tick} duplicates`).toBe(list.length);
       }
-      for (const role of ROLES) {
-        const fields = writeColumnsFor(action, role);
+      for (const role of BUILTIN_ROLES) {
+        const fields = writeColumnsFor(action, builtinGrants(role));
         if (!ORACLE[action][0].includes(role)) expect(fields, `${action}/${role}`).toEqual([]);
         else expect(fields.length, `${action}/${role}`).toBeGreaterThan(0);
       }
@@ -364,7 +360,7 @@ describe('T-D02 WRITE_COLUMNS: the editable fields per tick and so per role (A5)
   });
 
   it('A5: the content columns of designs, skus and customers are exactly the spec\'s, with the owner-only exceptions', () => {
-    const w = (action: EditAction, role: Role) => [...writeColumnsFor(action, role)].sort();
+    const w = (action: EditAction, role: BuiltinRole) => [...writeColumnsFor(action, builtinGrants(role))].sort();
     // designs: staff may edit the content columns and archived_at; only the owner changes material, purity and selling_method (A4)
     expect(w('edit:designs.update', 'staff')).toEqual([...A5.designs].sort());
     expect(w('edit:designs.update', 'owner')).toEqual([...A5.designs, 'material', 'purity', 'selling_method'].sort());

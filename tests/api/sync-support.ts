@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { migrate } from '../../scripts/migrate.mjs';
-import { type Access, MATRIX, ROLES, type Role } from '../../src/permissions/matrix';
+import { type Access, MATRIX } from '../../src/permissions/matrix';
 import { V, insert, ledgerWorld } from '../schema/support';
+import { BUILTIN_ROLES, type BuiltinRole } from './builtin-roles';
 import { type CallerName, type World, type WorldOptions, makeWorld, rowAllows } from './cells';
 
 // Shared by the tests of API11 (the read side, C3 and C4): a world with the application's real routes on a scratch database that holds the migrations, the seeds (the walk-in customer, the
@@ -18,7 +19,7 @@ export const SYNC_ROWS = Object.entries(MATRIX)
   .map(([action, r]) => ({ action, name: r.path.slice('/v1/sync/'.length), table: (r as { reads: readonly string[] }).reads[0], access: r.access }));
 
 /** Whether a caller of the fixture reads a sync resource: the Super Admin reads every one (R3, R4); a built-in role whose tick set opens the resource's row (rowAllows); any other caller reads none. */
-export const readsRow = (r: { access: Access }, caller: string): boolean => caller === 'super' || ((ROLES as readonly string[]).includes(caller) && rowAllows(r, caller as Role));
+export const readsRow = (r: { access: Access }, caller: string): boolean => caller === 'super' || ((BUILTIN_ROLES as readonly string[]).includes(caller) && rowAllows(r, caller as BuiltinRole));
 
 export type Fixture = Awaited<ReturnType<typeof ledgerWorld>> & { skuPrivateFor: string };
 

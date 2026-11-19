@@ -197,7 +197,7 @@ describe('T-D18 the four derived reads are readable by the owner and a biller an
     for (const url of ['/v1/sync/customers', ledgerUrl(data.c1.id)]) expect((await get('staff', url)).statusCode, `staff read ${url}`).toBe(403);
   });
 
-  it('every other caller of A4 is refused too: an ended, an expired and an idle session and a deactivated user are 401, a user who must change the password is 403', async () => {
+  it('every other caller of A4 is refused too, except the Super Admin (role owner with the flag), who reads them like the owner: an ended, an expired and an idle session and a deactivated user are 401, a user who must change the password is 403', async () => {
     for (const { name, url } of four()) {
       for (const caller of CALLERS) {
         if (caller === 'owner' || caller === 'biller' || caller === 'staff' || caller === 'anon') continue;

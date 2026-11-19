@@ -21,20 +21,8 @@
 //
 // ADDING A ROW (the task that builds the route does this, and the oracles in tests/api/permissions-matrix.test.ts and tests/api/access-matrix.test.ts, typed in from the spec, change with it):
 // add the row below with the ticks that open it, add its READ_COLUMNS or WRITE_COLUMNS entry, and register the route with route(app, { action, handler }). The generated test walks the new row at once.
-import { type Grants, grantsOfBuiltin, hasAnyTick, hasTick } from './grants.js';
+import { type Grants, hasAnyTick, hasTick } from './grants.js';
 import type { TickKey } from './ticks.js';
-
-/** The three built-in role keys. Kept while the session lookup and the admin door still check a key against them (Tasks 5, 10 and 11 remove those uses). */
-export const ROLES = ['owner', 'biller', 'staff'] as const;
-export type Role = (typeof ROLES)[number];
-
-/**
- * TEMPORARY (remove in Task 11): who is asking, as Grants or, until every caller is handed the Grants of the session (Tasks 5 to 11), as the session's role key: a string is one of the
- * built-in keys and is resolved by grantsOfBuiltin(); any other string holds no tick.
- */
-export type Who = Grants | string;
-
-const grantsOfWho = (who: Who): Grants => (typeof who === 'string' ? grantsOfBuiltin(who) : who);
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH';
 
@@ -150,7 +138,7 @@ const ROWS = {
   'read:audit_log': read('/v1/audit-log', any('activity_log'), ['audit_log'], 'A4 audit_log, C3'),
   'read:health_checks': read('/v1/health/checks', any('activity_log'), ['check_runs', 'backup_runs'], 'A4 check_runs and backup_runs, C3'),
   'read:dashboard_health': read('/v1/dashboard/health', any('activity_log'), [], 'C3, section 12: the dashboard line, computed, no table'),
-  // the combined poll (C4): open to everyone signed in; the handler asks mayCall(who, 'read:<resource>') for each resource named and refuses the whole call if one is not allowed
+  // the combined poll (C4): open to everyone signed in; the handler asks mayCall(grants, 'read:<resource>') for each resource named and refuses the whole call if one is not allowed
   'read:poll': read('/v1/sync/poll', OPEN, [], 'C4: the call is 403 JV_FORBIDDEN as a whole when one named resource is not the role\'s', 'POST'),
 
   // ---- direct edits (A5), PATCH with the stale check, or PUT/POST of ordinary fields
@@ -290,29 +278,28 @@ export function describeAccess(access: Access): string {
 }
 
 /** Whether a person may call an action. An action that is not a row can be done by nobody. */
-export function mayCall(who: Who, action: Action): boolean {
+export function mayCall(grants: Grants, action: Action): boolean {
   const row = Object.hasOwn(MATRIX, action) ? MATRIX[action] : undefined;
-  return row !== undefined && accessAllows(row.access, grantsOfWho(who));
+  return row !== undefined && accessAllows(row.access, grants);
 }
 
 /** Whether a person may use a field right of section 10: they hold its tick. */
-export function mayUseField(who: Who, field: FieldRight): boolean {
-  return Object.hasOwn(FIELD_RIGHTS, field) && hasTick(grantsOfWho(who), FIELD_RIGHTS[field]);
+export function mayUseField(grants: Grants, field: FieldRight): boolean {
+  return Object.hasOwn(FIELD_RIGHTS, field) && hasTick(grants, FIELD_RIGHTS[field]);
 }
 
 /** A4, C3: the keys of `settings` a person reads. null means every key (a holder of bill_view, bill_make or settings_change); everyone else reads the seven of STAFF_SETTING_KEYS. */
-export function readableSettingKeys(who: Who): readonly string[] | null {
-  return hasAnyTick(grantsOfWho(who), ALL_SETTINGS_TICKS) ? null : STAFF_SETTING_KEYS;
+export function readableSettingKeys(grants: Grants): readonly string[] | null {
+  return hasAnyTick(grants, ALL_SETTINGS_TICKS) ? null : STAFF_SETTING_KEYS;
 }
 
 /**
  * A4, A9, O25: how many days of the cash book (daily_totals) a person reads, counted back from today with today included. null means the wide range (cashbook_all, up to
  * limits.dailyTotalsMaxDays); cashbook_recent reads BILLER_DAILY_TOTALS_DAYS (today and yesterday); neither reads none.
  */
-export function dailyTotalsWindowDays(who: Who): number | null {
-  const g = grantsOfWho(who);
-  if (hasTick(g, 'cashbook_all')) return null;
-  return hasTick(g, 'cashbook_recent') ? BILLER_DAILY_TOTALS_DAYS : 0;
+export function dailyTotalsWindowDays(grants: Grants): number | null {
+  if (hasTick(grants, 'cashbook_all')) return null;
+  return hasTick(grants, 'cashbook_recent') ? BILLER_DAILY_TOTALS_DAYS : 0;
 }
 
 // ------------------------------------------------------------------ READ_COLUMNS
@@ -376,9 +363,9 @@ const READ_ROW_OF = new Map<string, Action>(
 );
 
 /** The columns a person reads of a resource, or null when they may not call the read row that serves it (A4, R7). A name that is not a resource is read by nobody. */
-export function readColumnsFor(who: Who, resource: string): readonly string[] | null {
+export function readColumnsFor(grants: Grants, resource: string): readonly string[] | null {
   const action = READ_ROW_OF.get(resource);
-  return action !== undefined && Object.hasOwn(READ_COLUMNS, resource) && mayCall(who, action) ? READ_COLUMNS[resource as ReadResource] : null;
+  return action !== undefined && Object.hasOwn(READ_COLUMNS, resource) && mayCall(grants, action) ? READ_COLUMNS[resource as ReadResource] : null;
 }
 
 /**
@@ -437,10 +424,9 @@ export const WRITE_COLUMNS: Readonly<Record<EditAction, Partial<Record<TickKey, 
 };
 
 /** The fields a person may send on an edit: every list of a tick they hold, each field once, in the order the lists give them. An insert requires all of them (src/edit/engine.ts). */
-export function writeColumnsFor(action: EditAction, who: Who): readonly string[] {
-  const g = grantsOfWho(who);
+export function writeColumnsFor(action: EditAction, grants: Grants): readonly string[] {
   const lists = WRITE_COLUMNS[action];
-  return [...new Set((Object.keys(lists) as TickKey[]).filter((t) => hasTick(g, t)).flatMap((t) => lists[t] ?? []))];
+  return [...new Set((Object.keys(lists) as TickKey[]).filter((t) => hasTick(grants, t)).flatMap((t) => lists[t] ?? []))];
 }
 
 // ------------------------------------------------------------------ what an edit does with a field it is sent
@@ -465,8 +451,8 @@ export type FieldVerdict = 'allowed' | 'forbidden' | 'unknown';
  *   unknown    a name that is no column, and the stamps and person columns that no request may name (S6, D22): JV_INVALID_INPUT.
  * Grants with no tick of the row are allowed nothing. Only own keys count: `constructor` and `__proto__` are unknown names.
  */
-export function writeFieldVerdict(action: EditAction, who: Who, field: string): FieldVerdict {
-  if (writeColumnsFor(action, who).includes(field)) return 'allowed';
+export function writeFieldVerdict(action: EditAction, grants: Grants, field: string): FieldVerdict {
+  if (writeColumnsFor(action, grants).includes(field)) return 'allowed';
   if (STAMP_AND_PERSON_COLUMNS.includes(field)) return 'unknown';
   const edit = MATRIX[action].edit;
   if (!edit) return 'unknown';

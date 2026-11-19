@@ -72,9 +72,9 @@ describe('Task 5: the session reads the role row; the gate, me and the poll use 
     expect(refused.statusCode).toBe(403);
     expect(errorCode(refused)).toBe('JV_FORBIDDEN');
 
-    await setTicks(role.key, ['cashbook_all']);
+    await setTicks(role.key, ['cashbook_recent', 'cashbook_all']); // a role the screen could save: the cash book for all days needs the cash book for today and yesterday
     const after = await meOf(u.cookie); // the same cookie, the next call
-    expect(after.permissions).toEqual(['cashbook_all']);
+    expect(after.permissions).toEqual(['cashbook_recent', 'cashbook_all']);
     expect(after.access).not.toBe(before.access);
     expect((await get(u.cookie, '/v1/test-access/any')).statusCode).toBe(200);
 

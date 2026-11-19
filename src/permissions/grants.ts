@@ -4,15 +4,59 @@
 //
 // The access fingerprint (R5) is how the website learns that what a person may do has changed: only the API computes it, the website compares the text.
 import { createHash } from 'node:crypto';
-import { BUILTIN_TICKS, OWNER_KEY, TICK_KEYS, type TickKey, isTickKey } from './ticks.js';
+import { OWNER_KEY, TICK_KEYS, type TickKey, isTickKey } from './ticks.js';
 
 export interface Grants {
   readonly ticks: ReadonlySet<TickKey>;
   readonly isSuperAdmin: boolean;
 }
 
+/**
+ * The ticks of one person, as a set that nobody can change. `Object.freeze` does not freeze a Set, and `ReadonlySet` stops `.add` at compile time only (a cast gets round it): one caller could widen what
+ * every other holder of the same value may do. This has no add, delete or clear, and the Set it reads from is private to it.
+ */
+class TickSet implements ReadonlySet<TickKey> {
+  readonly #held: ReadonlySet<TickKey>;
+
+  constructor(keys: Iterable<TickKey>) {
+    this.#held = new Set(keys);
+    Object.freeze(this);
+  }
+
+  get size(): number {
+    return this.#held.size;
+  }
+
+  has(key: TickKey): boolean {
+    return this.#held.has(key);
+  }
+
+  forEach(callback: (value: TickKey, key: TickKey, set: ReadonlySet<TickKey>) => void, thisArg?: unknown): void {
+    this.#held.forEach((key) => callback.call(thisArg, key, key, this));
+  }
+
+  entries(): SetIterator<[TickKey, TickKey]> {
+    return this.#held.entries();
+  }
+
+  keys(): SetIterator<TickKey> {
+    return this.#held.values();
+  }
+
+  values(): SetIterator<TickKey> {
+    return this.#held.values();
+  }
+
+  [Symbol.iterator](): SetIterator<TickKey> {
+    return this.#held.values();
+  }
+}
+
+/** A new Grants value of its own: its set of ticks is made here and shared with nobody, and neither it nor the set can be changed afterwards. */
+const grantsFrom = (ticks: Iterable<TickKey>, isSuperAdmin: boolean): Grants => Object.freeze({ ticks: new TickSet(ticks), isSuperAdmin });
+
 /** No tick and no flag: the open rows of the matrix and nothing else. */
-export const NO_GRANTS: Grants = Object.freeze({ ticks: new Set<TickKey>(), isSuperAdmin: false });
+export const NO_GRANTS: Grants = grantsFrom([], false);
 
 /** The `roles.ticks` column as the driver gives it (parsed, or the JSON text), as a list; anything else is an empty list. */
 function listOf(column: unknown): unknown[] {
@@ -26,23 +70,14 @@ function listOf(column: unknown): unknown[] {
   }
 }
 
-/** R4: the grants of a role key, its stored ticks and the Super Admin flag. Unknown keys and a column that is not a list are ignored; this never throws. */
+/**
+ * R4: the grants of a role key, its stored ticks and the Super Admin flag. Unknown keys and a column that is not a list are ignored; this never throws. Every call returns a value of its own, so
+ * what one caller does with its grants can never change what another is given.
+ */
 export function grantsOf(i: { roleKey: string; roleTicks: unknown; isSuperAdmin: boolean }): Grants {
   const isSuperAdmin = i.isSuperAdmin === true;
-  if (isSuperAdmin || i.roleKey === OWNER_KEY) return { ticks: new Set(TICK_KEYS), isSuperAdmin };
-  return { ticks: new Set(listOf(i.roleTicks).filter(isTickKey)), isSuperAdmin };
-}
-
-const BUILTIN_GRANTS: ReadonlyMap<string, Grants> = new Map(
-  Object.entries(BUILTIN_TICKS).map(([roleKey, ticks]) => [roleKey, grantsOf({ roleKey, roleTicks: ticks, isSuperAdmin: false })]),
-);
-
-/**
- * TEMPORARY (remove in Task 11): the grants of one of the three built-in role keys, from BUILTIN_TICKS; any other text has NO_GRANTS. It lets the callers that still pass the session's role key
- * (a string) keep working until Tasks 5 to 11 hand them the Grants the session reads.
- */
-export function grantsOfBuiltin(roleKey: string): Grants {
-  return BUILTIN_GRANTS.get(roleKey) ?? NO_GRANTS;
+  if (isSuperAdmin || i.roleKey === OWNER_KEY) return grantsFrom(TICK_KEYS, isSuperAdmin);
+  return grantsFrom(listOf(i.roleTicks).filter(isTickKey), isSuperAdmin);
 }
 
 export const hasTick = (g: Grants, t: TickKey): boolean => g.ticks.has(t);
