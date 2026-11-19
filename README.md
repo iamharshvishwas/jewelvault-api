@@ -28,5 +28,7 @@ echo a > .lane               # (untracked) or JV_LANE=a: npm test then uses lane
 npm run verify               # typecheck, build to dist/, check:routes, all tests
 ```
 
+Accounts are made in the terminal: `npm run admin -- add-user | reset | role | deactivate | activate | list | clear-counters | record-pull | make-super-admin` calls the admin door of the API (U3; the token is typed without echo, the address is `JV_API_URL`). A role is named by its key: `owner`, `biller`, `staff`, or the key of another active role that the Super Admin made; `make-super-admin` makes the one Super Admin (role `owner` and the flag that opens People & Roles, A15). The notes of the access work are the last entry of `docs/handoffs.md`.
+
 The API itself: `src/server.ts` (the only place that reads the environment; the variable names are in `.env.example`, `.env` is ignored), `src/app.ts` (`buildApp({ config })` for `inject()` tests), `src/config.ts`, `src/logging.ts`, `src/clock.ts`. `npm run build` writes `dist/server.js`.
 
