@@ -9,6 +9,12 @@
 // At most `maxKeys` keys are held (5,000, the size of the local store of @fastify/rate-limit that the design counted on): when a new key arrives and the map is full, the key that was used longest ago
 // is dropped, so a flood of invented addresses cannot grow the memory, at the price that the dropped key counts from zero again (the same price as a restart).
 //
+// THE SUPER ADMIN'S KEYS ARE KEPT APART (access plan R9). Her run of wrong passwords and her pause are what keeps a stolen Super Admin session from being used as a password oracle (five tries, then 15 minutes), and a
+// pause is touched once, when it begins: in the shared map it would be the first to go when other traffic brings 5,000 keys (public photo reads count a window for each address, and an IPv6 address counts by its /64, so
+// one /48 makes 65,536 keys), and the run and the pause would both be forgotten. The keys made by superWrongKey() therefore live in a small map of their own that nothing else can reach. Only the one active Super Admin can ever
+// fill it (the route wrapper refuses everybody else before the password is asked, src/super/password.ts), and when it is full it drops an entry whose pause is over before anything else and a live one (the oldest) only when
+// there is nothing else, which takes more Super Admin ids than it has places. A restart still counts from zero (A13).
+//
 // The clock is a function of the caller: the application's own clock (S5) through limiterOf(), so a test moves time by moving the clock it gave the application, and a clock that stands still
 // for a moment does no harm. A new application is a new limiter: that is what "a restart" is in the tests.
 import type { FastifyInstance } from 'fastify';
@@ -70,19 +76,35 @@ interface Entry {
 
 const DEFAULT_MAX_KEYS = 5000;
 
+/** The key of the Super Admin's password check (access plan R9): `super-wrong:<user id>`. No key of any other family starts with it: the others are written by code with their own words in front. */
+const SUPER_WRONG_PREFIX = 'super-wrong:';
+export const superWrongKey = (userId: string): string => `${SUPER_WRONG_PREFIX}${userId}`;
+
+/** The places of the small store: a Super Admin uses two (her pause and her run), and only the one active Super Admin can reach it, so a few dozen is plenty. */
+const DEFAULT_KEPT_KEYS = 64;
+
 export class Limiter {
   private readonly entries = new Map<string, Entry>();
+  /** The small store of the keys of superWrongKey(): a map of its own, so that no other traffic can push them out of the shared one (see the head of this file). */
+  private readonly kept = new Map<string, Entry>();
 
   constructor(
     private readonly now: () => number,
     private readonly maxKeys: number = DEFAULT_MAX_KEYS,
+    private readonly keptKeys: number = DEFAULT_KEPT_KEYS,
   ) {
     if (!Number.isInteger(maxKeys) || maxKeys < 1) throw new TypeError('maxKeys is a whole number of at least 1');
+    if (!Number.isInteger(keptKeys) || keptKeys < 1) throw new TypeError('keptKeys is a whole number of at least 1');
   }
 
-  /** How many keys are held. */
+  /** How many keys are held, in both maps. */
   get size(): number {
-    return this.entries.size;
+    return this.entries.size + this.kept.size;
+  }
+
+  /** The map an entry lives in. An entry's key is `w:`, `p:` or `s:` (a window, a pause, a run of wrong answers) and then the key of the caller. */
+  private storeOf(entryKey: string): Map<string, Entry> {
+    return entryKey.startsWith(SUPER_WRONG_PREFIX, 2) ? this.kept : this.entries;
   }
 
   /** Counts one call under `key`. Over the limit it is refused until the window ends, and is not counted. */
@@ -90,7 +112,7 @@ export class Limiter {
     if (!Number.isInteger(rate.limit) || rate.limit < 1) throw new TypeError('a rate allows a whole number of calls, at least 1');
     if (!Number.isFinite(rate.windowMs) || rate.windowMs < 1) throw new TypeError('a window lasts at least a millisecond');
     const t = this.now();
-    let e = this.entries.get(`w:${key}`);
+    let e = this.storeOf(`w:${key}`).get(`w:${key}`);
     if (!e || t >= e.end || t < e.start) e = { n: 0, start: t, end: t + rate.windowMs };
     if (e.n >= rate.limit) {
       this.touch(`w:${key}`, e);
@@ -115,11 +137,12 @@ export class Limiter {
 
   /** Milliseconds of the pause left, 0 when `key` is not paused. */
   pausedFor(key: string): number {
-    const e = this.entries.get(`p:${key}`);
+    const store = this.storeOf(`p:${key}`);
+    const e = store.get(`p:${key}`);
     if (!e) return 0;
     const left = e.end - this.now();
     if (left <= 0) {
-      this.entries.delete(`p:${key}`);
+      store.delete(`p:${key}`);
       return 0;
     }
     return left;
@@ -127,7 +150,7 @@ export class Limiter {
 
   /** One more wrong answer in a row for `key`; returns how many there are. */
   strike(key: string): number {
-    const e = this.entries.get(`s:${key}`) ?? { n: 0, start: this.now(), end: Number.POSITIVE_INFINITY };
+    const e = this.storeOf(`s:${key}`).get(`s:${key}`) ?? { n: 0, start: this.now(), end: Number.POSITIVE_INFINITY };
     e.n++;
     this.touch(`s:${key}`, e);
     return e.n;
@@ -135,18 +158,30 @@ export class Limiter {
 
   /** A right answer: the run of wrong ones is over. */
   clearStrikes(key: string): void {
-    this.entries.delete(`s:${key}`);
+    this.storeOf(`s:${key}`).delete(`s:${key}`);
   }
 
-  /** Puts the entry last in the map (so the first one is the one used longest ago) and keeps the map within its size. */
+  /**
+   * Puts the entry last in its map (so the first one is the one used longest ago) and keeps the map within its size. The shared map drops the one used longest ago. The small store drops an entry that is over
+   * first and its oldest only when none is.
+   */
   private touch(key: string, entry: Entry): void {
-    this.entries.delete(key);
-    while (this.entries.size >= this.maxKeys) {
-      const oldest = this.entries.keys().next();
-      if (oldest.done) break;
-      this.entries.delete(oldest.value);
+    const store = this.storeOf(key);
+    const small = store === this.kept;
+    store.delete(key);
+    while (store.size >= (small ? this.keptKeys : this.maxKeys)) {
+      const victim = (small ? this.overInKept() : undefined) ?? store.keys().next().value;
+      if (victim === undefined) break;
+      store.delete(victim);
     }
-    this.entries.set(key, entry);
+    store.set(key, entry);
+  }
+
+  /** The first entry of the small store with nothing left to remember: a pause or a window that is over. A run of wrong answers has no end (it is over only when a right answer clears it), so it is never this. */
+  private overInKept(): string | undefined {
+    const t = this.now();
+    for (const [key, entry] of this.kept) if (entry.end <= t) return key;
+    return undefined;
   }
 }
 

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { THROTTLES, limiterOf } from '../../src/auth/limiter';
 import { passwords } from '../../src/auth/password';
 import { grantsOf } from '../../src/permissions/grants';
 import type { Auth } from '../../src/permissions/route';
@@ -255,11 +256,12 @@ describe('every write asks for the Super Admin\'s own password', () => {
     const login = await w.world.app.inject({ method: 'POST', url: '/v1/auth/login', headers: csrfHeaders(), payload: { email: second.email, password: PASSWORD } });
     expect(login.statusCode, 'the login of a paused Super Admin is not paused').toBe(200);
 
-    // time: 899 seconds on, one second is left; at 900 the pause is over, the right password works, and the run starts from zero
+    // time: 899 seconds on, one second is left; two seconds later the pause is over (the API clock never reads the same instant twice, so the reads of this test have put it a little ahead of its source: a margin
+    // of one second keeps the test from depending on how many reads that was), the right password works, and the run starts from zero
     w.time.time.micros += 899_000_000n;
     const almost = await again(PASSWORD);
     expect([almost.statusCode, almost.headers['retry-after']]).toEqual([429, '1']);
-    w.time.time.micros += 1_000_000n;
+    w.time.time.micros += 2_000_000n;
     expect((await again(PASSWORD)).statusCode, 'the pause is over after 15 minutes').toBe(201);
     expect((await again(wrongOne())).statusCode, 'the run was cleared when the pause began').toBe(422);
     expect((await attempt(PASSWORD)).statusCode, 'the first Super Admin was paused at the same moment and is free at the same moment too').toBe(201);
@@ -275,6 +277,54 @@ describe('every write asks for the Super Admin\'s own password', () => {
     for (const a of answers.filter((x) => x.statusCode === 429)) expect(a.headers['retry-after']).toMatch(/^\d+$/);
     expect(await digest()).toEqual(before);
     expect((await attempt(PASSWORD)).statusCode).toBe(429);
+  });
+
+  /**
+   * What other traffic does to the limiter's shared map (at most 5,000 keys, the one used longest ago goes first): 5,100 other keys of every family, named as the code names them and each from another address, as
+   * public photo reads (a window for each address: a /48 holds 65,536 networks) and the terminal door's wrong tokens (a pause and a run for each address) make them.
+   */
+  function floodTheLimiter(): void {
+    const limiter = limiterOf(w.world.app);
+    for (let i = 0; i < 5100; i++) {
+      const address = `198.51.${i >> 8}.${i & 255}`;
+      limiter.take(`photo-read:${address}`, THROTTLES.photoReadPerAddress);
+      limiter.pause(`admin-pause:${address}`, THROTTLES.adminPauseMs);
+      limiter.strike(`admin-wrong:${address}`);
+    }
+  }
+
+  it('a pause that is running is not pushed out by other traffic: more than 5,000 other keys leave it, and its Retry-After, as they were (a stolen session gets no more than five tries)', async () => {
+    const admin = await newAdmin();
+    const attempt = (password: string) => send(admin, 'POST', ROLES, { copy_of: 'biller', name: fresh('Flood'), password });
+    for (let i = 0; i < 5; i++) expect((await attempt(wrongOne())).statusCode, `wrong ${i + 1} of five`).toBe(422); // the fifth begins the pause
+    const before = await attempt(PASSWORD);
+    expect([before.statusCode, before.headers['retry-after']]).toEqual([429, '900']);
+
+    floodTheLimiter();
+    const verify = vi.spyOn(passwords, 'verify');
+    try {
+      const after = await attempt(PASSWORD);
+      expect([after.statusCode, after.headers['retry-after']], 'the flood must not clear the pause').toEqual([429, '900']);
+      expect((await attempt(wrongOne())).statusCode).toBe(429);
+      expect(verify, 'while it runs nothing is hashed').not.toHaveBeenCalled();
+    } finally {
+      verify.mockRestore();
+    }
+    // it ends when it ends, as before (the flood read the API clock thousands of times, and that clock never reads the same instant twice: a second more than 15 minutes is a safe margin)
+    w.time.time.micros += 901_000_000n;
+    expect((await attempt(PASSWORD)).statusCode).toBe(201);
+  });
+
+  it('a run of four wrong passwords is not pushed out either: after the same flood the fifth wrong one still begins the pause', async () => {
+    const admin = await newAdmin();
+    const attempt = (password: string) => send(admin, 'POST', ROLES, { copy_of: 'biller', name: fresh('Flood'), password });
+    for (let i = 0; i < 4; i++) expect((await attempt(wrongOne())).statusCode, `wrong ${i + 1}`).toBe(422);
+    floodTheLimiter();
+    expect((await attempt(wrongOne())).statusCode, 'the fifth wrong one is still "not correct" ...').toBe(422);
+    const paused = await attempt(PASSWORD);
+    expect([paused.statusCode, paused.headers['retry-after']], '... and it began the pause: the run was not forgotten').toEqual([429, '900']);
+    w.time.time.micros += 901_000_000n; // the pause is over (a second of margin: the flood moved the API clock on by about 15 ms); leave nothing of it for the tests after this one
+    expect((await attempt(PASSWORD)).statusCode).toBe(201);
   });
 
   it('the password appears in no log line, no audit row and no event fact', async () => {

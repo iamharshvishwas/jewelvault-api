@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addressKey as scriptAddressKey } from '../../scripts/login-counters.mjs';
 import { buildApp } from '../../src/app';
-import { Limiter, THROTTLES, limiterOf, rateLimited, visitorAddress } from '../../src/auth/limiter';
+import { Limiter, THROTTLES, limiterOf, rateLimited, superWrongKey, visitorAddress } from '../../src/auth/limiter';
 import { createClock } from '../../src/clock';
 import { JvError } from '../../src/errors';
 import { logSink, testConfig } from './support';
@@ -13,9 +13,9 @@ const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 
-function limiterOver(maxKeys?: number) {
+function limiterOver(maxKeys?: number, keptKeys?: number) {
   let t = 1_000_000;
-  const limiter = new Limiter(() => t, maxKeys);
+  const limiter = new Limiter(() => t, maxKeys, keptKeys);
   return {
     limiter,
     advance: (ms: number) => {
@@ -124,6 +124,90 @@ describe('T-D24 (API09 clause) the in-memory limiter: a fixed window for each ke
     expect(() => limiter.take('k', { limit: 1.5, windowMs: MINUTE })).toThrow(TypeError);
     expect(() => limiter.take('k', { limit: 1, windowMs: 0 })).toThrow(TypeError);
     expect(() => new Limiter(() => 0, 0)).toThrow(TypeError);
+  });
+});
+
+describe('access plan R9: the Super Admin\'s run of wrong passwords and her pause live in a small store of their own, which other traffic cannot push them out of', () => {
+  // The key of src/super/password.ts, written out here the way the plan writes it: `super-wrong:<user id>`.
+  const ADMIN = 'super-wrong:0b6f1c2e-5d3a-4b8e-9c71-2f4a6d8e1b30';
+  const WINDOW = { limit: 3, windowMs: HOUR };
+
+  /** n other keys of EVERY family the limiter has: a window (a call counted), a pause and a run of wrong answers. Public photo reads alone make 65,536 window keys for the /64 networks of one /48. */
+  function flood(limiter: Limiter, n = 5100): void {
+    for (let i = 0; i < n; i++) {
+      limiter.take(`flood-window-${i}`, WINDOW);
+      limiter.pause(`flood-pause-${i}`, HOUR);
+      limiter.strike(`flood-run-${i}`);
+    }
+  }
+
+  it('the key is `super-wrong:<user id>`, as the plan writes it (one place makes it: superWrongKey)', () => {
+    expect(superWrongKey('0b6f1c2e-5d3a-4b8e-9c71-2f4a6d8e1b30')).toBe(ADMIN);
+  });
+
+  it('a live pause survives more than 5,000 other keys of every other family and still says how long is left; it ends when it ends', () => {
+    const { limiter, advance } = limiterOver();
+    limiter.pause(ADMIN, 15 * MINUTE);
+    advance(5 * MINUTE);
+    flood(limiter);
+    expect(limiter.pausedFor(ADMIN)).toBe(10 * MINUTE);
+    advance(10 * MINUTE);
+    expect(limiter.pausedFor(ADMIN)).toBe(0);
+  });
+
+  it('a live run of four wrong answers survives the same flood: the next wrong answer is the fifth', () => {
+    const { limiter } = limiterOver();
+    for (let i = 1; i <= 4; i++) expect(limiter.strike(ADMIN)).toBe(i);
+    flood(limiter);
+    expect(limiter.strike(ADMIN)).toBe(5);
+    limiter.clearStrikes(ADMIN);
+    expect(limiter.strike(ADMIN), 'a right answer still ends the run').toBe(1);
+  });
+
+  it('every other family is evicted as before (the oldest in use goes first and counts from zero again); only the small store is spared, and the shared map stays within its size', () => {
+    const { limiter } = limiterOver(50);
+    limiter.pause(ADMIN, HOUR);
+    limiter.strike(ADMIN);
+    expect(limiter.take('first-window', { limit: 1, windowMs: HOUR }).ok).toBe(true);
+    limiter.pause('first-pause', HOUR);
+    limiter.strike('first-run');
+    flood(limiter, 200); // 600 other keys, twelve times what the shared map holds
+    expect(limiter.take('first-window', { limit: 1, windowMs: HOUR }).ok, 'its window was evicted: a new one').toBe(true);
+    expect(limiter.pausedFor('first-pause'), 'its pause was evicted').toBe(0);
+    expect(limiter.strike('first-run'), 'its run was evicted').toBe(1);
+    expect(limiter.pausedFor(ADMIN), 'the Super Admin\'s pause was not').toBeGreaterThan(0);
+    expect(limiter.strike(ADMIN), 'nor her run').toBe(2);
+    expect(limiter.size).toBeLessThanOrEqual(50 + 2); // the shared map holds 50, the small store her two entries
+  });
+
+  it('when the small store is full it drops an entry whose pause is over first, never a live pause or a live run while one is left; a cleared run leaves a free place; only then the oldest', () => {
+    const { limiter, advance } = limiterOver(undefined, 3);
+    const [a, b, c, d, e, f] = ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => `super-wrong:${id}`);
+    limiter.pause(b, 15 * MINUTE); // the oldest entry, live
+    limiter.pause(a, 1 * MINUTE); // will be over
+    limiter.strike(c); // a live run
+    advance(2 * MINUTE);
+    // full: a new key takes the place of the pause that is over, not of the older live pause
+    limiter.strike(d);
+    expect(limiter.pausedFor(b)).toBe(13 * MINUTE);
+    expect(limiter.strike(c), 'the live run of c is still counted').toBe(2);
+    expect(limiter.pausedFor(a)).toBe(0);
+    // a run that was ended by a right answer is empty: its place is free, and nothing live is dropped for the next key
+    limiter.clearStrikes(d);
+    limiter.strike(e);
+    expect(limiter.pausedFor(b)).toBe(13 * MINUTE);
+    expect(limiter.strike(c)).toBe(3);
+    // now it holds nothing but live entries (b, c, e): one more key can only take the place of the OLDEST of them
+    limiter.strike(f);
+    expect(limiter.pausedFor(b), 'the oldest live entry went').toBe(0);
+    expect(limiter.strike(c)).toBe(4);
+    expect(limiter.strike(e)).toBe(2);
+  });
+
+  it('refuses a small store of no keys, as it refuses a shared map of none', () => {
+    expect(() => new Limiter(() => 0, 50, 0)).toThrow(TypeError);
+    expect(() => new Limiter(() => 0, 50, 1.5)).toThrow(TypeError);
+    expect(() => new Limiter(() => 0, 50, 1)).not.toThrow();
   });
 });
 
