@@ -51,15 +51,16 @@ import { cleanRoleDescription, cleanRoleName, makeRoleKey } from './roleKey.js';
 
 const typeError = (issue: { input?: unknown }) => (issue.input === undefined ? 'is required' : 'must be text');
 
-/** The Super Admin's own password. Its length as a password is judged by confirmPassword (one over 128 characters is wrong, not invalid); the cap here is only against a huge input, as at the login. */
-const passwordField = z.string({ error: typeError }).min(1, 'is required').max(1024, 'must be at most 1024 characters');
+/** The Super Admin's own password. Its length as a password is judged by confirmPassword (one over 128 characters is wrong, not invalid); the cap here is only against a huge input, as at the login. Exported: the people writes (src/super/people.ts) carry it too. */
+export const passwordField = z.string({ error: typeError }).min(1, 'is required').max(1024, 'must be at most 1024 characters');
 /** The words are judged by cleanRoleName and cleanRoleDescription, which know the rules. */
 const nameField = z.string({ error: typeError });
 const descriptionField = z.string({ error: typeError });
 const ticksField = z
   .array(z.string({ error: typeError }), { error: (issue) => (issue.input === undefined ? 'is required' : 'must be a list of tick keys') })
   .max(TICK_KEYS.length, `must list at most ${TICK_KEYS.length} ticks`);
-const activeField = z.boolean({ error: (issue) => (issue.input === undefined ? 'is required' : 'must be true or false') });
+/** `active` of a switch, role or person (src/super/people.ts takes it from here). */
+export const activeField = z.boolean({ error: (issue) => (issue.input === undefined ? 'is required' : 'must be true or false') });
 
 /** `changes` of an edit: the name and/or the description, at least one. Another key (`is_super_admin`, `key` ...) is refused by its path, `changes.<key>`. */
 const changesField = z
@@ -129,8 +130,8 @@ function checkedTicks(listed: readonly string[]): TickKey[] {
 
 // ------------------------------------------------------------------ one transaction
 
-/** Where the unique key of a database error was met (1062), or null. A JvError keeps the driver's error as its `cause` (classifyError, src/errors.ts). */
-function duplicateOf(e: unknown): string | null {
+/** Where the unique key of a database error was met (1062), or null. A JvError keeps the driver's error as its `cause` (classifyError, src/errors.ts). Exported: the people writes map the e-mail's key the same way. */
+export function duplicateOf(e: unknown): string | null {
   const cause: unknown = e instanceof JvError ? e.cause : e;
   return typeof cause === 'object' && cause !== null && Number((cause as { errno?: unknown }).errno) === 1062 ? duplicateKeyName(cause) : null;
 }

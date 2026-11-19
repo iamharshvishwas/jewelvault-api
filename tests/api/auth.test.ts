@@ -734,9 +734,12 @@ describe('T-D14 clause: a login, a logout and a change-password each write exact
 // ------------------------------------------------------------------------------------------------ T-D06 and T-D15
 
 describe('T-D06 (HTTP half) a user cannot change their own role or active; no route could', () => {
-  it('no route updates users: none in the route table, and no row of the matrix is an edit of users', () => {
-    const writing = world.app.routeTable.filter((r) => r.kind !== 'token' && r.method !== 'GET' && /\/users\b/.test(r.url)); // the admin door (a token route) is the only way (A8)
-    expect(writing).toEqual([]);
+  // A8 CHANGED ON PURPOSE (access plan Task 14): this test said that no route updates users and that the admin door (a token route) is the only way. The way is the admin door, login and change-password for the
+  // person's own password, and now the Super Admin's five calls under /v1/super/people (never her own role or switch: tests/api/super-people.test.ts). Under /users there is still no route at all.
+  it('A8 now reads: the routes that write users are the admin door, login and change-password, and /v1/super/people: none is under /users, and no row of the matrix is an edit of users', () => {
+    const writing = world.app.routeTable.filter((r) => r.kind !== 'token' && r.method !== 'GET' && /\/(users|people)\b/.test(r.url));
+    expect(writing.map((r) => r.action).sort()).toEqual(['super:people.active', 'super:people.add', 'super:people.edit', 'super:people.reset', 'super:people.role']);
+    for (const r of writing) expect(r.url, `${r.method} ${r.url}`).toMatch(/^\/v1\/super\/people\b/);
     for (const [action, row] of Object.entries(MATRIX)) {
       if ('edit' in row && row.edit) expect(row.edit.table, action).not.toBe('users');
     }

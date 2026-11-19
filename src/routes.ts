@@ -59,7 +59,7 @@ export function registerRoutes(app: FastifyInstance): void {
   registerStockRoutes(app); // API16: X8 create_design, X9 set_sku_status
   registerPhotoRoutes(app); // API17: the photo upload, the public photo read, the owner's removal (and FB-E1's upload of an order's photo)
   registerOrderRoutes(app); // FB-E1: X13 create_order and the edit of an order (the Order Book)
-  registerSuperRoutes(app); // access plan Tasks 12 and 13: the Super Admin's reads (ticks, people, roles) and the four role writes under /v1/super; the five people writes are Task 14
+  registerSuperRoutes(app); // access plan Tasks 12 to 14: the Super Admin's reads (ticks, people, roles), the four role writes and the five people writes under /v1/super
   // A14: /readyz says only whether the start-up check passed, {"ok":true} or {"ok":false} (503 while it has not): never why. The reason is in sys_error_log and the owner's dashboard line.
   route(app, { public: 'ready', handler: ({ app: a, reply }) => reply.code(a.startup?.ok === true ? 200 : 503).send({ ok: a.startup?.ok === true }) });
 }

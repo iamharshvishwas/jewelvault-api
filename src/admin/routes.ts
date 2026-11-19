@@ -48,8 +48,9 @@ import { newTemporaryPassword } from './password.js';
 const typeError = (issue: { input?: unknown }) => (issue.input === undefined ? 'is required' : 'must be text');
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const emailField = z.string({ error: typeError }).trim().toLowerCase().min(1, 'is required').max(254, 'must be at most 254 characters').regex(EMAIL_SHAPE, 'must be an e-mail address such as name@example.com');
-const fullNameField = z.string({ error: typeError }).trim().min(1, 'is required').max(120, 'must be at most 120 characters');
+// exported for the Super Admin's people calls (src/super/people.ts): the rules of a login name and of a person's name are written once, here, and are the same on both surfaces
+export const emailField = z.string({ error: typeError }).trim().toLowerCase().min(1, 'is required').max(254, 'must be at most 254 characters').regex(EMAIL_SHAPE, 'must be an e-mail address such as name@example.com');
+export const fullNameField = z.string({ error: typeError }).trim().min(1, 'is required').max(120, 'must be at most 120 characters');
 
 const createBody = wire.strictObject({ email: emailField, full_name: fullNameField, role: roleKeyField });
 const roleBody = wire.strictObject({ role: roleKeyField });
@@ -62,7 +63,7 @@ const pullBody = wire.strictObject({
 /** The actor of the door: no user, and the role says what it is (audit_log.actor_role, D16). */
 const ACTOR = { id: null, role: 'admin-cli' } as const;
 
-interface UserRow {
+export interface UserRow {
   id: string;
   email: string;
   full_name: string;
@@ -90,17 +91,29 @@ function databaseOf(app: FastifyInstance): DbPool {
 
 const NO_SUCH_USER = () => new JvError('JV_NOT_FOUND', 'There is no such user.');
 
-function idOf(params: unknown): string {
+export function idOf(params: unknown): string {
   const id = (params as { id?: unknown } | undefined)?.id;
   if (typeof id !== 'string' || !UUID_TEXT.test(id)) throw new wire.InvalidInputError('id', 'must be a lower-case UUID');
   return id;
 }
 
-/** The user's row, locked: a login in flight for the same user waits for this call, and its own check of the password (API05) then sees the change. */
-async function lockUser(tx: Tx, id: string): Promise<UserRow> {
+/** The user's row, locked: a login in flight for the same user waits for this call, and its own check of the password (API05) then sees the change. Also the first lock of every people call of the Super Admin (src/super/people.ts). */
+export async function lockUser(tx: Tx, id: string): Promise<UserRow> {
   const [user] = await tx.rows<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE id = ? FOR UPDATE`, [id]);
   if (!user) throw NO_SUCH_USER();
   return user;
+}
+
+/** The refusal of a login name that another login holds: 422 on `email`. The Super Admin's people calls (src/super/people.ts) answer the same words, also for the unique key's own error under a race. */
+export const emailTaken = () => new wire.InvalidInputError('email', 'is already used by another user');
+
+/**
+ * The login name must be free. A plain read in the table's own collation (utf8mb4_unicode_ci: letter case and accents do not make a name another one), made inside the transaction; the unique key `uq_users_email` is
+ * the last wall under a race. `own` is the login being edited: its own name is no clash; null for a login that does not exist yet.
+ */
+export async function assertEmailFree(tx: Tx, email: string, own: string | null): Promise<void> {
+  const holders = await tx.rows<{ id: string }>('SELECT id FROM users WHERE email = ?', [email]);
+  if (holders.some((u) => u.id !== own)) throw emailTaken();
 }
 
 /**
@@ -138,8 +151,7 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       const hash = await passwords.hash(temporary);
       const id = newId();
       const roleKey = await withTx(txContextFor(db, request, ACTOR), async (tx) => {
-        const taken = await tx.rows<{ id: string }>('SELECT id FROM users WHERE email = ?', [body.email]);
-        if (taken.length > 0) throw new wire.InvalidInputError('email', 'is already used by another user');
+        await assertEmailFree(tx, body.email, null);
         const role = await assertActiveRole(tx, body.role); // the key as the roles table stores it: the foreign key ignores letter case, so the text that was sent is never written
         await tx.run('INSERT INTO users (id, email, full_name, role, active, password_hash, must_change_password) VALUES (?, ?, ?, ?, 1, ?, 1)', [id, body.email, body.full_name, role.role_key, hash]);
         await writeEvent(tx, { table: 'users', rowId: id, facts: { event: 'admin_add_user', role: role.role_key } });

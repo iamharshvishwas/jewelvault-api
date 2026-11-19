@@ -853,14 +853,20 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
     }
   });
 
-  it('the route table: the only routes that can create or change a user are token routes of the admin door; no session route writes under /users', () => {
-    const writes = world.app.routeTable.filter((r) => r.method !== 'GET' && /users/.test(r.url));
+  // A8 CHANGED ON PURPOSE (access plan Task 14): the admin door was the only way to create or change a person. The Super Admin's own five calls under /v1/super/people now do as well (add, edit the name or e-mail,
+  // change the role, switch off or on, reset the password); they are `super` rows that only the one Super Admin passes, and never on her own login but for the edit (tests/api/super-people.test.ts says all of it).
+  it('the route table: the routes that create or change a person are the token routes of the admin door and the five rows of the Super Admin under /v1/super/people; no other session route writes under /users or /people', () => {
+    const writes = world.app.routeTable.filter((r) => r.method !== 'GET' && /\/(users|people)\b/.test(r.url));
     expect(writes.length).toBeGreaterThan(0);
-    for (const r of writes) expect(r, `${r.method} ${r.url}`).toMatchObject({ kind: 'token', name: 'admin' });
+    const FIVE = ['super:people.active', 'super:people.add', 'super:people.edit', 'super:people.reset', 'super:people.role'];
+    for (const r of writes.filter((x) => x.kind === 'token')) expect(r, `${r.method} ${r.url}`).toMatchObject({ kind: 'token', name: 'admin' });
+    const session = writes.filter((r) => r.kind !== 'token');
+    expect(session.map((r) => r.action).sort()).toEqual(FIVE);
+    for (const r of session) expect(r, `${r.method} ${r.url}`).toMatchObject({ kind: 'matrix', access: { superAdmin: true } });
     for (const [action, row] of Object.entries(MATRIX)) if ('edit' in row && row.edit) expect(row.edit.table, action).not.toBe('users');
   });
 
-  it('A8, U2: the statements that insert into or update `users` are in the admin door and, for the user\'s own password, the session routes: nowhere else, and none outside the door sets a role or active', () => {
+  it('A8 (changed on purpose, Task 14), U2: the statements that insert into or update `users` are in the admin door, in the session routes for the user\'s own password, and in the Super Admin\'s five people calls: nowhere else, and none outside the door sets the Super Admin flag', () => {
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
@@ -877,10 +883,13 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
     }
     for (const [file, hits] of Object.entries(found)) {
       if (file.startsWith(`src${'/'}admin${'/'}`)) continue;
-      expect(file, 'a statement that writes users outside the admin door').toBe('src/auth/loginRoutes.ts');
-      for (const h of hits) {
-        expect(h).toMatch(/SET\s+password_hash\s*=\s*\?,\s*must_change_password\s*=\s*0\s+WHERE\s+id\s*=\s*\?/i);
-        expect(h).not.toMatch(/\b(role|active|email)\s*=/i);
+      expect(['src/auth/loginRoutes.ts', 'src/super/people.ts'], 'a statement that writes users outside the admin door and the Super Admin\'s people calls').toContain(file);
+      for (const h of hits) expect(h, `${file} sets the Super Admin flag`).not.toMatch(/is_super_admin/i); // DESIGN 6.6 rule 3: the flag is set by the admin door only
+      if (file === 'src/auth/loginRoutes.ts') {
+        for (const h of hits) {
+          expect(h).toMatch(/SET\s+password_hash\s*=\s*\?,\s*must_change_password\s*=\s*0\s+WHERE\s+id\s*=\s*\?/i);
+          expect(h).not.toMatch(/\b(role|active|email)\s*=/i);
+        }
       }
     }
     expect(Object.keys(found).some((f) => f.startsWith(`src${'/'}admin${'/'}`)), 'the door has its statements').toBe(true);
