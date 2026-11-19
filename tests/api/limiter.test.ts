@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { addressKey as scriptAddressKey } from '../../scripts/login-counters.mjs';
 import { buildApp } from '../../src/app';
-import { Limiter, THROTTLES, limiterOf, rateLimited, superWrongKey, visitorAddress } from '../../src/auth/limiter';
+import { Limiter, THROTTLES, changePasswordKey, limiterOf, rateLimited, superWrongKey, visitorAddress } from '../../src/auth/limiter';
+import { throttleSessionCall } from '../../src/auth/throttle';
 import { createClock } from '../../src/clock';
 import { JvError } from '../../src/errors';
 import { logSink, testConfig } from './support';
@@ -208,6 +209,101 @@ describe('access plan R9: the Super Admin\'s run of wrong passwords and her paus
     expect(() => new Limiter(() => 0, 50, 0)).toThrow(TypeError);
     expect(() => new Limiter(() => 0, 50, 1.5)).toThrow(TypeError);
     expect(() => new Limiter(() => 0, 50, 1)).not.toThrow();
+  });
+});
+
+describe('final review (Ruling Y): the window of a person\'s change of password lives in the small store too, so that other traffic cannot clear it', () => {
+  // POST /v1/auth/change-password checks the current password against the same hash that R9 protects, and it is counted under `changePassword:<user id>`, 5 in 15 minutes (API08). That window was in the shared
+  // map beside the public photo reads: 5,000 other keys cleared it, and a stolen session (the Super Admin's too) could guess without limit.
+  const PERSON = 'changePassword:0b6f1c2e-5d3a-4b8e-9c71-2f4a6d8e1b30';
+  const ADMIN = 'super-wrong:0b6f1c2e-5d3a-4b8e-9c71-2f4a6d8e1b30';
+  const RATE = THROTTLES.changePassword;
+
+  /** n other keys of EVERY family the limiter has, each from another address or person: windows (public photo reads, the 300 a minute and the photo uploads of other people), pauses and runs of wrong answers (the terminal door's). */
+  function flood(limiter: Limiter, n = 5100): void {
+    for (let i = 0; i < n; i++) {
+      const address = `198.51.${i >> 8}.${i & 255}`;
+      limiter.take(`photo-read:${address}`, THROTTLES.photoReadPerAddress);
+      limiter.take(`everything:other-person-${i}`, THROTTLES.everything);
+      limiter.take(`photoUpload:other-person-${i}`, THROTTLES.photoUpload);
+      limiter.pause(`admin-pause:${address}`, THROTTLES.adminPauseMs);
+      limiter.strike(`admin-wrong:${address}`);
+    }
+  }
+
+  it('the key is `changePassword:<user id>`, as before (one place makes it: changePasswordKey)', () => {
+    expect(changePasswordKey('0b6f1c2e-5d3a-4b8e-9c71-2f4a6d8e1b30')).toBe(PERSON);
+  });
+
+  it('a live window survives more than 5,000 other keys of every other family: the 6th call in the window is still refused, with the time that is left; it ends when it ends', () => {
+    const { limiter, advance } = limiterOver();
+    for (let i = 1; i <= 5; i++) expect(limiter.take(PERSON, RATE), `call ${i}`).toEqual({ ok: true });
+    expect(limiter.take(PERSON, RATE).ok, 'the 6th call, before any flood').toBe(false);
+    advance(5 * MINUTE);
+    flood(limiter);
+    expect(limiter.take(PERSON, RATE), 'the 6th call after the flood').toEqual({ ok: false, retryAfterS: 600 });
+    advance(10 * MINUTE + 1);
+    expect(limiter.take(PERSON, RATE), 'the window is over, 15 minutes after the first call').toEqual({ ok: true });
+  });
+
+  it('the windows of 200 people and the Super Admin\'s pause and run live in the small store together and none pushes another out (a shop\'s people plus the Super Admin never evict each other)', () => {
+    const { limiter } = limiterOver();
+    limiter.pause(ADMIN, HOUR);
+    limiter.strike(ADMIN);
+    for (let i = 0; i < 200; i++) for (let call = 1; call <= 5; call++) expect(limiter.take(`changePassword:person-${i}`, RATE), `person ${i}, call ${call}`).toEqual({ ok: true });
+    flood(limiter, 1100); // 5,500 other keys: more than the shared map holds
+    for (let i = 0; i < 200; i++) expect(limiter.take(`changePassword:person-${i}`, RATE).ok, `person ${i}: the 6th call`).toBe(false);
+    expect(limiter.pausedFor(ADMIN), 'the Super Admin\'s pause was not pushed out').toBeGreaterThan(0);
+    expect(limiter.strike(ADMIN), 'nor her run').toBe(2);
+  });
+
+  it('nothing else is protected: a person\'s other windows (the 300 a minute, the photo uploads) stay in the shared map and are evicted as before', () => {
+    const { limiter } = limiterOver();
+    expect(limiter.take('everything:the-person', { limit: 1, windowMs: HOUR }).ok).toBe(true);
+    expect(limiter.take('photoUpload:the-person', { limit: 1, windowMs: HOUR }).ok).toBe(true);
+    flood(limiter);
+    expect(limiter.take('everything:the-person', { limit: 1, windowMs: HOUR }).ok, 'its window was evicted: a new one').toBe(true);
+    expect(limiter.take('photoUpload:the-person', { limit: 1, windowMs: HOUR }).ok, 'its window was evicted: a new one').toBe(true);
+  });
+
+  it('a full small store drops a window that is over first, not an older live pause, and the oldest live entry only when none is over (the rule of R9, now for the windows too)', () => {
+    const { limiter, advance } = limiterOver(undefined, 3);
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((id) => `changePassword:${id}`);
+    limiter.pause(ADMIN, HOUR); // the oldest entry, live for an hour
+    advance(1 * MINUTE);
+    expect(limiter.take(a, RATE).ok).toBe(true); // a window of 15 minutes
+    advance(10 * MINUTE);
+    expect(limiter.take(b, RATE).ok).toBe(true); // 11 minutes after the first: live for 15 more
+    advance(6 * MINUTE); // 17 minutes in: the window of a is over, the window of b and the pause are not
+    expect(limiter.take(c, RATE).ok).toBe(true); // the store is full: it takes the place of a, not of the older live pause
+    expect(limiter.pausedFor(ADMIN), 'the live pause was kept although it is the oldest entry').toBeGreaterThan(0);
+    // now nothing is over (the pause, b and c are live): one more key can only take the place of the oldest of them, the pause
+    expect(limiter.take(d, RATE).ok).toBe(true);
+    expect(limiter.pausedFor(ADMIN), 'the oldest live entry went, because nothing was over').toBe(0);
+  });
+
+  it('the wrapper of the session routes counts a change of password under that key: after the flood the 6th call is 429 with a Retry-After, and the 5 before it were not refused', async () => {
+    const micros = BigInt(Date.UTC(2026, 9, 17, 10, 0, 0)) * 1000n;
+    const app = buildApp({ config: testConfig({ logLevel: 'silent' }), clock: createClock(() => micros), routes: false, logStream: logSink().stream });
+    await app.ready();
+    try {
+      const id = '7f3a1c9e-2b4d-4e6f-8a0b-1c2d3e4f5a6b';
+      for (let i = 1; i <= 5; i++) expect(() => throttleSessionCall(app, 'session:change-password', id), `call ${i}`).not.toThrow();
+      flood(limiterOf(app));
+      let refused: unknown;
+      try {
+        throttleSessionCall(app, 'session:change-password', id);
+      } catch (e) {
+        refused = e;
+      }
+      expect(refused).toBeInstanceOf(JvError);
+      expect(refused).toMatchObject({ code: 'JV_RATE_LIMITED', status: 429 });
+      expect((refused as JvError).retryAfter).toBeGreaterThanOrEqual(1);
+      expect((refused as JvError).retryAfter).toBeLessThanOrEqual(900);
+      expect(() => throttleSessionCall(app, 'session:change-password', 'someone-else'), 'another person is not affected').not.toThrow();
+    } finally {
+      await app.close();
+    }
   });
 });
 

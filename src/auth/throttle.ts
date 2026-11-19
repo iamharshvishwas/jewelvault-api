@@ -13,8 +13,8 @@
 //    LoginThrottle holds the rules and the in-memory counts of what waits and what runs; it knows nothing of Fastify or MariaDB: the counters and the sleep come in (LoginThrottleDeps), so the
 //    production counters (dbLoginCounters) and the virtual time of tests/api/login-throttle-model.test.ts are two sets of the same two things.
 //
-// 2. THE REST OF THE LIMITER (limiter.ts, API09): change-password, 5 per 15 minutes per user, and every other call of a session 300 a minute per user (throttleSessionCall, called by the route wrapper
-//    after the session is found). The rows that belong to a route of their own are applied where that route is built (the admin door, the tick, the photo read); the photo upload row is applied here
+// 2. THE REST OF THE LIMITER (limiter.ts, API09): change-password, 5 per 15 minutes per user (its window is kept in the limiter's small store, beside the Super Admin's password keys), and every other call of a session
+//    300 a minute per user (throttleSessionCall, called by the route wrapper after the session is found). The rows that belong to a route of their own are applied where that route is built (the admin door, the tick, the photo read); the photo upload row is applied here
 //    already, because the matrix names the route, so that it is not also counted in the 300.
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as timer } from 'node:timers/promises';
@@ -24,7 +24,7 @@ import type { Config } from '../config.js';
 import { withAutocommit } from '../db/autocommit.js';
 import { txContext } from '../db/tx.js';
 import { BusyError, unavailableError } from '../errors.js';
-import { type Rate, THROTTLES, limiterOf, rateLimited, visitorAddress } from './limiter.js';
+import { type Rate, THROTTLES, changePasswordKey, limiterOf, rateLimited, visitorAddress } from './limiter.js';
 import { type Scope, WINDOW_SECONDS, countAttempt, loginSlot, recordFailure } from './loginCounters.js';
 import { MAX_CONCURRENT_HASHES } from './password.js';
 
@@ -344,5 +344,7 @@ export function installUserRates(app: FastifyInstance, rates: Partial<Record<Use
  */
 export function throttleSessionCall(app: FastifyInstance, action: string, userId: string): void {
   const row: UserRow = OWN_ROW[action] ?? 'everything';
-  limiterOf(app).require(`${row}:${userId}`, userRates.get(app)?.[row] ?? THROTTLES[row]);
+  // the window of a change of password is the one row kept in the limiter's small store: change-password checks the password, and other traffic must not be able to clear its window (limiter.ts)
+  const key = row === 'changePassword' ? changePasswordKey(userId) : `${row}:${userId}`;
+  limiterOf(app).require(key, userRates.get(app)?.[row] ?? THROTTLES[row]);
 }

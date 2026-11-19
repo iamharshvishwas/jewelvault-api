@@ -9,11 +9,14 @@
 // At most `maxKeys` keys are held (5,000, the size of the local store of @fastify/rate-limit that the design counted on): when a new key arrives and the map is full, the key that was used longest ago
 // is dropped, so a flood of invented addresses cannot grow the memory, at the price that the dropped key counts from zero again (the same price as a restart).
 //
-// THE SUPER ADMIN'S KEYS ARE KEPT APART (access plan R9). Her run of wrong passwords and her pause are what keeps a stolen Super Admin session from being used as a password oracle (five tries, then 15 minutes), and a
-// pause is touched once, when it begins: in the shared map it would be the first to go when other traffic brings 5,000 keys (public photo reads count a window for each address, and an IPv6 address counts by its /64, so
-// one /48 makes 65,536 keys), and the run and the pause would both be forgotten. The keys made by superWrongKey() therefore live in a small map of their own that nothing else can reach. Only the one active Super Admin can ever
-// fill it (the route wrapper refuses everybody else before the password is asked, src/super/password.ts), and when it is full it drops an entry whose pause is over before anything else and a live one (the oldest) only when
-// there is nothing else, which takes more Super Admin ids than it has places. A restart still counts from zero (A13).
+// THE KEYS THAT GUARD A PASSWORD ARE KEPT APART (access plan R9, and the final review of it). Two families live in a small map of their own that nothing else can reach: the Super Admin's run of wrong passwords and her pause
+// (superWrongKey(), `super-wrong:<user id>`), and the window of each person's change of password (changePasswordKey(), `changePassword:<user id>`, 5 in 15 minutes, API08). They are what keeps a stolen session from being
+// used as a password oracle (a few tries, then a wait): the Super Admin's writes and change-password check the same stored hash. A pause is touched once, when it begins, and a window only by its own person: in the shared
+// map they would be the first to go when other traffic brings 5,000 keys (public photo reads count a window for each address, and an IPv6 address counts by its /64, so one /48 makes 65,536 keys), and the run, the pause and
+// the window would be forgotten. Nobody but a signed-in person can fill the small map: the id in both keys is the one the session names (the route wrapper counts a call only after it has found the session, and the Super
+// Admin's password check is reached only through the `super` routes, src/super/password.ts), and no key of any other family starts with either word. It has 256 places, so that a shop's people and the Super Admin never push
+// each other out; when it is full it drops an entry whose pause or window is over before anything else and a live one (the oldest) only when there is nothing else, which takes more people than it has places.
+// A restart still counts from zero (A13).
 //
 // The clock is a function of the caller: the application's own clock (S5) through limiterOf(), so a test moves time by moving the clock it gave the application, and a clock that stands still
 // for a moment does no harm. A new application is a new limiter: that is what "a restart" is in the tests.
@@ -80,12 +83,19 @@ const DEFAULT_MAX_KEYS = 5000;
 const SUPER_WRONG_PREFIX = 'super-wrong:';
 export const superWrongKey = (userId: string): string => `${SUPER_WRONG_PREFIX}${userId}`;
 
-/** The places of the small store: a Super Admin uses two (her pause and her run), and only the one active Super Admin can reach it, so a few dozen is plenty. */
-const DEFAULT_KEPT_KEYS = 64;
+/** The key of a person's change of password (API08, final review of the access plan): `changePassword:<user id>`, the user the session names. Like superWrongKey it is a key of the small store, and no other family starts with it. */
+const CHANGE_PASSWORD_PREFIX = 'changePassword:';
+export const changePasswordKey = (userId: string): string => `${CHANGE_PASSWORD_PREFIX}${userId}`;
+
+/** The words that send a key to the small store (see the head of this file). */
+const KEPT_PREFIXES: readonly string[] = [SUPER_WRONG_PREFIX, CHANGE_PASSWORD_PREFIX];
+
+/** The places of the small store: two for the Super Admin (her pause and her run) and one window for each person who can sign in, which is a shop's few people: 256 never fills, and nobody else can make an entry. */
+const DEFAULT_KEPT_KEYS = 256;
 
 export class Limiter {
   private readonly entries = new Map<string, Entry>();
-  /** The small store of the keys of superWrongKey(): a map of its own, so that no other traffic can push them out of the shared one (see the head of this file). */
+  /** The small store of the keys of superWrongKey() and changePasswordKey(): a map of its own, so that no other traffic can push them out of the shared one (see the head of this file). */
   private readonly kept = new Map<string, Entry>();
 
   constructor(
@@ -104,7 +114,7 @@ export class Limiter {
 
   /** The map an entry lives in. An entry's key is `w:`, `p:` or `s:` (a window, a pause, a run of wrong answers) and then the key of the caller. */
   private storeOf(entryKey: string): Map<string, Entry> {
-    return entryKey.startsWith(SUPER_WRONG_PREFIX, 2) ? this.kept : this.entries;
+    return KEPT_PREFIXES.some((prefix) => entryKey.startsWith(prefix, 2)) ? this.kept : this.entries;
   }
 
   /** Counts one call under `key`. Over the limit it is refused until the window ends, and is not counted. */

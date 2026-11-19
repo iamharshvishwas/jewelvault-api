@@ -3,6 +3,7 @@ import http from 'node:http';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../../src/app';
+import { THROTTLES, limiterOf } from '../../src/auth/limiter';
 import { loginSlot } from '../../src/auth/loginCounters';
 import { passwords } from '../../src/auth/password';
 import { installLoginThrottle, loginSaltOf } from '../../src/auth/throttle';
@@ -377,6 +378,27 @@ describe('T-D24 rows of the limiter (A13): change-password and everything else',
     expect((await changePassword(b.cookie)).statusCode).toBe(422);
     advance(15 * MINUTE + 1000);
     expect((await changePassword(a.cookie)).statusCode).toBe(422);
+  });
+
+  it('the 6th change-password attempt is still 429 after more than 5,000 other keys have gone through the limiter: a stolen session cannot clear its own window (the flood is what public photo reads and the terminal door\'s wrong tokens make)', async () => {
+    const a = await world.addUser({ role: 'biller', passwordHash: HASH });
+    const b = await world.addUser({ role: 'biller', passwordHash: HASH });
+    for (let i = 1; i <= 5; i++) expect((await changePassword(a.cookie)).statusCode, `attempt ${i}`).toBe(422);
+    const limiter = limiterOf(world.app);
+    for (let i = 0; i < 5100; i++) {
+      const address = `198.51.${i >> 8}.${i & 255}`;
+      limiter.take(`photo-read:${address}`, THROTTLES.photoReadPerAddress);
+      limiter.pause(`admin-pause:${address}`, THROTTLES.adminPauseMs);
+      limiter.strike(`admin-wrong:${address}`);
+    }
+    const sixth = await changePassword(a.cookie);
+    expect(sixth.statusCode, 'the flood must not clear the window').toBe(429);
+    expect((sixth.json() as { error: { code: string } }).error.code).toBe('JV_RATE_LIMITED');
+    expect(Number(sixth.headers['retry-after'])).toBeGreaterThanOrEqual(1);
+    expect(Number(sixth.headers['retry-after'])).toBeLessThanOrEqual(15 * 60);
+    expect((await changePassword(b.cookie)).statusCode, 'another person is not affected').toBe(422);
+    advance(15 * MINUTE + 1000);
+    expect((await changePassword(a.cookie)).statusCode, 'it ends when the window ends').toBe(422);
   });
 
   it('the 301st other call of one user in a minute is 429 with a Retry-After; change-password calls are not part of the 300; after the minute it works again', async () => {
