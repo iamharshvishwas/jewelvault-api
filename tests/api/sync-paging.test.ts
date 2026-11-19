@@ -7,6 +7,8 @@ import { createClock } from '../../src/clock';
 import { createDbPool } from '../../src/db/pool';
 import { txContext, withRead } from '../../src/db/tx';
 import { limits } from '../../src/limits';
+import { grantsOf } from '../../src/permissions/grants';
+import { BUILTIN_TICKS } from '../../src/permissions/ticks';
 import { readPage } from '../../src/sync/page';
 import { resourceByName } from '../../src/sync/resources';
 import { registerSyncRoutes } from '../../src/sync/routes';
@@ -19,6 +21,9 @@ import { type Next, type PageBody, bodyOf, getPage, pageAll } from './sync-suppo
 // T-F03 (C2, C3, RF3-1): the paging of the read side at the sizes of the shop. 2,500 pieces all arrive through paging, also when the API's page cap is lowered to 500 (the cursor advances by
 // the rows received, not by the rows asked for); 30,000 rows with random version-4 ids paged in 2-row pages come back once each, in key order. The key order is the database's: a UUID sorts
 // in the type's own order, not as text (BACKUP-RESTORE.md, "Rules learned while writing it").
+
+/** The Owner as the session hands the page function: the grants its tick set gives (the page function asks grants, never a role name, R4). */
+const OWNER = grantsOf({ roleKey: 'owner', roleTicks: BUILTIN_TICKS.owner, isSuperAdmin: false });
 
 const insertMany = async (c: Connection, sqlHead: string, rows: string[], chunk = 500) => {
   for (let i = 0; i < rows.length; i += chunk) await c.query(`${sqlHead} VALUES ${rows.slice(i, i + chunk).join(', ')}`);
@@ -167,7 +172,7 @@ describe('T-F03 30,000 rows with random version-4 ids paged in 2-row pages come 
           ctx,
           async (db) => {
             for (let i = 0; i < 1000; i++) {
-              const page = await readPage(db, resource, 'owner', { after, limit: 2 });
+              const page = await readPage(db, resource, OWNER, { after, limit: 2 });
               pages++;
               got.push(...page.rows.map((r) => r.id as string));
               if (page.next === null) {

@@ -8,10 +8,11 @@
 //
 // bill_summary and customer_balances, the other two derived reads, are sync resources (src/sync/): their pages are cut from the base table, so their updated_at is the base row's (C4, D23).
 //
-// Reading is wide and writing is narrow (A9): a role that may read a resource reads every row of it, so a biller reads every customer's ledger; the narrowing is the matrix row (who may call), the
-// field lists (READ_COLUMNS) and, for the cash book, the window of days (dailyTotalsWindowDays). No handler here holds a role string (S10); the wrapper has already looked the caller up and checked
-// the row (route.ts) when a handler runs. Every input is checked before the database is asked, and an unknown key is 422. The answers carry no value the client sent: ids, dates and tokens are
-// parsed first and bound as parameters.
+// Reading is wide and writing is narrow (A9): a person who may read a resource reads every row of it, so a biller reads every customer's ledger; the narrowing is the matrix row (who may call), the
+// field lists (READ_COLUMNS) and, for the cash book, the window of days (dailyTotalsWindowDays). Each reader is handed the person's GRANTS (`auth.user.grants`: the ticks of their role and the Super
+// Admin flag, read on every request, R4), so a custom role with the right ticks reads through every path here; no handler holds a role string (S10), and the role KEY goes only to the audit actor of the
+// read's context. The wrapper has already looked the caller up and checked the row (route.ts) when a handler runs. Every input is checked before the database is asked, and an unknown key is 422. The
+// answers carry no value the client sent: ids, dates and tokens are parsed first and bound as parameters.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { txContextFor, withRead } from '../db/tx.js';
@@ -37,7 +38,7 @@ const noQuery = wire.strictObject({});
 export function registerReadRoutes(app: FastifyInstance): void {
   const contextOf = (a: FastifyInstance, request: FastifyRequest, user: { id: string; role: string }) => {
     if (!a.db) throw unavailable();
-    return txContextFor(a.db, request, { id: user.id, role: user.role });
+    return txContextFor(a.db, request, { id: user.id, role: user.role }); // the audit actor: the person and the role KEY, whatever the ticks are
   };
 
   route(app, {
@@ -48,7 +49,7 @@ export function registerReadRoutes(app: FastifyInstance): void {
       const limit = q.limit === undefined ? limits.syncPageRows : Number(q.limit);
       if (limit > limits.syncPageRows) throw new wire.InvalidInputError('limit', limitMessage); // the constant is the contract: asking for more is refused, not cut
       const after = q.after === undefined ? null : decodeCursor(q.after);
-      return withRead(contextOf(a, request, auth.user), (db) => readLedger(db, auth.user.role, id, { after, limit }));
+      return withRead(contextOf(a, request, auth.user), (db) => readLedger(db, auth.user.grants, id, { after, limit }));
     },
   });
 
@@ -56,8 +57,8 @@ export function registerReadRoutes(app: FastifyInstance): void {
     action: 'read:daily_totals',
     handler: async ({ app: a, request, auth }) => {
       const q = wire.parseInput(totalsQuery, request.query);
-      checkRange(auth.user.role, q.from, q.to, a.clock.read().date); // before the cash book is read
-      return withRead(contextOf(a, request, auth.user), (db) => readDailyTotals(db, auth.user.role, q.from, q.to));
+      checkRange(auth.user.grants, q.from, q.to, a.clock.read().date); // before the cash book is read
+      return withRead(contextOf(a, request, auth.user), (db) => readDailyTotals(db, auth.user.grants, q.from, q.to));
     },
   });
 
@@ -65,7 +66,7 @@ export function registerReadRoutes(app: FastifyInstance): void {
     action: 'read:audit_log',
     handler: async ({ app: a, request, auth }) => {
       const q = wire.parseInput(auditQuery, request.query);
-      return withRead(contextOf(a, request, auth.user), (db) => readAuditLog(db, auth.user.role, q));
+      return withRead(contextOf(a, request, auth.user), (db) => readAuditLog(db, auth.user.grants, q));
     },
   });
 
@@ -73,7 +74,7 @@ export function registerReadRoutes(app: FastifyInstance): void {
     action: 'read:health_checks',
     handler: async ({ app: a, request, auth }) => {
       const q = wire.parseInput(checksQuery, request.query);
-      return withRead(contextOf(a, request, auth.user), (db) => readHealthLists(db, auth.user.role, q));
+      return withRead(contextOf(a, request, auth.user), (db) => readHealthLists(db, auth.user.grants, q));
     },
   });
 

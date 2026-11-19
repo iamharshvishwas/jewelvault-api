@@ -12,8 +12,10 @@
 //   walkin_bills         the walk-in's bills of the day, and `walkin.cash_total`: the walk-in's cash of the day (Z2 does not add it up, so this is where a split sale shows)
 //   fine_cash_rate_away  the fine_cash settlements whose rate is more than `rate_flag_percent` (5) percent away from EVERY Silver rate of the day, which is the latest rate dated not after the
 //                        day, for each purity; with no Silver rate at all the settlement counts as away
-//   biller_rate_moves    the daily rates dated the day that a biller entered (RATE_REVIEW_ROLES) and that moved more than `rate_flag_percent` percent, up or down, from the previous rate of the same
-//                        material and purity (the latest one dated before it; the first rate of a purity has nothing to move from)
+//   biller_rate_moves    the daily rates dated the day that were entered by a login whose role holds the tick that enters a rate and lacks the one that corrects it (RATE_REVIEW of the matrix: the
+//                        Biller of day one, and any role the Super Admin makes the same way), and that moved more than `rate_flag_percent` percent, up or down, from the previous rate of the same
+//                        material and purity (the latest one dated before it; the first rate of a purity has nothing to move from). The ticks are those of the role's row in `roles` as it stands
+//                        when the review runs; the Owner's row holds none (its ticks come from code, R3) and a login with the Super Admin flag holds every tick, so neither is ever listed
 //   sale_type_differs    the bills whose sale type is not the customer's type (R9)
 //
 // WHICH DAY A ROW BELONGS TO. A bill by its `bill_date`, a receipt by its `paid_on`, a cancellation by `cancelled_on`, a void by `voided_on` (the business dates of D13, taken from the API clock in
@@ -25,7 +27,7 @@
 // REVIEW_LIST_ROWS rows (the owner can open 50 of them, I11). The statements only read, and they run inside the snapshot of the invariants (nightly.ts).
 import type { RowDataPacket } from 'mysql2/promise';
 import { limits } from '../limits.js';
-import { RATE_REVIEW_ROLES } from '../permissions/matrix.js';
+import { RATE_REVIEW } from '../permissions/matrix.js';
 import type { Queryable } from './invariants.js';
 
 /** I11: the owner can open up to 50 rows of each list. */
@@ -70,7 +72,6 @@ interface Spec {
 
 /** The eleven statements of the day. `date` is the day under review; none has a LIMIT (the runner adds it and counts with the statement itself). */
 export function reviewStatements(date: string): Record<ReviewList, Spec> {
-  const roles = RATE_REVIEW_ROLES;
   return {
     below_list_lines: {
       sql: `SELECT bi.id AS line_id, b.id AS bill_id, b.bill_no AS bill_no, bi.line_no AS line_no, bi.sku_no AS sku_no, bi.selling_method AS selling_method,
@@ -155,12 +156,13 @@ ORDER BY r.created_at, r.id`,
     biller_rate_moves: {
       sql: `SELECT d.id AS rate_id, d.material AS material, d.purity AS purity, d.rate_per_gram AS rate_per_gram, p.rate_per_gram AS previous_rate, p.rate_date AS previous_date, d.created_by AS entered_by
 FROM daily_rates d
-JOIN users u ON u.id = d.created_by AND u.role IN (${roles.map(() => '?').join(', ')})
+JOIN users u ON u.id = d.created_by AND u.is_super_admin = 0
+JOIN roles r ON r.role_key = u.role AND JSON_CONTAINS(r.ticks, JSON_QUOTE(?)) AND NOT JSON_CONTAINS(r.ticks, JSON_QUOTE(?))
 JOIN daily_rates p ON p.material = d.material AND p.purity = d.purity
  AND p.rate_date = (SELECT MAX(q.rate_date) FROM daily_rates q WHERE q.material = d.material AND q.purity = d.purity AND q.rate_date < d.rate_date)
 WHERE d.rate_date = ? AND ABS(d.rate_per_gram - p.rate_per_gram) * 100 > CAST(? AS DECIMAL(5,2)) * p.rate_per_gram
 ORDER BY d.material, d.purity, d.id`,
-      params: [...roles, date, limits.rateFlagPercent],
+      params: [RATE_REVIEW.holds, RATE_REVIEW.lacks, date, limits.rateFlagPercent],
     },
     sale_type_differs: {
       sql: `SELECT b.id AS bill_id, b.bill_no AS bill_no, b.customer_id AS customer_id, b.sale_type AS sale_type, c.customer_type AS customer_type

@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadQueries } from '../../scripts/queries.mjs';
 import { timestampToWire } from '../../src/wire/format';
 import { txContext, withRead } from '../../src/db/tx';
+import { grantsOf } from '../../src/permissions/grants';
+import { BUILTIN_TICKS } from '../../src/permissions/ticks';
 import { readPage } from '../../src/sync/page';
 import { SYNC_RESOURCES, resourceByName } from '../../src/sync/resources';
 import { INTERNAL_TABLES, READ_COLUMNS, STAFF_SETTING_KEYS, type ReadResource } from '../../src/permissions/matrix';
@@ -18,6 +20,8 @@ import { ORIGINAL_WEIGHT, SYNC_ROWS, type Fixture, type PageBody, bodyOf, getPag
 
 // API11, the read side (C3, C4): GET /v1/sync/<resource> and POST /v1/sync/poll on the application's real routes, a scratch database with the migrations, the seeds and the ledger fixture of
 // tests/schema/support.ts. The big paging cases (2,500 pieces, 30,000 random ids) are in sync-paging.test.ts, the snapshot of the poll in sync-snapshot.test.ts, the session clause in sync-session.test.ts.
+// The pages, the settings keys and each resource a poll names are asked of the grants of the person who calls (the ticks the session read, R4); the callers here are the three built-in roles. The custom
+// roles (a poll of exactly what me.reads names, a role narrowed in SQL) are in tests/api/access-reads.test.ts.
 
 let world: World;
 let data: Fixture;
@@ -34,6 +38,8 @@ afterAll(async () => {
 });
 
 const ROLE_CALLERS = ['owner', 'biller', 'staff'] as const satisfies readonly CallerName[];
+/** The Biller as the session hands the page function: the grants its tick set gives (the page function asks grants, never a role name, R4). */
+const BILLER = grantsOf({ roleKey: 'biller', roleTicks: BUILTIN_TICKS.biller, isSuperAdmin: false });
 const NAMES = SYNC_ROWS.map((r) => r.name);
 const errorCode = (res: { body: string }) => (JSON.parse(res.body) as { error?: { code: string } }).error?.code;
 
@@ -718,8 +724,8 @@ describe('T-F03 one poll never shows a bill without its lines (C4): all the reso
     try {
       const ctx = txContext(world.spy.pool, { requestId: randomUUID() });
       const { lines, bills } = await withRead(ctx, async (db) => ({
-        lines: await readPage(db, resourceByName('bill-items')!, 'biller', { limit: 1000 }),
-        bills: await readPage(db, resourceByName('bills')!, 'biller', { limit: 1000 }),
+        lines: await readPage(db, resourceByName('bill-items')!, BILLER, { limit: 1000 }),
+        bills: await readPage(db, resourceByName('bills')!, BILLER, { limit: 1000 }),
       }));
       expect(written).toBeDefined();
       expect(bills.rows.map((b) => b.id)).toContain(written!.billId); // the bill is there ...

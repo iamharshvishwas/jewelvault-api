@@ -7,12 +7,13 @@
 //   - the key is compared as its own type: a UUID as a UUID, never as text. Every column in the statement is written `src.<column>` and ORDER BY names the table's column, never a name that
 //     the select list gives to something else: the export of the database half skipped rows with random (version 4) ids when a column cast to text was given the key's own name
 //     (BACKUP-RESTORE.md). Nothing here casts a key.
-//   - an explicit column list for the caller's role (READ_COLUMNS of the matrix), never `SELECT *`. Every name that reaches the statement comes from the matrix or from src/sync/resources.ts;
+//   - an explicit column list for the caller's grants (READ_COLUMNS of the matrix), never `SELECT *`. Every name that reaches the statement comes from the matrix or from src/sync/resources.ts;
 //     nothing the client sends is ever a table or a column name (A11). Values go as parameters.
 //   - `next` is present when the page was FULL, and holds the stamp and key of its last row; the client calls again with them. A page that holds fewer rows than `limit` ends the load.
 import type { Reader } from '../db/tx.js';
 import type { Param } from '../db/stmt.js';
 import { JvError } from '../errors.js';
+import type { Grants } from '../permissions/grants.js';
 import { readColumnsFor, readableSettingKeys } from '../permissions/matrix.js';
 import { formatRow, timestampToWire } from '../wire/format.js';
 import { billSummaryFigures, customerBalanceFigures } from './derived.js';
@@ -64,9 +65,9 @@ export function pageStatement(r: SyncResource, columns: readonly string[], after
   return `SELECT ${select} FROM \`${ident(r.from)}\` AS src${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY src.updated_at, src.${key} LIMIT ?`;
 }
 
-/** The columns a role reads of a resource (READ_COLUMNS), or a refusal: a role that may not call the resource's read row reads nothing, whatever asked. */
-function columnsFor(r: SyncResource, role: string): readonly string[] {
-  const columns = readColumnsFor(role, r.table);
+/** The columns a person reads of a resource (READ_COLUMNS), or a refusal: a person whose grants do not pass the resource's read row reads nothing, whatever asked. */
+function columnsFor(r: SyncResource, grants: Grants): readonly string[] {
+  const columns = readColumnsFor(grants, r.table);
   if (!columns) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
   return columns;
 }
@@ -83,12 +84,12 @@ export function toWire(r: SyncResource, columns: readonly string[], raw: Record<
 }
 
 /**
- * One page of `r` for `role`. Reads only (a Reader). Inside a snapshot (withRead, snapshot) the statements of a derived read see one moment, and so do the pages of a poll.
- * Throws JV_FORBIDDEN for a role that does not read the resource.
+ * One page of `r` for a person with these `grants`. Reads only (a Reader). Inside a snapshot (withRead, snapshot) the statements of a derived read see one moment, and so do the pages of a poll.
+ * Throws JV_FORBIDDEN for a person who does not read the resource.
  */
-export async function readPage(db: Reader, r: SyncResource, role: string, req: PageRequest): Promise<WirePage> {
-  const columns = columnsFor(r, role);
-  const keys = r.keyList ? readableSettingKeys(role) : null;
+export async function readPage(db: Reader, r: SyncResource, grants: Grants, req: PageRequest): Promise<WirePage> {
+  const columns = columnsFor(r, grants);
+  const keys = r.keyList ? readableSettingKeys(grants) : null;
   if (keys !== null && keys.length === 0) return { rows: [], next: null };
   const params: Param[] = [];
   if (req.after !== undefined) {

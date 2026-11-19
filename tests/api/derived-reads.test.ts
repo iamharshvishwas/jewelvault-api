@@ -19,6 +19,9 @@ import { type Fixture, bodyOf, pageAll, query, syncWorld } from './sync-support'
 // tests/schema/s9-views.test.ts). The dashboard line is tests/api/health-route.test.ts, the twin of readHealth tests/api/health-twin.test.ts.
 //
 // The fixture clock is 17 Oct 2026 10:00 UTC = 15:30 in India: today is 2026-10-17 and yesterday 2026-10-16.
+//
+// Every reader asks the grants of the person who calls (the ticks the session read, R4), not the role's name. The callers here are the three built-in roles, whose grants are their day-one tick sets;
+// a custom role holding the right ticks (the cash book windows, the audit log, the health lines, the ledger) is tested in tests/api/access-reads.test.ts.
 
 const Q = loadQueries();
 const time = { micros: T0 };

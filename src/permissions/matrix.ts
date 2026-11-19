@@ -272,9 +272,6 @@ export type FieldRight = keyof typeof FIELD_RIGHTS;
  */
 export const RATE_REVIEW = { holds: 'rate_enter', lacks: 'rate_correct' } as const satisfies { holds: TickKey; lacks: TickKey };
 
-/** TEMPORARY (remove in Task 9, when the review reads RATE_REVIEW): the built-in roles that RATE_REVIEW flags. */
-export const RATE_REVIEW_ROLES: readonly Role[] = ROLES.filter((r) => hasTick(grantsOfBuiltin(r), RATE_REVIEW.holds) && !hasTick(grantsOfBuiltin(r), RATE_REVIEW.lacks));
-
 /** The ticks that read every key of settings; without one a person reads STAFF_SETTING_KEYS only (A4, DESIGN.md 6.2). */
 const ALL_SETTINGS_TICKS: readonly TickKey[] = ['bill_view', 'bill_make', 'settings_change'];
 
