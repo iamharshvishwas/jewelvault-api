@@ -32,7 +32,7 @@ const TABLE: readonly (readonly [string, string, string, readonly string[]])[] =
   ['cashbook_recent', 'Money', 'See the cash book for today and yesterday', []],
   ['cashbook_all', 'Money', 'See the cash book for all days', ['cashbook_recent']],
   ['customer_edit', 'Money', 'Add and edit customers', ['customer_view']],
-  ['customer_archive', 'Money', 'Archive a customer', ['customer_view']],
+  ['customer_archive', 'Money', 'Archive a customer', ['customer_view', 'bill_view']],
   ['bill_make', 'Money', 'Make bills and estimates', ['customer_view', 'bill_view']],
   ['payment_receive', 'Money', 'Receive payments and settle fine', ['customer_view', 'bill_view']],
   ['rate_enter', 'Money', "Enter today's metal rates", []],
@@ -150,7 +150,7 @@ describe('needs', () => {
   it('closeOverNeeds is transitive and ordered', () => {
     expect(closeOverNeeds(['cash_over_limit'])).toEqual(['customer_view', 'bill_view', 'payment_receive', 'cash_over_limit']);
     expect(closeOverNeeds(['activity_log'])).toEqual(['secret_weight', 'customer_view', 'bill_view', 'order_view', 'activity_log']);
-    expect(closeOverNeeds(['customer_archive'])).toEqual(['customer_view', 'customer_archive']);
+    expect(closeOverNeeds(['customer_archive'])).toEqual(['customer_view', 'bill_view', 'customer_archive']); // R19: the archive refusal names balances, which are data of the bills read
   });
 
   it('closeOverNeeds of any one tick is that tick and everything it needs, however deep, in catalogue order', () => {

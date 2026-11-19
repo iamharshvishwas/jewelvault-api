@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type TickKey, closeOverNeeds } from '../../src/permissions/ticks';
+import { type TickKey, brokenNeeds, closeOverNeeds } from '../../src/permissions/ticks';
+import { stampOf } from './edit-support';
 import { csrfHeaders } from './support';
 import { type Designs, type EditWorld, TODAY, addCustomer, addDesigns, billBody, billRow, body, codeOf, countOf, editWorld, errorField, footprint, item, piece, rows } from './x01-support';
 import { cash, line, reissueBody, sell, upi } from './x10-support';
@@ -10,7 +11,9 @@ import { cash, line, reissueBody, sell, upi } from './x10-support';
 //   - a payment line of amount above 0 on create_bill (X1) or reissue_bill (X10) is money received, so the caller must also be allowed fn:record_payment (payment_receive, DESIGN M8);
 //   - re-issue keeps the old bill's date, so without back_date only a bill dated today can be re-issued (DESIGN M13, ruling C);
 //   - X10 takes the body of X1, so a cash_override_reason from a caller without cash_over_limit is refused there as in X1 to X3 (ruling O);
-//   - bill_make needs bill_view (R18, ruling M): the smallest role the API saves with bill_make makes a bill.
+//   - bill_make needs bill_view (R18, ruling M): the smallest role the API saves with bill_make makes a bill;
+//   - customer_archive needs bill_view (R19, ruling R): the archive refusal names the balances that are not zero, so the smallest role the API saves with customer_archive archives a customer whose balances are zero
+//     and gets the refusal, with the figures, for a customer who owes money.
 // The back-dating of X1, X2, X3, X7, X10, X11 and X12 (a past date refused without back_date, saved with it) is in access-money.test.ts and is not repeated here.
 //
 // The roles are CUSTOM roles holding exactly the ticks given, closed over their needs as the API would save them. The world is the money tests' scratch database, clock fixed at 17 Oct 2026.
@@ -175,5 +178,53 @@ describe('X10 reissue_bill: payment lines, the date of the old bill and the cash
     expect(done.headers['idempotent-replay']).toBeUndefined();
     expect(body(done).new_bill.cash_override_reason).toBe(REASON);
     expect((await rows(w, "SELECT cash_override_reason FROM bills WHERE customer_id = ? AND status = 'active'", [customer])).map((r) => r.cash_override_reason)).toEqual([REASON]);
+  });
+});
+
+// ------------------------------------------------------------------ customer_archive: the refusal names balances (R19)
+
+describe('customer_archive needs customer_view and bill_view (R19, ruling R): the archive refusal names the balances that are not zero, which is data of the bills and balances reads', () => {
+  const ARCHIVE_AT = '2026-10-17T10:00:00.000000Z';
+
+  /** PATCH /v1/customers/:id as `who`, with the stamp the customer carries now (a bill or a payment moves it, D23) and only the changed field. */
+  async function archive(who: { cookie: string }, customer: string): Promise<LightMyRequestResponse> {
+    return w.world.app.inject({
+      method: 'PATCH',
+      url: `/v1/customers/${customer}`,
+      headers: { ...csrfHeaders(), cookie: who.cookie },
+      payload: { expected_updated_at: await stampOf(w, 'customers', customer), changes: { archived_at: ARCHIVE_AT } },
+    });
+  }
+  const archivedAt = async (customer: string): Promise<unknown> => (await rows(w, 'SELECT archived_at FROM customers WHERE id = ?', [customer]))[0].archived_at;
+
+  it('the smallest role the API saves with customer_archive is customer_view, bill_view and customer_archive, and it archives a customer whose balances are zero', async () => {
+    expect(closeOverNeeds(['customer_archive'])).toEqual(['customer_view', 'bill_view', 'customer_archive']);
+    // what the API saved before R19 (without bill_view) is now a set it refuses: bill_view is what it lacks
+    expect(brokenNeeds(['customer_view', 'customer_archive'])).toEqual([{ tick: 'customer_archive', missing: ['bill_view'] }]);
+    const archiver = await person(['customer_archive']);
+    const square = await addCustomer(w);
+    const res = await archive(archiver, square);
+    expect(res.statusCode, res.body).toBe(200);
+    expect(body(res).row).toMatchObject({ id: square, updated_by: archiver.userId });
+    expect(body(res).row.archived_at).not.toBeNull();
+    expect(await archivedAt(square)).not.toBeNull();
+  });
+
+  it('the same role gets the existing refusal for a customer who owes money: 409 JV_NOT_ALLOWED with the figure that is not zero, the Owner gets the same, and nothing is written', async () => {
+    const archiver = await person(['customer_archive']);
+    const owes = await addCustomer(w);
+    await sell(w, d, owes, '1000.00'); // a bill nobody has paid: it still owes 1,000.00
+    const stamp = await stampOf(w, 'customers', owes);
+    const before = await trace();
+    const res = await archive(archiver, owes);
+    expect([res.statusCode, codeOf(res)], res.body).toEqual([409, 'JV_NOT_ALLOWED']);
+    expect(body(res).error.details).toEqual({ field: 'changes.archived_at', not_zero: ['outstanding'] });
+    expect(await trace(), 'the refused archive left something behind').toEqual(before);
+    expect(await stampOf(w, 'customers', owes), 'a refused archive moved the stamp').toBe(stamp);
+    expect(await archivedAt(owes)).toBeNull();
+
+    const owner = await w.world.call('owner', 'PATCH', `/v1/customers/${owes}`, { payload: { expected_updated_at: stamp, changes: { archived_at: ARCHIVE_AT } } });
+    expect([owner.statusCode, codeOf(owner)]).toEqual([409, 'JV_NOT_ALLOWED']);
+    expect(body(owner).error.details).toEqual(body(res).error.details);
   });
 });

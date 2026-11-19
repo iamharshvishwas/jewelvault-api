@@ -232,7 +232,7 @@ describe('rates: rate_enter inserts today\'s rate; another date also needs back_
 
 // ------------------------------------------------------------------ 3. customers
 
-describe('customers: customer_edit sends content fields; archived_at needs customer_archive; customer_archive alone is refused without customer_view only because the tick set is closed by needs', () => {
+describe('customers: customer_edit sends content fields; archived_at needs customer_archive; customer_archive alone is refused without customer_view and bill_view only because the tick set is closed by needs', () => {
   it('customer_edit sends the content fields and not archived_at, alone or beside a field that is allowed; customer_archive sends archived_at and nothing else', async () => {
     const editor = await person(['customer_edit']);
     const archiver = await person(['customer_archive']);
@@ -265,8 +265,8 @@ describe('customers: customer_edit sends content fields; archived_at needs custo
     expect(body(back).row.archived_at).toBeNull();
   });
 
-  it('customer_archive alone, without the customer_view the API would save it with, passes the gate and the field right but is refused when the customer is to be shown to it: nothing is written', async () => {
-    expect(closeOverNeeds(['customer_archive'])).toEqual(['customer_view', 'customer_archive']);
+  it('customer_archive alone, without the customer_view and bill_view the API would save it with, passes the gate and the field right but is refused when the customer is to be shown to it: nothing is written', async () => {
+    expect(closeOverNeeds(['customer_archive'])).toEqual(['customer_view', 'bill_view', 'customer_archive']);
     const odd = await bare(['customer_archive']);
     const id = await addCustomer(w);
     const before = await trace();

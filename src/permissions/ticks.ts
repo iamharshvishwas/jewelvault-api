@@ -105,7 +105,7 @@ const DEFS: Record<TickKey, TickDef> = {
   cashbook_recent: { group: 'Money', label: 'See the cash book for today and yesterday' },
   cashbook_all: { group: 'Money', label: 'See the cash book for all days', needs: ['cashbook_recent'] },
   customer_edit: { group: 'Money', label: 'Add and edit customers', needs: ['customer_view'] },
-  customer_archive: { group: 'Money', label: 'Archive a customer', needs: ['customer_view'] },
+  customer_archive: { group: 'Money', label: 'Archive a customer', needs: ['customer_view', 'bill_view'] }, // R16, R19: the archive refusal names the balances that are not zero, which are data of the bills and balances reads
   bill_make: {
     group: 'Money',
     label: 'Make bills and estimates',
