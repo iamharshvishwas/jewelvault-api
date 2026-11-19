@@ -111,7 +111,7 @@ export function registerPhotoRoutes(app: FastifyInstance, options: PhotoRouteOpt
       action,
       body: z.unknown(), // the bytes; whether they are bytes at all is judged below, so that "not an image" is 415 and not a 422 about a body
       handler: async ({ app: a, request, reply, auth, body }) => {
-        assertMayCall(auth.user.role, action);
+        assertMayCall(auth.user.grants, action);
         const ids = ownerField === 'design_id' ? wire.parseInput(uploadParams, request.params) : wire.parseInput(orderUploadParams, request.params);
         const ownerId = ownerField === 'design_id' ? (ids as { design_id: string }).design_id : (ids as { order_id: string }).order_id;
         const { kind } = wire.parseInput(uploadQuery, request.query);
@@ -159,7 +159,7 @@ export function registerPhotoRoutes(app: FastifyInstance, options: PhotoRouteOpt
   route(app, {
     action: 'photo:remove',
     handler: async ({ app: a, request, reply, auth }) => {
-      assertMayCall(auth.user.role, 'photo:remove');
+      assertMayCall(auth.user.grants, 'photo:remove');
       const photoId = (request.params as { photo_id?: unknown }).photo_id;
       if (typeof photoId !== 'string' || !UUID_TEXT.test(photoId)) throw notFound();
       const etags = etagMapOf(a);

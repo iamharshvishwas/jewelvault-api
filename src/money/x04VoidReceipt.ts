@@ -35,13 +35,12 @@ import { touchForReceiptWrite } from '../db/touch.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
 import { fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
 import { type Share, stateAfterVoid } from '../domain/reopen.js';
-import { type Row, notFound, readRow } from '../edit/engine.js';
+import { type Row, notFound, readRow, wireRow } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
 import type { Grants } from '../permissions/grants.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import { billSummaryFigures } from '../sync/derived.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 import { reasonText } from './reason.js';
 
 // ------------------------------------------------------------------ the body
@@ -80,7 +79,7 @@ async function billSummaries(tx: Tx, grants: Grants, ids: readonly string[]): Pr
   return ids.map((id) => {
     const r = byId.get(id);
     if (!r) throw new JvError('JV_INTERNAL', 'Something unexpected went wrong.', { cause: new Error(`bill ${id} is not there after the void`) });
-    return answerRow('bill_summary', grants, r);
+    return wireRow('bill_summary', grants, r);
   });
 }
 
@@ -146,8 +145,8 @@ export async function voidReceipt(
     // 5. the answer: the receipt, the rows of the rebalance, and the bills the call touched in the order they were touched
     const billIds = [...new Set([...shares.map((s) => s.bill_id), ...rebalanced.allocations.map((a) => a.bill_id)])];
     const value: VoidReceiptResult = {
-      receipt: answerRow('receipts', grants, row),
-      allocations: rebalanced.allocations.map((a) => answerRow('receipt_allocations', grants, { ...a })),
+      receipt: wireRow('receipts', grants, row),
+      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', grants, { ...a })),
       bills: await billSummaries(tx, grants, billIds),
     };
     await storeResult(tx, c.key, value);

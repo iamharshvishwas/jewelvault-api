@@ -50,12 +50,11 @@ import { applyCashRules } from '../domain/cashRules.js';
 import { CURRENT_PRICING_VERSION } from '../domain/pricing.js';
 import { type NewBill, applyRebalance, fromUnits, planRebalanceOf, toUnits } from '../domain/rebalance.js';
 import { stateAfterCancel } from '../domain/reopen.js';
-import { type Row, notFound } from '../edit/engine.js';
+import { type Row, notFound, wireRow } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
 import { mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 import { reasonText } from './reason.js';
 import { readBillToCancel, writeCancel } from './x05CancelBill.js';
 import { type CreateBillOptions, assertMayUseBody, confirmedPieces, createBillBody, planPayments, priceNewBill, writeNewBill, writePayments } from './x01CreateBill.js';
@@ -193,12 +192,12 @@ export async function reissueBill(
     const written = await writePayments(tx, { plan: payments, customerId: customer.id, billId: newBillId, billDate, at, by });
 
     const value: ReissueBillResult = {
-      old_bill: answerRow('bills', grants, cancelled.bill),
-      new_bill: answerRow('bills', grants, made.billRow),
-      items: made.lineRows.map((r) => answerRow('bill_items', grants, r)),
-      receipts: written.receipts.map((r) => answerRow('receipts', grants, r)),
-      allocations: [...rebalanced.allocations, ...written.allocations].map((a) => answerRow('receipt_allocations', grants, { ...a })),
-      released_allocations: cancelled.released.map((r) => answerRow('receipt_allocations', grants, r)),
+      old_bill: wireRow('bills', grants, cancelled.bill),
+      new_bill: wireRow('bills', grants, made.billRow),
+      items: made.lineRows.map((r) => wireRow('bill_items', grants, r)),
+      receipts: written.receipts.map((r) => wireRow('receipts', grants, r)),
+      allocations: [...rebalanced.allocations, ...written.allocations].map((a) => wireRow('receipt_allocations', grants, { ...a })),
+      released_allocations: cancelled.released.map((r) => wireRow('receipt_allocations', grants, r)),
       warnings: [...warnings].sort(),
       advance_applied: fromUnits(carried, 2),
     };

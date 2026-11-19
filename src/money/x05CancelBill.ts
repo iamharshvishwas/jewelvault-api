@@ -39,12 +39,11 @@ import { touchForBillWrite } from '../db/touch.js';
 import { type Tx, txContextFor, withTx } from '../db/tx.js';
 import { rebalance, toUnits } from '../domain/rebalance.js';
 import { stateAfterCancel } from '../domain/reopen.js';
-import { type Row, notFound, readRow } from '../edit/engine.js';
+import { type Row, notFound, readRow, wireRow } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
 import { columnsOfTable } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 import { reasonText } from './reason.js';
 
 // ------------------------------------------------------------------ the body
@@ -198,10 +197,10 @@ export async function cancelBill(
     const rebalanced = await rebalance(tx, { customerId: customer.id, walkin, state: adjusted, at });
 
     const value: CancelBillResult = {
-      bill: answerRow('bills', grants, written.bill),
-      skus: written.skus.map((r) => answerRow('skus', grants, r)),
-      released_allocations: written.released.map((r) => answerRow('receipt_allocations', grants, r)),
-      allocations: rebalanced.allocations.map((a) => answerRow('receipt_allocations', grants, { ...a })),
+      bill: wireRow('bills', grants, written.bill),
+      skus: written.skus.map((r) => wireRow('skus', grants, r)),
+      released_allocations: written.released.map((r) => wireRow('receipt_allocations', grants, r)),
+      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', grants, { ...a })),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

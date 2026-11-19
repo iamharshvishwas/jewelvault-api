@@ -57,8 +57,8 @@ const orderIsUsed = async (tx: Tx, id: string): Promise<boolean> => (await tx.ro
 /** X13. `key` is the Idempotency-Key as idempotencyKey() read it. Returns the answer and whether it is the stored answer of an earlier call with the same key. */
 export async function createOrder(app: FastifyInstance, request: FastifyRequest, auth: Auth, key: string, body: CreateOrderBody): Promise<{ value: CreatedOrder; replayed: boolean }> {
   if (!app.db) throw unavailableError();
-  const { id: userId, role } = auth.user;
-  const ctx = txContextFor(app.db, request, { id: userId, role });
+  const { id: userId, role, grants } = auth.user;
+  const ctx = txContextFor(app.db, request, { id: userId, role }); // the audit actor: the person and the role KEY
   const at = app.clock.read(); // ONE reading: the year of the series and both stamps (S5, S6)
   const series = orderNumbers(at);
   await ensureSeries(ctx, series.key); // the counter row exists before the transaction (L3)
@@ -66,7 +66,7 @@ export async function createOrder(app: FastifyInstance, request: FastifyRequest,
 
   return withTx(ctx, (tx) =>
     idempotent<CreatedOrder>(tx, { key, fn: 'create_order', route: ROUTE_NAME, body }, async () => {
-      assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+      assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
 
       // the checks: plain reads, all before the counter
       if (await orderIsUsed(tx, body.order_id)) throw invalid('order_id', 'is already used by an order');
@@ -83,7 +83,7 @@ export async function createOrder(app: FastifyInstance, request: FastifyRequest,
       const after = await readRow(tx, 'orders', body.order_id, false);
       if (!after) throw new Error(`orders ${body.order_id}: the row is gone after its own insert`);
       await auditChange(tx, { table: 'orders', rowId: body.order_id, action: 'insert', before: null, after }); // L1 (b): only when JV_AUDIT_MODE=node; the triggers of (a) write their own row
-      return { order: wireRow('orders', role, after) };
+      return { order: wireRow('orders', grants, after) };
     }),
   );
 }

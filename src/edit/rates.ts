@@ -1,7 +1,7 @@
 // D4, Y8, A4, D22: the daily rates (POST /v1/daily-rates, PATCH /v1/daily-rates/:id). The columns are the matrix's (WRITE_COLUMNS: the owner and a biller insert `material`, `purity`, `rate_per_gram` and
 // `rate_date`; the owner alone updates `rate_per_gram`); the rules that are code and not columns are here:
-//   - a rate is added for a date up to today; a date in the future is refused for everyone, and a date before today only for a caller who may back-date (Y8, `mayUseField(role, 'back_dates')`: the
-//     owner). "Today" is the business day of the API clock in Asia/Kolkata (S5), the same reading that stamps the row: a CHECK cannot read the clock (S4).
+//   - a rate is added for a date up to today; a date in the future is refused for everyone, and a date before today only for a caller who may back-date (Y8, `mayUseField(grants, 'back_dates')`: the
+//     tick `back_date`). "Today" is the business day of the API clock in Asia/Kolkata (S5), the same reading that stamps the row: a CHECK cannot read the clock (S4).
 //   - one rate for each date, material and purity (the unique key of D4 stands behind this check for two calls at the same moment): that is also "once per material and purity" for a biller, who can
 //     only add today's and cannot correct it.
 //   - only a rate dated today is corrected, and only its `rate_per_gram`: the date, the material and the purity never change, so a correction cannot move a rate to another day.
@@ -25,11 +25,11 @@ export const DAILY_RATES: EditTable = {
   },
 };
 
-const rateInsertRules: InsertRule = async (tx, values, { role, now }) => {
+const rateInsertRules: InsertRule = async (tx, values, { grants, now }) => {
   const date = values.rate_date as string;
   const today = now().date;
   if (date > today) throw invalid('rate_date', 'must not be in the future');
-  if (date < today && !mayUseField(role, 'back_dates')) throw invalid('rate_date', 'must be today');
+  if (date < today && !mayUseField(grants, 'back_dates')) throw invalid('rate_date', 'must be today');
   const taken = await tx.rows('SELECT id FROM daily_rates WHERE rate_date = ? AND material = ? AND purity = ?', [date, values.material as string, values.purity as string]);
   if (taken.length > 0) throw invalid('rate_date', 'already has a rate for this material and purity');
 };

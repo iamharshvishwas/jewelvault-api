@@ -8,8 +8,8 @@
 //     any change is allowed: the screen walks open -> in_progress -> ready -> delivered, and a step taken by mistake can be taken back; any open order can be cancelled.
 //   - a delivered or cancelled order is CLOSED: only the owner changes its status (FIELD_RIGHTS change_closed_order). So delivered -> cancelled is the owner's, as the plan says, and so is taking a
 //     closed order back. A biller still edits the description, the delivery date, the notes and the photos of a closed order.
-//   - the photo ids, as a design's (P2, A5): at most 3, each new id has BOTH kinds stored for THIS order and not removed (assertAttachable with `of` 'order'), and only the owner may remove, reorder
-//     or replace an id (FIELD_RIGHTS rewrite_photo_ids); a biller adds ids at the end.
+//   - the photo ids, as a design's (P2, A5): at most 3, each new id has BOTH kinds stored for THIS order and not removed (assertAttachable with `of` 'order'), and only a caller who holds `photo_rewrite` may
+//     remove, reorder or replace an id (FIELD_RIGHTS rewrite_photo_ids); the others add ids at the end.
 // No money is in an order: an advance is an ordinary payment in the customer's ledger (FB-D8).
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { assertAttachable } from '../edit/designs.js';
@@ -37,15 +37,15 @@ export const ORDERS: EditTable = {
   },
 };
 
-const orderRules: UpdateRule = async ({ tx, role, id, current, diff }) => {
-  if ('status' in diff && CLOSED_STATUSES.includes(String(current.status)) && !mayUseField(role, 'change_closed_order')) {
+const orderRules: UpdateRule = async ({ tx, grants, id, current, diff }) => {
+  if ('status' in diff && CLOSED_STATUSES.includes(String(current.status)) && !mayUseField(grants, 'change_closed_order')) {
     throw notAllowed('changes.status', `This order is ${String(current.status)}. Only the owner can change its status now.`);
   }
   if (!('photo_ids' in diff)) return;
   const before = f.parseList(current.photo_ids) as string[];
   const ids = diff.photo_ids as string[];
   const addsOnly = ids.length >= before.length && before.every((x, i) => ids[i] === x);
-  if (!addsOnly && !mayUseField(role, 'rewrite_photo_ids')) throw invalid('changes.photo_ids', 'can only get new photo ids added at the end');
+  if (!addsOnly && !mayUseField(grants, 'rewrite_photo_ids')) throw invalid('changes.photo_ids', 'can only get new photo ids added at the end');
   const added = ids.filter((x) => !before.includes(x)); // an id attached before is not asked again: it may have been removed since, and the list should still be editable
   if (added.length > 0) await assertAttachable(tx, id, added, 'changes.photo_ids', 'order');
 };

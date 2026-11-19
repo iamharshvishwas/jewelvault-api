@@ -39,14 +39,13 @@ import { touchForReceiptWrite } from '../db/touch.js';
 import { txContextFor, withTx } from '../db/tx.js';
 import { applyCashRules } from '../domain/cashRules.js';
 import { type AllocationRow, fromUnits, insertAllocations, planRebalance, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, invalid, notFound } from '../edit/engine.js';
+import { type Row, invalid, notFound, wireRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
 import { mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { REFERENCE_MAX, cashOverrideReason } from './x01CreateBill.js';
 import { checkBillDate } from './x07QuoteBill.js';
@@ -257,8 +256,8 @@ export async function settleFine(
     const all = [...own, ...rebalanced.allocations];
     const settledNow = all.reduce((n, a) => n + toUnits(a.fine_grams, FINE), 0n);
     const value: SettleFineResult = {
-      receipt: answerRow('receipts', grants, receiptRow),
-      allocations: all.map((a) => answerRow('receipt_allocations', grants, { ...a })),
+      receipt: wireRow('receipts', grants, receiptRow),
+      allocations: all.map((a) => wireRow('receipt_allocations', grants, { ...a })),
       fine_remaining: fromUnits(outstanding - settledNow, FINE),
     };
     await storeResult(tx, c.key, value);

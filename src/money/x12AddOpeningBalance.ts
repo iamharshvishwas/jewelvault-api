@@ -42,11 +42,10 @@ import { readCustomerState } from '../db/state.js';
 import { touchForBillWrite, touchForReceiptWrite } from '../db/touch.js';
 import { txContextFor, withTx } from '../db/tx.js';
 import { type NewReceipt, fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, notFound, readRow } from '../edit/engine.js';
+import { type Row, notFound, readRow, wireRow } from '../edit/engine.js';
 import { JvError, unavailableError } from '../errors.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { checkBillDate } from './x07QuoteBill.js';
 
@@ -192,9 +191,9 @@ export async function addOpeningBalance(
     });
 
     const value: AddOpeningBalanceResult = {
-      bill: billRow ? answerRow('bills', grants, billRow) : null,
-      receipts: receipts.map((r) => answerRow('receipts', grants, r)),
-      allocations: rebalanced.allocations.map((a) => answerRow('receipt_allocations', grants, { ...a })),
+      bill: billRow ? wireRow('bills', grants, billRow) : null,
+      receipts: receipts.map((r) => wireRow('receipts', grants, r)),
+      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', grants, { ...a })),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

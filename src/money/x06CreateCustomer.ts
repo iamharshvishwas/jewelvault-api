@@ -18,11 +18,10 @@ import { idempotencyKey, idempotent, markReplay } from '../db/idempotency.js';
 import { newId } from '../db/ids.js';
 import { txContextFor, withTx } from '../db/tx.js';
 import { CUSTOMERS } from '../edit/customers.js';
-import { readRow } from '../edit/engine.js';
+import { readRow, wireRow } from '../edit/engine.js';
 import { unavailableError } from '../errors.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 
 /** The columns of a customer that X6 takes (A5 lists the same eight for the edit), each with the field of the edit. */
 const field = (name: keyof typeof CUSTOMERS.fields) => CUSTOMERS.fields[name].schema;
@@ -92,7 +91,7 @@ export async function createCustomer(app: FastifyInstance, request: FastifyReque
       const after = await readRow(tx, 'customers', id, false);
       if (!after) throw new Error(`customers ${id}: the row is gone after its own insert`);
       await auditChange(tx, { table: 'customers', rowId: id, action: 'insert', before: null, after }); // L1 (b): only when JV_AUDIT_MODE=node; the triggers of (a) write their own row
-      return { customer: answerRow('customers', grants, after) };
+      return { customer: wireRow('customers', grants, after) };
     }),
   );
 }

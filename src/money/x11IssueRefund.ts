@@ -43,12 +43,11 @@ import { type CustomerState, readCustomerState } from '../db/state.js';
 import { touchForReceiptWrite } from '../db/touch.js';
 import { txContextFor, withTx } from '../db/tx.js';
 import { fromUnits, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, notFound } from '../edit/engine.js';
+import { type Row, notFound, wireRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { JvError, unavailableError } from '../errors.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { REFERENCE_MAX, paymentAmount, paymentMode } from './x01CreateBill.js';
 import { checkBillDate } from './x07QuoteBill.js';
@@ -153,7 +152,7 @@ export async function issueRefund(
     const rebalanced = await rebalance(tx, { customerId: customer.id, walkin, state: stateAfterRefund(state, amount), at });
 
     const value: IssueRefundResult = {
-      receipt: answerRow('receipts', grants, receiptRow),
+      receipt: wireRow('receipts', grants, receiptRow),
       advance: fromUnits(advance - amount - toUnits(rebalanced.applied, MONEY), MONEY),
     };
     await storeResult(tx, c.key, value);

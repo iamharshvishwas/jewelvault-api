@@ -46,7 +46,7 @@ import { type Tx, txContextFor, withRead, withTx } from '../db/tx.js';
 import { applyCashRules, needsPanPrompt, refuseWalkinBill } from '../domain/cashRules.js';
 import { CURRENT_PRICING_VERSION } from '../domain/pricing.js';
 import { type AllocationRow, fromUnits, insertAllocations, rebalance, toUnits } from '../domain/rebalance.js';
-import { type Row, invalid, readRow } from '../edit/engine.js';
+import { type Row, invalid, readRow, wireRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { BusyError, JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
@@ -54,7 +54,6 @@ import type { Grants } from '../permissions/grants.js';
 import { columnsOfTable, mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
-import { answerRow } from './answer.js';
 import { insertReceipt } from './receiptWrite.js';
 import { type PieceRow, PRICING_VERSIONS, type Quote, type VersionTable, assertEachPieceOnce, buildQuote, checkBillDate, quoteBody, readEstimate, readRates } from './x07QuoteBill.js';
 
@@ -496,10 +495,10 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     const adjusted = rebalanced.allocations.filter((a) => a.bill_id === billId).reduce((sum, a) => sum + toUnits(a.amount, 2), 0n);
 
     const value: CreateBillResult = {
-      bill: answerRow('bills', grants, billRow),
-      items: lineRows.map((r) => answerRow('bill_items', grants, r)),
-      receipts: written.receipts.map((r) => answerRow('receipts', grants, r)),
-      allocations: [...written.allocations, ...rebalanced.allocations].map((a) => answerRow('receipt_allocations', grants, { ...a })),
+      bill: wireRow('bills', grants, billRow),
+      items: lineRows.map((r) => wireRow('bill_items', grants, r)),
+      receipts: written.receipts.map((r) => wireRow('receipts', grants, r)),
+      allocations: [...written.allocations, ...rebalanced.allocations].map((a) => wireRow('receipt_allocations', grants, { ...a })),
       warnings: [...warnings].sort(),
       advance_applied: fromUnits(adjusted, 2),
     };
