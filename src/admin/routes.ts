@@ -5,7 +5,7 @@
 //   POST /admin/v1/users/:id/reset-password                                a new temporary password, must_change_password, and EVERY session of that user ended
 //   POST /admin/v1/users/:id/role               {role}                      change the role to the key of any ACTIVE role (the only way a role changes)
 //   POST /admin/v1/users/:id/deactivate                                     not active: reads nothing; every session ended
-//   POST /admin/v1/users/:id/activate                                       (a login with the Super Admin flag is refused while another Super Admin is active, R13)
+//   POST /admin/v1/users/:id/activate                                       (refused for a login whose role is switched off, and for one with the Super Admin flag while another Super Admin is active, R13)
 //   POST /admin/v1/super-admin                  {email, full_name}          make THE Super Admin (R14): a new login (role owner, the flag, a temporary password shown once), or the login that has the e-mail, promoted
 //   POST /admin/v1/login-counters/clear                                     n = 0 and the window to now on every counter except the summary row (A13, D24)
 //   POST /admin/v1/backup-pulls                 {file, sha256}              settings.last_pulled: Harsh pulled that backup file (O54)
@@ -109,7 +109,8 @@ async function lockUser(tx: Tx, id: string): Promise<UserRow> {
  * The flagged logins themselves are the wrong thing to lock, for two reasons. At READ COMMITTED a lock on rows that do not exist yet locks nothing, so two first calls at the same moment would both find none and both
  * make one. And no index serves `is_super_admin = 1 AND active = 1`, so a locking read of it would scan, and lock, the whole of `users` (D19 rule 1: no locking statement without an index).
  * So every such call takes the ONE lock that is always there: the Owner role's row, which exists from the migration and is never written (the Owner role cannot be changed, DESIGN 6.6 rule 1). The calls queue on it, and
- * each reads the flagged logins (a plain read) after the one before it has committed. Both callers hold the login's own row first (lockUser, or the lookup of make-super-admin), then this lock: one order, no deadlock.
+ * each reads the flagged logins (a plain read) after the one before it has committed. THE ORDER OF LOCKS in the door is the login's own row first (lockUser, or the lookup of make-super-admin), then the role rows (add-user and role:
+ * the role that is given; activate: the login's own role), then this one, the Owner's row, last: no call takes the Owner's row and then another role's row, so calls queue on a lock but never wait on each other in a circle.
  */
 async function assertNoOtherSuperAdmin(tx: Tx, except: string | null): Promise<void> {
   await getRole(tx, OWNER_KEY, { forUpdate: true });
@@ -233,6 +234,9 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       const id = idOf(request.params);
       const user = await withTx(txContextFor(databaseOf(a), request, ACTOR), async (tx) => {
         const found = await lockUser(tx, id);
+        // a login whose role is switched off is refused with a 401 on every call (the session), so it must never be switched on. The role row is held until the commit: the role cannot be switched off between this check and the write.
+        const role = await getRole(tx, found.role, { forUpdate: true });
+        if (!role || Number(role.active) !== 1) throw new JvError('JV_NOT_ALLOWED', `The role ${role?.name ?? found.role} is switched off. Give this login an active role first.`);
         if (Number(found.is_super_admin) === 1) await assertNoOtherSuperAdmin(tx, found.id); // R13
         await tx.run('UPDATE users SET active = 1 WHERE id = ?', [id]);
         await writeEvent(tx, { table: 'users', rowId: id, facts: { event: 'admin_activate_user' } });

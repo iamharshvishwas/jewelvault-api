@@ -98,6 +98,40 @@ async function whileFlaggingIsSlow<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Runs `run` while the database takes `seconds` to switch a login on (a BEFORE trigger on the update that sets `active` from 0 to 1): the call that switches it on sits inside its transaction, holding its locks,
+ * for that long, and the test can do something at that moment (see untilSleeping). The trigger is dropped again whatever happens.
+ */
+async function whileActivationIsSlow<T>(seconds: number, run: () => Promise<T>): Promise<T> {
+  await world.sql.query('DROP TRIGGER IF EXISTS trg_test_slow_activation');
+  await world.sql.query(`CREATE TRIGGER trg_test_slow_activation BEFORE UPDATE ON users FOR EACH ROW BEGIN IF OLD.active = 0 AND NEW.active = 1 THEN DO SLEEP(${seconds}); END IF; END`);
+  try {
+    return await run();
+  } finally {
+    await world.sql.query('DROP TRIGGER IF EXISTS trg_test_slow_activation');
+  }
+}
+
+/** Waits until a statement of this database is inside SLEEP() (the slow trigger), so that what the test does next happens while the call holds its locks. */
+async function untilSleeping(): Promise<void> {
+  for (let i = 0; i < 200; i++) {
+    const n = Number((await world.sql.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.PROCESSLIST WHERE STATE LIKE 'User sleep%'"))[0][0].n);
+    if (n > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error('no statement reached the slow trigger');
+}
+
+/** Runs `run` with the foreign keys of this test connection off (a hand edit of the database), and puts them back whatever happens. */
+async function withForeignKeysOff<T>(run: () => Promise<T>): Promise<T> {
+  await world.sql.query('SET FOREIGN_KEY_CHECKS = 0');
+  try {
+    return await run();
+  } finally {
+    await world.sql.query('SET FOREIGN_KEY_CHECKS = 1');
+  }
+}
+
 /** The text of the refusal of a second Super Admin (R13), the same for make-super-admin and activate. */
 const SECOND = (email: string) => `Another Super Admin is active (${email}). Switch that login off first with deactivate.`;
 
@@ -494,6 +528,118 @@ describe('activate refuses a login with the flag while another ACTIVE Super Admi
     const results = await whileFlaggingIsSlow(() => Promise.all([call('POST', `/admin/v1/users/${x.userId}/activate`), call('POST', `/admin/v1/users/${y.userId}/activate`)]));
     expect(results.map((r) => r.statusCode).sort()).toEqual([200, 409]);
     expect(await activeSuperAdmins()).toHaveLength(1);
+  });
+});
+
+// ------------------------------------------------------------------ activate and the role of the login (Review Focus 3)
+
+describe('activate refuses a login whose role is switched off: it would be a login that is refused with a 401 on every call (Review Focus 3)', () => {
+  /** The sentence of the refusal: the role by its NAME, and what to do. */
+  const OFF = (name: string) => `The role ${name} is switched off. Give this login an active role first.`;
+  const switchRole = (key: string, active: boolean) => world.sql.query('UPDATE roles SET active = ? WHERE role_key = ?', [active ? 1 : 0, key]);
+  const roleActive = async (key: string) => Number((await world.sql.query<any[]>('SELECT active FROM roles WHERE role_key = ?', [key]))[0][0].active);
+
+  /** A role of its own (a name nobody else has: the table keeps names apart) and a login on it that has been switched off. Each test makes its own, so none depends on another. */
+  async function sleepingLogin() {
+    const roleName = `Night Cashier ${randomUUID().slice(0, 8)}`;
+    const role = await world.addRole({ name: roleName, ticks: ['customer_view'] });
+    const made = await addLogin(role.key);
+    expect((await call('POST', `/admin/v1/users/${made.id}/deactivate`)).statusCode).toBe(200);
+    return { ...made, role: role.key, roleName };
+  }
+
+  it('409 JV_NOT_ALLOWED with a sentence that names the role by its NAME; the login stays switched off and nothing is written; once the role is switched on again the same call works and the login signs in', async () => {
+    const asleep = await sleepingLogin();
+    await switchRole(asleep.role, false);
+    const usersBefore = await countOf('users');
+    const auditBefore = await countOf('audit_log');
+
+    const refused = await call('POST', `/admin/v1/users/${asleep.id}/activate`);
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect([errorOf(refused).code, errorOf(refused).message]).toEqual(['JV_NOT_ALLOWED', OFF(asleep.roleName)]);
+    expect(refused.body, 'the role is named by its name, never by its key').not.toContain(asleep.role);
+    expect(await userRow(asleep.id)).toMatchObject({ active: 0, role: asleep.role });
+    expect(await countOf('users')).toBe(usersBefore);
+    expect(await countOf('audit_log'), 'a refused activation writes no row at all: no event, no trigger row').toBe(auditBefore);
+    expect(await auditOf(requestIdOf(refused))).toEqual([]);
+
+    await switchRole(asleep.role, true);
+    const on = await call('POST', `/admin/v1/users/${asleep.id}/activate`);
+    expect(on.statusCode, on.body).toBe(200);
+    expect(on.json()).toEqual({ user: { id: asleep.id, email: asleep.email, full_name: `Made ${asleep.role}`, role: asleep.role, active: true, must_change_password: true, is_super_admin: false } });
+    expect(await userRow(asleep.id)).toMatchObject({ active: 1 });
+    const signedIn = await login(asleep.email, asleep.password);
+    expect(signedIn.statusCode, signedIn.body).toBe(200);
+    expect((await meOf(setCookieOf(signedIn))).json().user, 'and it is a login that works, not one that is refused for ever').toMatchObject({ role: asleep.role, role_name: asleep.roleName, permissions: ['customer_view'] });
+  });
+
+  it('a login on an ACTIVE role is activated as before, with its one event: a role the Super Admin made and a built-in one', async () => {
+    const custom = await sleepingLogin();
+    const biller = await addLogin('biller');
+    expect((await call('POST', `/admin/v1/users/${biller.id}/deactivate`)).statusCode).toBe(200);
+    for (const [name, id, role] of [
+      ['a role the Super Admin made', custom.id, custom.role],
+      ['a built-in role', biller.id, 'biller'],
+    ] as const) {
+      const on = await call('POST', `/admin/v1/users/${id}/activate`);
+      expect(on.statusCode, `${name}: ${on.body}`).toBe(200);
+      expect(on.json(), name).toMatchObject({ user: { id, role, active: true } });
+      expect((await userRow(id)).active, name).toBe(1);
+      const events = await eventsOf(requestIdOf(on));
+      expect(events, name).toHaveLength(1);
+      expect(asObject(events[0].new_row), name).toEqual({ event: 'admin_activate_user' });
+    }
+  });
+
+  it('a login whose role has no row at all (the foreign key forbids it; a hand edit with the checks off can leave it) is refused the same way, naming the key because there is no name', async () => {
+    const ghost = await withForeignKeysOff(() => world.addUser({ role: 'ghostrole', active: false }));
+    const auditBefore = await countOf('audit_log');
+    const refused = await call('POST', `/admin/v1/users/${ghost.userId}/activate`);
+    expect(refused.statusCode, refused.body).toBe(409);
+    expect([errorOf(refused).code, errorOf(refused).message]).toEqual(['JV_NOT_ALLOWED', OFF('ghostrole')]);
+    expect((await userRow(ghost.userId)).active).toBe(0);
+    expect(await countOf('audit_log')).toBe(auditBefore);
+  });
+
+  it('a Super Admin login on a role that is switched off is refused for its role first (the checks follow the locks: the login, its role, then the Owner row); with the role on again the guard of R13 speaks, and once the other Super Admin is off it works', async () => {
+    await noSuperAdmin();
+    const roleName = `Flagged Role ${randomUUID().slice(0, 8)}`;
+    const role = await world.addRole({ name: roleName, ticks: [] });
+    const asleep = await world.addUser({ role: role.key, superAdmin: true, active: false });
+    const other = await world.addUser({ role: 'owner', superAdmin: true });
+    await switchRole(role.key, false);
+
+    const byRole = await call('POST', `/admin/v1/users/${asleep.userId}/activate`);
+    expect(byRole.statusCode, byRole.body).toBe(409);
+    expect(errorOf(byRole).message, 'the role is refused first, although another Super Admin is active').toBe(OFF(roleName));
+    await switchRole(role.key, true);
+    const byGuard = await call('POST', `/admin/v1/users/${asleep.userId}/activate`);
+    expect(byGuard.statusCode, byGuard.body).toBe(409);
+    expect(errorOf(byGuard).message).toBe(SECOND(other.email));
+    expect((await call('POST', `/admin/v1/users/${other.userId}/deactivate`)).statusCode).toBe(200);
+    const on = await call('POST', `/admin/v1/users/${asleep.userId}/activate`);
+    expect(on.statusCode, on.body).toBe(200);
+    expect(on.json()).toMatchObject({ user: { id: asleep.userId, role: role.key, active: true, is_super_admin: true } });
+    expect(await activeSuperAdmins()).toEqual([asleep.email]);
+  });
+
+  it('activate holds the role row until it commits: a switch-off of the role from another connection waits, so the role cannot be switched off between the check and the activation', async () => {
+    const asleep = await sleepingLogin();
+    const other = await world.scratch.connect();
+    try {
+      await other.query('SET SESSION innodb_lock_wait_timeout = 1');
+      // the activation sleeps 3 s holding its locks and the other connection gives up after 1 s: a wide margin, however busy the machine is
+      const res = await whileActivationIsSlow(3, async () => {
+        const pending = call('POST', `/admin/v1/users/${asleep.id}/activate`);
+        await untilSleeping();
+        await expect(other.query('UPDATE roles SET active = 0 WHERE role_key = ?', [asleep.role])).rejects.toMatchObject({ errno: 1205 });
+        return pending;
+      });
+      expect(res.statusCode, res.body).toBe(200);
+    } finally {
+      await other.end();
+    }
+    expect(await roleActive(asleep.role), 'the switch-off never got through while the activation held the role').toBe(1);
   });
 });
 
