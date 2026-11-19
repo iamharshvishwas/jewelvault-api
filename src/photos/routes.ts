@@ -1,10 +1,10 @@
 // P1 to P3, P7, A13, D26 (API17): the photo routes.
 //
-//   PUT  /v1/designs/:design_id/photos/:photo_id?kind=full|thumb   upload one object of a photo (matrix row photo:upload; the owner and staff). The raw bytes are the body. Insert-only.
-//   PUT  /v1/orders/:order_id/photos/:photo_id?kind=full|thumb     the same for an order of FB-E1 (matrix row photo:upload_order; the owner and a biller): the same checks, the same caps, 3 an order,
+//   PUT  /v1/designs/:design_id/photos/:photo_id?kind=full|thumb   upload one object of a photo (matrix row photo:upload; the tick `stock_add`). The raw bytes are the body. Insert-only.
+//   PUT  /v1/orders/:order_id/photos/:photo_id?kind=full|thumb     the same for an order of FB-E1 (matrix row photo:upload_order; the tick `order_edit`): the same checks, the same caps, 3 an order,
 //                                                                   201 { photo_id, order_id, kind, mime, byte_size, sha256 }; a 4th photo is 409 JV_NOT_ALLOWED with reason order_full.
 //   GET  /v1/photos/:photo_id/full  and  /thumb                    read one object, with NO session (the public list): immutable caching, ETag = sha256, nosniff, cross-origin resource policy.
-//   POST /v1/photos/:photo_id/remove                                the removal (matrix row photo:remove; the owner alone): a tombstone, audited. A DELETE has no route.
+//   POST /v1/photos/:photo_id/remove                                the removal (matrix row photo:remove; the tick `photo_rewrite`): a tombstone, audited. A DELETE has no route.
 //
 // All of it goes through the PhotoStore (photoStore.ts); nothing here knows the table. What is checked, and in which order:
 //   upload: the user's rate of 30 a minute and the matrix row are the route wrapper's (A13, A4); then both ids are lower-case UUIDs and the kind is full or thumb (422 JV_INVALID_INPUT); the body is

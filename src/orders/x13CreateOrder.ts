@@ -1,4 +1,4 @@
-// X13 create_order (POST /v1/orders, the owner and a biller): FB-E1, FB-D8 (Siddhi #13), L3, L4, L5, P2, X0. The spec's own X13 was retired in draft 4, so the Order Book of the feedback plan takes
+// X13 create_order (POST /v1/orders, a caller who holds `order_edit`): FB-E1, FB-D8 (Siddhi #13), L3, L4, L5, P2, X0. The spec's own X13 was retired in draft 4, so the Order Book of the feedback plan takes
 // the number. An order holds NO MONEY: an advance is an ordinary payment in the customer's ledger (X2).
 //
 // The screen makes the order's id (a version-4 UUID) and one id for each photo before it uploads the photos (PUT /v1/orders/:order_id/photos/:photo_id, as for a design, P2); it then sends
@@ -8,7 +8,7 @@
 //   answer   201 { order }: the row in the wire format of the sync read (GET /v1/sync/orders), so the cache applies it as it applies a polled row. A repeat of the key answers the same body and status
 //            with `Idempotent-Replay: true`.
 //   refused  422 JV_INVALID_INPUT naming the field (a bad value, an unknown field, an order id that is taken, a customer that does not exist, a photo that is not this order's whole and live photo),
-//            409 JV_CUSTOMER_ARCHIVED (bring the customer back first), 403 JV_FORBIDDEN (staff), 401.
+//            409 JV_CUSTOMER_ARCHIVED (bring the customer back first), 403 JV_FORBIDDEN (a caller without `order_edit`), 401.
 //
 // ORDER OF WORK (X0). Before the transaction: the body is parsed (the route), ONE reading of the API clock gives the year of the series order:<YYYY> and the stamps (S5, S6), and the counter row is
 // made (ensureSeries: a series made inside a transaction can deadlock, spike F3). Then one withTx: the claim (L5); the role check, after the claim so a refusal rolls the claim back (X0 item 2); the

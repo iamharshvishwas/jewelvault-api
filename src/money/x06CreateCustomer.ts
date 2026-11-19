@@ -4,10 +4,10 @@
 //            notes. The widths, the mobile pattern and the PAN pattern are the fields of the customer edit (src/edit/customers.ts), so a customer cannot be made with something a PATCH would refuse.
 //            Every pattern is checked here, before any statement is sent: a mistake is a refusal of the field (422), never the database's CHECK (4025, which would be a bug and a 500).
 //   header   Idempotency-Key (a UUID the screen makes once for each customer it saves and reuses for a retry).
-//   answer   201 { customer }: the row in the wire format of the sync read of the caller's role, so the cache applies it as it applies a polled row. A repeat of the key answers the same body and
+//   answer   201 { customer }: the row in the wire format of the sync read, cut to the columns the caller's grants may read, so the cache applies it as it applies a polled row. A repeat of the key answers the same body and
 //            status with `Idempotent-Replay: true`.
 //
-// ORDER OF WORK (NODE-DESIGN 4.3, X0). The route wrapper has already refused everything it can without a database (no session, a role not on the row, an invalid body), and none of that touches the
+// ORDER OF WORK (NODE-DESIGN 4.3, X0). The route wrapper has already refused everything it can without a database (no session, a caller who holds none of the row's ticks, an invalid body), and none of that touches the
 // Idempotency-Key. Then: the key is read from the header (missing or not a UUID: 422 naming the header, nothing claimed) and ONE transaction runs: the claim of the key (first statement), the role
 // check again (X0 item 2), the insert, the audit row of mechanism (b) when JV_AUDIT_MODE=node (mechanism (a) writes it by itself), the stored result. A new customer has nothing to lock and nobody to
 // number: no customer lock, no piece lock, no counter. A failure anywhere rolls the claim back with the rest, so a retry of the key runs again.

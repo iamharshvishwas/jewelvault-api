@@ -1,9 +1,9 @@
-// U3, U2, A8, O41, O54: the admin door. Accounts are made only here, by Harsh, and nothing else in the program creates a user, changes a role or sets `active` (A8).
+// U3, U2, A8, O41, O54: the admin door. Accounts are made here, by Harsh, and in the Super Admin's own people calls (src/super/people.ts, `/v1/super/people`: A8 was changed on purpose for this second path); nothing else in the program creates a user, changes a role or sets `active` (A8).
 //
 //   POST /admin/v1/users                        {email, full_name, role}   make a user with a random temporary password, shown once, and must_change_password (the first owner too); `role` is the key of any ACTIVE role
 //   GET  /admin/v1/users                                                    the users, with what Harsh needs (the Super Admin flag included) and never a hash
 //   POST /admin/v1/users/:id/reset-password                                a new temporary password, must_change_password, and EVERY session of that user ended
-//   POST /admin/v1/users/:id/role               {role}                      change the role to the key of any ACTIVE role (the only way a role changes)
+//   POST /admin/v1/users/:id/role               {role}                      change the role to the key of any ACTIVE role (with the Super Admin's `/v1/super/people/:id/role`, the only way a role changes)
 //   POST /admin/v1/users/:id/deactivate                                     not active: reads nothing; every session ended
 //   POST /admin/v1/users/:id/activate                                       (refused for a login whose role is switched off, and for one with the Super Admin flag while another Super Admin is active, R13)
 //   POST /admin/v1/super-admin                  {email, full_name}          make THE Super Admin (R14): a new login (role owner, the flag, a temporary password shown once), or the login that has the e-mail, promoted

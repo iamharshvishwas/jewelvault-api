@@ -62,7 +62,7 @@ const pieceGroup = wire.strictObject({
     .max(limits.maxPiecesPerGroup, piecesMessage),
   gross_weight: wire.weight.optional(),
   customer_net_weight: wire.weight.optional(),
-  /** Owner only (D9, X8): from anyone else the call is JV_FORBIDDEN, after the claim. */
+  /** Only a holder of `secret_weight` (D9, X8): from anyone else the call is JV_FORBIDDEN, after the claim. */
   original_net_weight: wire.weight.optional(),
   stones: countField.optional(),
   stone_weight: wire.weight.optional(),

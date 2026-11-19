@@ -35,9 +35,9 @@ export const limits = Object.freeze({
   rateFlagPercent: 5,
   /** C3: a page of the read side (GET /v1/sync/<resource>, and each resource of POST /v1/sync/poll) has at most this many rows. A constant of the API, so no layer below it cuts a page silently. */
   syncPageRows: 1000,
-  /** C3: the owner's on-demand reads (GET /v1/audit-log, GET /v1/health/checks) have at most this many rows a page. Asking for more is refused, not cut. */
+  /** C3: the on-demand reads of a holder of `activity_log` (GET /v1/audit-log, GET /v1/health/checks) have at most this many rows a page. Asking for more is refused, not cut. */
   ownerPageRows: 200,
-  /** C3, A4: the owner reads the cash book (GET /v1/daily-totals) for at most this many days in one call. (A biller's two days are BILLER_DAILY_TOTALS_DAYS of the permission matrix.) */
+  /** C3, A4: a holder of `cashbook_all` reads the cash book (GET /v1/daily-totals) for at most this many days in one call. (The two days of `cashbook_recent` are BILLER_DAILY_TOTALS_DAYS of the permission matrix.) */
   dailyTotalsMaxDays: 400,
   /** B3: the record of a Download everything accepts a file's row count that is off by at most the rows made in this many milliseconds before the call (the cache is up to one poll behind). */
   downloadAllowanceMs: 2 * 60 * 1000,

@@ -1,4 +1,4 @@
-// A5, D7: the ordinary edit of a piece (PATCH /v1/skus/:id). The columns are the matrix's (WRITE_COLUMNS: the content columns of A5, the same for the owner and for staff). `status` and `archived_at`
+// A5, D7: the ordinary edit of a piece (PATCH /v1/skus/:id). The columns are the matrix's (WRITE_COLUMNS: the content columns of A5, all under the one tick `stock_edit`). `status` and `archived_at`
 // are not there: they change only through X9 (API16), and a call that names one is refused JV_FORBIDDEN as a whole, so a screen that saves a whole design can never undo a sale (hazard 2).
 // `sku_no`, `barcode` and `design_id` never change after creation (D7).
 //

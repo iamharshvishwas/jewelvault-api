@@ -4,13 +4,13 @@
 //            [mode, amount, reference] (a row of amount 0 is ignored), confirm_held [piece ids], cash_override_reason. The items, the sale type, the date and the two charges are the body of quote_bill (X7): ONE definition, so a quote and
 //            a bill are asked in the same words. A weight is never an input: the net weight, the material, the purity and the method of a line are the PIECE's, read under the lock.
 //   header   Idempotency-Key (a UUID the screen makes once for each save and reuses for a retry).
-//   answer   201 {bill, items, receipts, allocations, warnings, advance_applied}: `bill` and `items` are the rows in the wire format of the sync read of the caller's role (so the cache applies them as
+//   answer   201 {bill, items, receipts, allocations, warnings, advance_applied}: `bill` and `items` are the rows in the wire format of the sync read, cut to the columns the caller's grants may read (so the cache applies them as
 //            it applies a polled row), `warnings` holds PAN_MISSING, RATE_MISSING and RATE_STALE (unique, sorted). A repeat of the key answers the same body and status with `Idempotent-Replay: true`.
 //
 // THE PAYMENT ROWS (X1 (e) and (i), API23). `payments` are the money received with the bill: each row of an amount above 0 is one `money` receipt and one allocation to THIS bill, dated the bill date;
 // a row of amount 0 is ignored. Together they may not exceed the grand total (JV_OVERPAYMENT, Y5). The Credit mode does not exist (D13, Y2): it is refused with the other words that are not one of the
 // five modes. The cash rules of section 13 (src/domain/cashRules.ts) judge the Cash rows before the number is taken: a named customer's cash of the bill date reaching the limit is JV_CASH_LIMIT
-// unless the owner gives `cash_override_reason`, which is then stored on the bill (Z1); for the walk-in a bill of the PAN threshold or more is refused (JV_NOT_ALLOWED) and so is a single cash
+// unless a holder of `cash_over_limit` gives `cash_override_reason`, which is then stored on the bill (Z1); for the walk-in a bill of the PAN threshold or more is refused (JV_NOT_ALLOWED) and so is a single cash
 // payment at the limit (Z2); a named customer without a PAN gets the warning PAN_MISSING at the threshold (Z3). The rebalance of Y6 (j) comes AFTER the payment rows (API21,
 // src/domain/rebalance.ts): an advance the customer holds is applied to what the rows leave pending, the new bill among the oldest, and `advance_applied` says how much of it went to THIS bill.
 // `planPayments` and `writePayments` are exported for X10, which makes the new payments of a re-issue by the rules of X1.
@@ -87,7 +87,7 @@ const paymentRow = wire.strictObject({
   reference: (f.optionalText(REFERENCE_MAX).schema as z.ZodType<string | null>).optional(),
 });
 
-/** Z1: the reason the OWNER gives for cash over the limit, 10 to 500 characters (X1 and X2 take the same field). */
+/** Z1: the reason a holder of `cash_over_limit` gives for cash over the limit, 10 to 500 characters (X1 and X2 take the same field). */
 export const cashOverrideReason = z
   .string({ error: (issue) => (issue.input === undefined ? 'is required' : reasonMessage) })
   .trim()
@@ -111,7 +111,7 @@ export const createBillBody = wire.strictObject({
     .array(wire.uuid, { error: (issue) => (issue.input === undefined ? 'is required' : confirmMessage) })
     .max(limits.maxLines, confirmMessage)
     .optional(),
-  /** Z1: the owner's right (FIELD_RIGHTS), stored on the bill when the cash rule needed it; a biller who sends it is refused after the claim. */
+  /** Z1: the right of `cash_over_limit` (FIELD_RIGHTS), stored on the bill when the cash rule needed it; a caller without it who sends it is refused after the claim. */
   cash_override_reason: cashOverrideReason,
 });
 export type CreateBillBody = z.output<typeof createBillBody>;

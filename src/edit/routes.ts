@@ -1,5 +1,5 @@
-// A4, A5, C5 (a): the routes of the ordinary edits: designs, pieces, categories and subcategories (API13), daily rates, settings and customers (API13b), the owner-only weight of a piece (API13c). A route is route() and a handler that hands
-// the body to the edit engine (src/edit/engine.ts); the rows of the matrix give the address and the roles.
+// A4, A5, C5 (a): the routes of the ordinary edits: designs, pieces, categories and subcategories (API13), daily rates, settings and customers (API13b), the original weight of a piece (API13c). A route is route() and a handler that hands
+// the body to the edit engine (src/edit/engine.ts); the rows of the matrix give the address and the ticks.
 //
 //   PATCH /v1/designs/:id  PATCH /v1/skus/:id  PATCH /v1/categories/:id  PATCH /v1/subcategories/:id    { expected_updated_at, changes: {...} }   200 { row }
 //   PATCH /v1/daily-rates/:id  PATCH /v1/customers/:id                                                   { expected_updated_at, changes: {...} }   200 { row }

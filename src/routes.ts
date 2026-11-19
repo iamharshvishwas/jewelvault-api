@@ -12,7 +12,7 @@
 //   API11  the read side (the sync resources, the poll) ...
 //   API13  the ordinary edits (designs, pieces, categories, subcategories) ...
 //   FB-E1  the Order Book (X13 create_order, the edit of an order; its read is a sync resource, its photo upload the PhotoStore's)
-//   access the Super Admin's own API under /v1/super: the three reads (ticks, people, roles) and the four role writes; the five people writes follow in a later task
+//   access the Super Admin's own API under /v1/super: the three reads (ticks, people, roles), the four role writes and the five people writes
 import type { FastifyInstance } from 'fastify';
 import { registerAdminRoutes } from './admin/routes.js';
 import { registerAuthRoutes } from './auth/loginRoutes.js';
@@ -57,7 +57,7 @@ export function registerRoutes(app: FastifyInstance): void {
   registerDownloadRoutes(app); // API35: the record of Download everything (B3)
   registerCreateCustomer(app); // API19: X6 create_customer
   registerStockRoutes(app); // API16: X8 create_design, X9 set_sku_status
-  registerPhotoRoutes(app); // API17: the photo upload, the public photo read, the owner's removal (and FB-E1's upload of an order's photo)
+  registerPhotoRoutes(app); // API17: the photo upload, the public photo read, the removal (and FB-E1's upload of an order's photo)
   registerOrderRoutes(app); // FB-E1: X13 create_order and the edit of an order (the Order Book)
   registerSuperRoutes(app); // access plan Tasks 12 to 14: the Super Admin's reads (ticks, people, roles), the four role writes and the five people writes under /v1/super
   // A14: /readyz says only whether the start-up check passed, {"ok":true} or {"ok":false} (503 while it has not): never why. The reason is in sys_error_log and the owner's dashboard line.

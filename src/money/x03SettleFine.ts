@@ -7,9 +7,9 @@
 //
 //   path     the customer (`p_customer_id`): a lower-case UUID, else 422 on `id`; no such customer is 404 JV_NOT_FOUND.
 //   body     grams (a weight above 0, at most 3 decimals), mode (Silver or Cash), silver_rate (Cash: required and above 0; Silver: none, a rate there is 422 so that nothing sent is dropped silently),
-//            bill_id (optional: the bill to settle first), paid_on (absent or null: today; Y8), reference (at most 120), notes, cash_override_reason (the owner's right, Z1).
+//            bill_id (optional: the bill to settle first), paid_on (absent or null: today; Y8), reference (at most 120), notes, cash_override_reason (the right of `cash_over_limit`, Z1).
 //   header   Idempotency-Key.
-//   answer   201 {receipt, allocations, fine_remaining}: `receipt` and `allocations` are the rows in the wire format of the sync read of the caller's role. `allocations` are all the rows the call made,
+//   answer   201 {receipt, allocations, fine_remaining}: `receipt` and `allocations` are the rows in the wire format of the sync read, cut to the columns the caller's grants may read. `allocations` are all the rows the call made,
 //            in the order made: the settlement's own (Y3: the named bill first, then the oldest) and then those of the rebalance (Y6), if any. `fine_remaining` is the customer's fine outstanding (V2)
 //            AFTER the call, in grams: what is still owed in silver. (Not "what is left of this receipt": SF2 lets nobody settle more than is owed, so every gram of the receipt is allocated.)
 //
@@ -17,9 +17,9 @@
 // K5, O52: for the walk-in the bill must be named and the grams are not more than THAT bill's fine pending (JV_FINE_EXCEEDS with that maximum; one row stands for strangers whose silver must not
 // settle each other's bills). Y3: the named bill must be one of the customer's active bills with SILVER pending, else JV_INVALID_INPUT on `bill_id`. A cash settlement whose amount rounds to 0.00 is
 // JV_INVALID_INPUT, and so is one over the amount cap of S4 (grams x rate, at most 1,000,000,000). The amount is worked out in whole paise (BigInt), half up, never in floating point.
-// Z1, Z2: the cash rules of section 13 judge a `fine_cash` amount like a Cash payment (src/domain/cashRules.ts); a Silver settlement adds no cash. A biller who sends a reason is refused (403).
+// Z1, Z2: the cash rules of section 13 judge a `fine_cash` amount like a Cash payment (src/domain/cashRules.ts); a Silver settlement adds no cash. A caller without `cash_over_limit` who sends a reason is refused (403).
 //
-// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a role not on the row, an invalid body). Before the transaction, and so before the
+// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a caller who holds none of the row's ticks, an invalid body). Before the transaction, and so before the
 // key is claimed, the rules that need only the body are decided (the rate, the amount): a refusal there does not use the key up. Then ONE transaction:
 //   1. the claim of the key (L5, the first statement), the role check again (X0 item 2), the stored answer if the key is a repeat (before any lock or date check);
 //   2. the customer row FOR UPDATE (X0 item 3), "exists, not archived", then ONE reading of the API clock: its date is the business day for Y8, its stamp is every stamp of the call (C4);
@@ -71,7 +71,7 @@ export const settleFineBody = wire.strictObject({
   paid_on: wire.businessDate.nullish(),
   reference: (f.optionalText(REFERENCE_MAX).schema as z.ZodType<string | null>).optional(),
   notes: (f.optionalText(f.TEXT_MAX).schema as z.ZodType<string | null>).optional(),
-  /** Z1: the owner's right (FIELD_RIGHTS), stored on the receipt when a Cash settlement needed it; a biller who sends it is refused after the claim. */
+  /** Z1: the right of `cash_over_limit` (FIELD_RIGHTS), stored on the receipt when a Cash settlement needed it; a caller without it who sends it is refused after the claim. */
   cash_override_reason: cashOverrideReason,
 });
 export type SettleFineBody = z.output<typeof settleFineBody>;

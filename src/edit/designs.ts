@@ -1,4 +1,4 @@
-// A5, D6, P2, P3: the ordinary edit of a design (PATCH /v1/designs/:id). The columns are the matrix's (WRITE_COLUMNS: staff the content columns and archived_at, the owner also material, purity and
+// A5, D6, P2, P3: the ordinary edit of a design (PATCH /v1/designs/:id). The columns are the matrix's (WRITE_COLUMNS: `stock_edit` the content columns and archived_at, `design_material` material, purity and
 // selling method); the rules that are code and not columns are here:
 //   - `selling_method` cannot change while the design has a piece that is not archived (D6): the piece rates mean rupees per gram for By Weight and a piece price for Per Piece (D7).
 //   - a design with a piece that is not archived cannot be archived (A5). Bringing it back is always allowed.

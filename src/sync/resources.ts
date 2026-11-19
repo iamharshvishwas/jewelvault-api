@@ -36,7 +36,7 @@ export interface SyncResource {
   readonly counts: readonly string[];
   /** The figures of this resource are worked out by a second statement for the rows of the page (V1, V2). */
   readonly derived: Derived | null;
-  /** The resource is `settings`: a role that may not read every key reads the keys the matrix names for it. */
+  /** The resource is `settings`: a person who may not read every key reads the keys the matrix names for everyone (STAFF_SETTING_KEYS). */
   readonly keyList: boolean;
 }
 

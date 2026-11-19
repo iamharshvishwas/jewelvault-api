@@ -1,6 +1,6 @@
 // D5, A4: categories and subcategories (POST /v1/categories, PATCH /v1/categories/:id, the same for /v1/subcategories). A5 lists the content columns of designs, skus and customers only, so the
 // columns here come from D5 and from the table of A4 (owner S I U, staff S I, biller S), and the lists of WRITE_COLUMNS are confirmed by tests/api/edit-columns.test.ts against those two lines:
-//   categories     insert: name and prefix (an `active` category is the default; the owner and staff);   update: name and active (the owner)
+//   categories     insert: name and prefix (an `active` category is the default; the tick `category_add`);   update: name and active (the tick `category_edit`)
 //   subcategories  insert: category_id and name;   update: name and active
 // The prefix is written once: it is the series of the design numbers (L3), and numbers already issued carry it. The category of a subcategory never changes: the designs refer to the pair. A
 // removal is `active` = false (nothing is deleted, S7). A name is unique ignoring case (a category), or ignoring case inside its category (a subcategory): the rule is checked here for a plain

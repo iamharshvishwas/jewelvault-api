@@ -120,7 +120,7 @@ const superRow = (method: HttpMethod, path: string, spec: string) => ({ kind: 's
 const ROWS = {
   // ---- reads: GET /v1/sync/<resource> (C3), kebab-case in the address, the table's name in READ_COLUMNS
   'read:users': read('/v1/sync/users', OPEN, ['users'], 'A4 users'),
-  'read:settings': read('/v1/sync/settings', OPEN, ['settings'], 'A4 settings (staff: STAFF_SETTING_KEYS only)'),
+  'read:settings': read('/v1/sync/settings', OPEN, ['settings'], 'A4 settings (a person with none of bill_view, bill_make, settings_change: STAFF_SETTING_KEYS only)'),
   'read:daily_rates': read('/v1/sync/daily-rates', OPEN, ['daily_rates'], 'A4 daily_rates'),
   'read:categories': read('/v1/sync/categories', OPEN, ['categories'], 'A4 categories'),
   'read:subcategories': read('/v1/sync/subcategories', OPEN, ['subcategories'], 'A4 subcategories'),
@@ -137,26 +137,26 @@ const ROWS = {
   'read:orders': read('/v1/sync/orders', any('order_view'), ['orders'], 'FB-E1, FB-D8: the Order Book; staff read it too'),
   // ---- the named read calls of C3
   'read:customer_ledger': read('/v1/customers/:id/ledger', any('bill_view'), ['customer_ledger'], 'C3, V3 for one customer'),
-  'read:daily_totals': read('/v1/daily-totals', any('cashbook_recent', 'cashbook_all'), ['daily_totals'], 'C3, V4; a biller reads today and yesterday only (A4, O25: BILLER_DAILY_TOTALS_DAYS)'),
+  'read:daily_totals': read('/v1/daily-totals', any('cashbook_recent', 'cashbook_all'), ['daily_totals'], 'C3, V4; cashbook_recent reads today and yesterday only, cashbook_all the wide range (A4, O25: BILLER_DAILY_TOTALS_DAYS)'),
   'read:audit_log': read('/v1/audit-log', any('activity_log'), ['audit_log'], 'A4 audit_log, C3'),
   'read:health_checks': read('/v1/health/checks', any('activity_log'), ['check_runs', 'backup_runs'], 'A4 check_runs and backup_runs, C3'),
   'read:dashboard_health': read('/v1/dashboard/health', any('activity_log'), [], 'C3, section 12: the dashboard line, computed, no table'),
   // the combined poll (C4): open to everyone signed in; the handler asks mayCall(grants, 'read:<resource>') for each resource named and refuses the whole call if one is not allowed
-  'read:poll': read('/v1/sync/poll', OPEN, [], 'C4: the call is 403 JV_FORBIDDEN as a whole when one named resource is not the role\'s', 'POST'),
+  'read:poll': read('/v1/sync/poll', OPEN, [], 'C4: the call is 403 JV_FORBIDDEN as a whole when one named resource is not one the person may read', 'POST'),
 
   // ---- direct edits (A5), PATCH with the stale check, or PUT/POST of ordinary fields
-  'edit:settings.update': edit('PUT', '/v1/settings/:key', any('settings_change'), { table: 'settings', op: 'update', shape: 'fields' }, 'A4 settings: S, I, U for the owner; never last_download or last_pulled (NEVER_WRITTEN_SETTINGS)'),
-  'edit:daily_rates.insert': edit('POST', '/v1/daily-rates', any('rate_enter'), { table: 'daily_rates', op: 'insert', shape: 'fields' }, 'A4 daily_rates: owner any date up to today, biller today only (D4, Y8)'),
-  'edit:daily_rates.update': edit('PATCH', '/v1/daily-rates/:id', any('rate_correct'), { table: 'daily_rates', op: 'update', shape: 'changes' }, 'A4 daily_rates: the owner corrects a row dated today'),
+  'edit:settings.update': edit('PUT', '/v1/settings/:key', any('settings_change'), { table: 'settings', op: 'update', shape: 'fields' }, 'A4 settings: S, I, U for a holder of settings_change; never last_download or last_pulled (NEVER_WRITTEN_SETTINGS)'),
+  'edit:daily_rates.insert': edit('POST', '/v1/daily-rates', any('rate_enter'), { table: 'daily_rates', op: 'insert', shape: 'fields' }, 'A4 daily_rates: any date up to today with back_date, today only without it (D4, Y8)'),
+  'edit:daily_rates.update': edit('PATCH', '/v1/daily-rates/:id', any('rate_correct'), { table: 'daily_rates', op: 'update', shape: 'changes' }, 'A4 daily_rates: a holder of rate_correct corrects a row dated today'),
   'edit:categories.insert': edit('POST', '/v1/categories', any('category_add'), { table: 'categories', op: 'insert', shape: 'fields' }, 'A4 categories'),
   'edit:categories.update': edit('PATCH', '/v1/categories/:id', any('category_edit'), { table: 'categories', op: 'update', shape: 'changes' }, 'A4 categories'),
   'edit:subcategories.insert': edit('POST', '/v1/subcategories', any('category_add'), { table: 'subcategories', op: 'insert', shape: 'fields' }, 'A4 subcategories'),
   'edit:subcategories.update': edit('PATCH', '/v1/subcategories/:id', any('category_edit'), { table: 'subcategories', op: 'update', shape: 'changes' }, 'A4 subcategories'),
-  'edit:designs.update': edit('PATCH', '/v1/designs/:id', any('stock_edit', 'design_material'), { table: 'designs', op: 'update', shape: 'changes' }, 'A4, A5 designs: content columns and archived_at; only the owner changes material, purity, selling_method'),
+  'edit:designs.update': edit('PATCH', '/v1/designs/:id', any('stock_edit', 'design_material'), { table: 'designs', op: 'update', shape: 'changes' }, 'A4, A5 designs: content columns and archived_at; only design_material changes material, purity, selling_method'),
   'edit:skus.update': edit('PATCH', '/v1/skus/:id', any('stock_edit'), { table: 'skus', op: 'update', shape: 'changes' }, 'A4, A5 skus: content columns; status and archived_at only through X9'),
-  'edit:sku_private.update': edit('PUT', '/v1/sku-private/:sku_id', any('secret_weight'), { table: 'sku_private', op: 'update', shape: 'fields' }, 'A4 sku_private: S, I, U for the owner'),
-  'edit:customers.update': edit('PATCH', '/v1/customers/:id', any('customer_edit', 'customer_archive'), { table: 'customers', op: 'update', shape: 'changes' }, 'A4, A5 customers: content columns; archived_at only for the owner'),
-  'edit:orders.update': edit('PATCH', '/v1/orders/:id', any('order_edit'), { table: 'orders', op: 'update', shape: 'changes' }, 'FB-E1, FB-D8: description, delivery_date, status, notes, photo_ids; the status of a delivered or cancelled order is the owner\'s (FIELD_RIGHTS)'),
+  'edit:sku_private.update': edit('PUT', '/v1/sku-private/:sku_id', any('secret_weight'), { table: 'sku_private', op: 'update', shape: 'fields' }, 'A4 sku_private: S, I, U for a holder of secret_weight'),
+  'edit:customers.update': edit('PATCH', '/v1/customers/:id', any('customer_edit', 'customer_archive'), { table: 'customers', op: 'update', shape: 'changes' }, 'A4, A5 customers: content columns; archived_at only with customer_archive'),
+  'edit:orders.update': edit('PATCH', '/v1/orders/:id', any('order_edit'), { table: 'orders', op: 'update', shape: 'changes' }, 'FB-E1, FB-D8: description, delivery_date, status, notes, photo_ids; the status of a delivered or cancelled order needs order_closed_change (FIELD_RIGHTS)'),
 
   // ---- service functions X1 to X12 (section 10)
   'fn:create_bill': fn('/v1/bills', any('bill_make'), 'X1'),
@@ -166,7 +166,7 @@ const ROWS = {
   'fn:cancel_bill': fn('/v1/bills/:id/cancel', any('bill_cancel'), 'X5'),
   'fn:create_customer': fn('/v1/customers', any('customer_edit'), 'X6'),
   'fn:quote_bill': fn('/v1/bills/quote', any('bill_make'), 'X7: read-only, writes nothing'),
-  'fn:create_design': fn('/v1/designs', any('stock_add'), 'X8: staff sending original_net_weight is JV_FORBIDDEN (FIELD_RIGHTS)'),
+  'fn:create_design': fn('/v1/designs', any('stock_add'), 'X8: a caller without secret_weight sending original_net_weight is JV_FORBIDDEN (FIELD_RIGHTS)'),
   'fn:set_sku_status': fn('/v1/skus/status', any('stock_status'), 'X9'),
   'fn:reissue_bill': fn('/v1/bills/:id/reissue', any('bill_reissue'), 'X10'),
   'fn:issue_refund': fn('/v1/customers/:id/refunds', any('refund_give'), 'X11'),
@@ -174,9 +174,9 @@ const ROWS = {
   'fn:create_order': fn('/v1/orders', any('order_edit'), 'X13 (FB-E1, FB-D8): create_order; the spec\'s own X13 was retired in draft 4, so the number is free'),
 
   // ---- photos (P2, P3); the photo READ is on the public list
-  'photo:upload': { kind: 'photo', method: 'PUT', path: '/v1/designs/:design_id/photos/:photo_id', access: any('stock_add'), mustChange: false, spec: 'P2, P3: the owner and staff add a new photo' },
-  'photo:upload_order': { kind: 'photo', method: 'PUT', path: '/v1/orders/:order_id/photos/:photo_id', access: any('order_edit'), mustChange: false, spec: 'FB-E1, P2, P3: the owner and a biller add a photo to an order (the same PhotoStore and caps, 3 an order)' },
-  'photo:remove': { kind: 'photo', method: 'POST', path: '/v1/photos/:photo_id/remove', access: any('photo_rewrite'), mustChange: false, spec: 'P3: only the owner removes one (a POST, nothing is deleted, S7)' },
+  'photo:upload': { kind: 'photo', method: 'PUT', path: '/v1/designs/:design_id/photos/:photo_id', access: any('stock_add'), mustChange: false, spec: 'P2, P3: stock_add adds a new photo' },
+  'photo:upload_order': { kind: 'photo', method: 'PUT', path: '/v1/orders/:order_id/photos/:photo_id', access: any('order_edit'), mustChange: false, spec: 'FB-E1, P2, P3: order_edit adds a photo to an order (the same PhotoStore and caps, 3 an order)' },
+  'photo:remove': { kind: 'photo', method: 'POST', path: '/v1/photos/:photo_id/remove', access: any('photo_rewrite'), mustChange: false, spec: 'P3: only photo_rewrite removes one (a POST, nothing is deleted, S7)' },
 
   // ---- the owner's download record (B3)
   'owner:download_record': { kind: 'owner', method: 'POST', path: '/v1/owner/download-record', access: any('download_all'), mustChange: false, spec: 'A4, B3: the owner\'s monthly download, one record for each call' },
@@ -188,7 +188,7 @@ const ROWS = {
   'session:activity': session('POST', '/v1/auth/activity', false, 'U4; U11 keeps it out for a user who must still change the password'),
 
   // ---- the Super Admin's own API, People & Roles (access plan Task 12, DESIGN.md 6.3). Only isSuperAdmin passes (R8): the Owner does not, and no tick opens a row of it (6.6 guardrail 5). A caller with no session
-  //      gets 401 and everyone else 403 JV_FORBIDDEN (P5, tests/api/super-escalation.test.ts). The three reads have their routes (src/super/routes.ts); the nine writes get theirs in Tasks 13 (roles) and 14 (people).
+  //      gets 401 and everyone else 403 JV_FORBIDDEN (P5, tests/api/super-escalation.test.ts). All twelve rows have their routes (src/super/routes.ts): the three reads, the four role writes (src/super/roles.ts, Task 13) and the five people writes (src/super/people.ts, Task 14).
   'super:ticks': superRow('GET', '/v1/super/ticks', 'DESIGN 6.3: the catalogue of the 32 ticks (groups, words, help, sensitive, needs) the roles screen draws'),
   'super:people.list': superRow('GET', '/v1/super/people', 'DESIGN 6.3: every login with its role name and the Super Admin flag, never a hash'),
   'super:people.add': superRow('POST', '/v1/super/people', 'DESIGN 6.3 (Task 14): add a person with a role and a temporary password'),
@@ -274,7 +274,8 @@ export type FieldRight = keyof typeof FIELD_RIGHTS;
 
 /**
  * I11, O26, R8: whose daily rates the nightly review line checks for a move of more than `rate_flag_percent`: the rates entered by a person whose role holds `holds` and not `lacks` (enters
- * today's rate, cannot correct one). The review (src/domain/review.ts) asks here and never names a tick or a role itself (S10, T-D10).
+ * today's rate, cannot correct one). A login with the Super Admin flag is never in the set, whatever its role is: it holds every tick, so it holds `lacks` too (the review's statement leaves flagged logins
+ * out), and the Owner is not in it either (its ticks come from code, so its row holds none). The review (src/domain/review.ts) asks here and never names a tick or a role itself (S10, T-D10).
  */
 export const RATE_REVIEW = { holds: 'rate_enter', lacks: 'rate_correct' } as const satisfies { holds: TickKey; lacks: TickKey };
 

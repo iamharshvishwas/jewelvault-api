@@ -12,8 +12,8 @@ import { csrfHeaders } from './support';
 // Super Admin flag are what the database says now. The route gate asks those grants; `me` and the poll answer carry what the website needs (the ticks, the flag, the access fingerprint, the
 // sync resources the person reads).
 //
-// Until Tasks 6 to 9 hand the handlers the session's grants, a handler's own second check still resolves the role KEY through the built-in sets, so a custom role is tested here only where this
-// task reaches: the session lookup, the gate (two rows of a table made for the test, served by the real wrapper), `me`, and the poll of an open resource.
+// The handlers have been handed the session's grants since Tasks 6 to 11 (tests/api/access-money.test.ts, access-edit.test.ts and access-reads.test.ts walk custom roles through them), so this file
+// tests what the session itself does: the session lookup, the gate (two rows of a table made for the test, served by the real wrapper), `me`, and the poll of an open resource.
 
 /** Two rows that exist only in this test: one opened by either of two ticks, one for the Super Admin alone. Their handlers do no check of their own, so the answer is the gate's. */
 const TEST_ROWS: Record<string, MatrixRow> = {

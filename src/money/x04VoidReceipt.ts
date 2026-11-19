@@ -15,7 +15,7 @@
 // advance now pays a bill the void re-opened. The walk-in is never rebalanced (K5: one row stands for strangers). A customer who is archived (K4) is refused with JV_CUSTOMER_ARCHIVED, as every
 // money function is: a void would leave dues on a customer who is archived only because they owe nothing.
 //
-// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a role that is not the owner, an invalid body). Then ONE transaction:
+// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a caller without `payment_void`, an invalid body). Then ONE transaction:
 //   1. the claim of the key (L5, the first statement), the role check again (X0 item 2), the stored answer if the key is a repeat;
 //   2. the customer is found from the receipt WITHOUT a lock, locked, and the receipt is read again FOR UPDATE and must be the SAME customer's (X0 item 3: `lockCustomerOf`). Everything else is decided
 //      after the lock: a second void of one receipt is JV_ALREADY_VOID, never a false JV_BUSY. Then ONE reading of the API clock: `voided_at` and `voided_on` are that one instant (S5, D13);

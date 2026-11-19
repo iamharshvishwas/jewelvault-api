@@ -16,7 +16,7 @@
 // AN INSERT (POST, shape `fields`): the fields themselves; the id, both stamps and both person columns are the API's. 201 with the new row.
 // AN UPSERT (PUT, shape `fields`, the settings): the key is in the address, the body is the fields themselves and there is no stamp to compare (A4: the last write wins; the row is locked for the
 // length of the write): the row is read FOR UPDATE and made when it is not there (201), changed when its value differs (200), left alone when it does not (200, nothing written).
-// A PUT ON A PARENT'S ID (PUT, shape `fields`, API13c: the owner-only weight of a piece): the row is keyed by the id of the row it belongs to, so the address names it and the first write MAKES it;
+// A PUT ON A PARENT'S ID (PUT, shape `fields`, API13c: the original weight of a piece): the row is keyed by the id of the row it belongs to, so the address names it and the first write MAKES it;
 // afterwards it is corrected, and then the stale check of A5 applies: the body carries `expected_updated_at` beside the fields, as the exact text the screen holds, or none when it holds no row. A
 // call with no stamp meets a row that is there (another tab made it first) as a stale edit, and a stamp for a row that is not there is a mistake of the screen (422).
 // EXTRA PERSON COLUMNS. A table may name more columns than `created_by` and `updated_by` that the API sets from the session user on every insert and update (`EditTable.person`: the
@@ -342,7 +342,7 @@ export async function insertRecord(app: FastifyInstance, request: FastifyRequest
 /**
  * The write of a row whose key is in the address and that has no stamp to compare (the settings, A4: "S, I, U", the matrix row has the shape `fields`): the row is read FOR UPDATE and made when it
  * is not there (`created: true`), changed when the value differs, and left alone, with nothing written and no new stamp, when it is the value already stored. One row of the matrix covers both,
- * so the table names the same action as its `insert` and its `update`. The last write wins: the caller is the only role that has the row, and the row is locked while it writes. `check` holds the
+ * so the table names the same action as its `insert` and its `update`. The last write wins: only the holders of the row's tick (`settings_change`) call it, and the row is locked while it writes. `check` holds the
  * rules of the value that need no row (they run on the validated values, before the transaction).
  */
 export async function upsertRecord(

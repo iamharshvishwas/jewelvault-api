@@ -19,18 +19,18 @@
 //   sale_type_differs    the bills whose sale type is not the customer's type (R9)
 //
 // WHICH DAY A ROW BELONGS TO. A bill by its `bill_date`, a receipt by its `paid_on`, a cancellation by `cancelled_on`, a void by `voided_on` (the business dates of D13, taken from the API clock in
-// Asia/Kolkata). A back-dated bill (the owner may) therefore belongs to the day it is dated, not to the day it was typed in. The lines, discounts, walk-in sales and sale types are those of ACTIVE bills (a
+// Asia/Kolkata). A back-dated bill (a holder of `back_date` may make one) therefore belongs to the day it is dated, not to the day it was typed in. The lines, discounts, walk-in sales and sale types are those of ACTIVE bills (a
 // cancelled bill is no sale; it is on the list of cancellations); a fine_cash settlement is judged while it is active (a void is on the list of voids); the overrides, voids, cancellations, re-issues and
 // refunds are listed whatever has become of them since.
 //
 // THE FIGURES. Every comparison is DECIMAL arithmetic in the database, never a float: the percent limits are bound as CAST(? AS DECIMAL(5,2)) (S3). A count is exact; a list holds at most
-// REVIEW_LIST_ROWS rows (the owner can open 50 of them, I11). The statements only read, and they run inside the snapshot of the invariants (nightly.ts).
+// REVIEW_LIST_ROWS rows (a holder of `activity_log` can open 50 of them, I11). The statements only read, and they run inside the snapshot of the invariants (nightly.ts).
 import type { RowDataPacket } from 'mysql2/promise';
 import { limits } from '../limits.js';
 import { RATE_REVIEW } from '../permissions/matrix.js';
 import type { Queryable } from './invariants.js';
 
-/** I11: the owner can open up to 50 rows of each list. */
+/** I11: a holder of `activity_log` can open up to 50 rows of each list. */
 export const REVIEW_LIST_ROWS = 50;
 
 export const REVIEW_LISTS = [

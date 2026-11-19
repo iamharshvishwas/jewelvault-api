@@ -3,7 +3,7 @@
 // reads it back as the table holds it and writes the audit row of mechanism (b) of L1 (a no-op in mode triggers, whose triggers write their own), and returns the row for the answer.
 //
 // The caller holds the customer lock, has taken its ONE clock reading (`at`: every stamp of the call, C4) and has decided everything else; the CHECK of D13 (`chk_receipts_kind`) stands behind the
-// columns. A money receipt: kind 'money', a mode of the five, amount above 0, no grams, no silver rate. `cashOverrideReason` is the owner's reason for cash over the limit (Z1), stored only when the
+// columns. A money receipt: kind 'money', a mode of the five, amount above 0, no grams, no silver rate. `cashOverrideReason` is the reason a holder of `cash_over_limit` gives for cash over the limit (Z1), stored only when the
 // override was needed.
 import { type AuditedRow, auditChange } from '../db/audit.js';
 import { newId } from '../db/ids.js';

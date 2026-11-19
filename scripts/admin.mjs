@@ -6,7 +6,7 @@
 //   reset             asks for the e-mail; a new temporary password, and every session of that user ends.
 //   role              asks for the e-mail and the new role.
 //   deactivate        asks for the e-mail; the user reads nothing from then on.
-//   activate          asks for the e-mail. A login that is the Super Admin is refused while another Super Admin is active.
+//   activate          asks for the e-mail. Refused when the login's role is switched off (give it an active role first), and, for a login that is the Super Admin, while another Super Admin is active.
 //   list              prints the users (the Super Admin is marked).
 //   clear-counters    clears the login counters, so that a shop a stranger has locked out can sign in at once (A13).
 //   record-pull       asks for the backup file and its SHA-256 and records that Harsh pulled it (O54). The pull tool (scripts/restore-cli.mjs) hands over what it already knows as
