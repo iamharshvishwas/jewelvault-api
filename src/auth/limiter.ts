@@ -1,6 +1,6 @@
 // A13: the one in-memory limiter. Every throttle row of A13 that is not kept in the database is counted here: the admin door (API09), the change of password and every call that has no row of its own
-// (API08), the photo upload and the photo read (API17), the job tick (API33). The login rows are the ones that live in the database (sys_login_attempts, D24) and so survive a restart; everything
-// here starts from zero when the process starts, and nothing is written anywhere ("that is accepted", A13).
+// (API08), the photo upload and the photo read (API17), the job tick (API33), and the Super Admin's password check on every write of People & Roles (access plan R9). The login rows are the ones that
+// live in the database (sys_login_attempts, D24) and so survive a restart; everything here starts from zero when the process starts, and nothing is written anywhere ("that is accepted", A13).
 //
 // A FIXED WINDOW for each key, the way @fastify/rate-limit counts (NODE-DESIGN 2.5): the window begins at the first call and ends `windowMs` later; `limit` calls fit in it, the next is refused
 // with the seconds left, and the call after the window starts a new one. A refused call is not counted and does not move the end of the window, so a flood cannot keep a key blocked longer
@@ -33,6 +33,10 @@ export const THROTTLES = Object.freeze({
   adminWrongInARow: 2,
   /** ... the address is paused this long (API09). */
   adminPauseMs: 15 * MINUTE,
+  /** Super Admin writes (access plan R9, DESIGN 6.6 rule 6): after this many wrong passwords in a row ... */
+  superWrongInARow: 5,
+  /** ... that Super Admin is paused this long: each write answers 429 with the seconds left, even with the right password, until the pause is over (src/super/password.ts). */
+  superPauseMs: 15 * MINUTE,
   /** Admin door, an address that cannot be trusted: no pause, but at most 5 wrong tokens an hour for the whole API (API09). */
   adminWrongUntrusted: Object.freeze({ limit: 5, windowMs: HOUR }),
   /** Job tick: 6 wrong tokens a minute for each address ... (API33; RV1-10: a right token is counted nowhere) */

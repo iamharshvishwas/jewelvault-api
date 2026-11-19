@@ -147,11 +147,13 @@ describe('T-D24 (API09 clause) limiterOf(app): one limiter for an application, o
 });
 
 describe('T-D24 (API09 clause) the rows of A13 that live in memory are written down once', () => {
-  it('holds the figures of A13: admin door, job tick, change-password, photo upload, photo read and everything else', () => {
+  it('holds the figures of A13: admin door, the Super Admin\'s password (R9), job tick, change-password, photo upload, photo read and everything else', () => {
     expect(THROTTLES).toEqual({
       adminCalls: { limit: 10, windowMs: MINUTE },
       adminWrongInARow: 2,
       adminPauseMs: 15 * MINUTE,
+      superWrongInARow: 5,
+      superPauseMs: 15 * MINUTE,
       adminWrongUntrusted: { limit: 5, windowMs: HOUR },
       jobPerAddress: { limit: 6, windowMs: MINUTE },
       jobTotal: { limit: 20, windowMs: MINUTE },
