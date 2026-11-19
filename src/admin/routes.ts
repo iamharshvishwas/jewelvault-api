@@ -6,7 +6,7 @@
 //   POST /admin/v1/users/:id/role               {role}                      change the role to the key of any ACTIVE role (with the Super Admin's `/v1/super/people/:id/role`, the only way a role changes)
 //   POST /admin/v1/users/:id/deactivate                                     not active: reads nothing; every session ended
 //   POST /admin/v1/users/:id/activate                                       (refused for a login whose role is switched off, and for one with the Super Admin flag while another Super Admin is active, R13)
-//   POST /admin/v1/super-admin                  {email, full_name}          make THE Super Admin (R14): a new login (role owner, the flag, a temporary password shown once), or the login that has the e-mail, promoted
+//   POST /admin/v1/super-admin                  {email, full_name}          make THE Super Admin (R14): a new login (role owner, the flag, a temporary password shown once), or the login that has the e-mail, promoted (the event names its previous role: `from`)
 //   POST /admin/v1/login-counters/clear                                     n = 0 and the window to now on every counter except the summary row (A13, D24)
 //   POST /admin/v1/backup-pulls                 {file, sha256}              settings.last_pulled: Harsh pulled that backup file (O54)
 //
@@ -124,9 +124,19 @@ export async function assertEmailFree(tx: Tx, email: string, own: string | null)
  * So every such call takes the ONE lock that is always there: the Owner role's row, which exists from the migration and is never written (the Owner role cannot be changed, DESIGN 6.6 rule 1). The calls queue on it, and
  * each reads the flagged logins (a plain read) after the one before it has committed. THE ORDER OF LOCKS in the door is the login's own row first (lockUser, or the lookup of make-super-admin), then the role rows (add-user and role:
  * the role that is given; activate: the login's own role), then this one, the Owner's row, last: no call takes the Owner's row and then another role's row, so calls queue on a lock but never wait on each other in a circle.
+ * The one exception is the make-super-admin call that finds no login with its e-mail at its first look: it takes the Owner's row and then looks again (see the route), so that a call for the same new e-mail that overlapped
+ * it is answered as a promotion. A circle of waits that could make (a third call that holds that login's row and waits for the Owner's row) is ended by the database, and withTx runs the function again.
  */
 async function assertNoOtherSuperAdmin(tx: Tx, except: string | null): Promise<void> {
-  await getRole(tx, OWNER_KEY, { forUpdate: true });
+  await lockSuperAdminGuard(tx);
+  await refuseOtherSuperAdmin(tx, except);
+}
+
+/** The one lock of the guard (see assertNoOtherSuperAdmin): the Owner role's row, held until the transaction ends. Taking it again in the same transaction waits for nothing. */
+const lockSuperAdminGuard = (tx: Tx) => getRole(tx, OWNER_KEY, { forUpdate: true });
+
+/** The check of the guard, a plain read: only meaningful after lockSuperAdminGuard in the same transaction. */
+async function refuseOtherSuperAdmin(tx: Tx, except: string | null): Promise<void> {
   const active = await tx.rows<{ id: string; email: string }>('SELECT id, email FROM users WHERE is_super_admin = 1 AND active = 1 ORDER BY created_at, id');
   const other = active.find((u) => u.id !== except);
   if (other) throw new JvError('JV_NOT_ALLOWED', `Another Super Admin is active (${other.email}). Switch that login off first with deactivate.`);
@@ -270,12 +280,19 @@ export function registerAdminRoutes(app: FastifyInstance): void {
       const hash = await passwords.hash(temporary); // before the transaction, as in add-user; it is used only when the login does not exist yet
       const id = newId();
       const made = await withTx(txContextFor(db, request, ACTOR), async (tx) => {
-        const [existing] = await tx.rows<UserRow>(`SELECT ${USER_COLUMNS} FROM users WHERE email = ? FOR UPDATE`, [body.email]);
-        await assertNoOtherSuperAdmin(tx, existing?.id ?? null);
+        const byEmail = `SELECT ${USER_COLUMNS} FROM users WHERE email = ? FOR UPDATE`;
+        let existing: UserRow | undefined = (await tx.rows<UserRow>(byEmail, [body.email]))[0];
+        await lockSuperAdminGuard(tx);
+        // At READ COMMITTED the read above locks nothing when there is no such login yet, so a call for the same NEW e-mail that overlapped this one has made it (and committed: it held the guard's lock) while this call waited
+        // for that lock. Look again, now that this call is alone, with the database's own comparison: the login is then THE login of this call (promoted as a retry is, not refused as "another" Super Admin that is its own).
+        // The lock order of the door (login row, then the Owner row) is reversed here, for the one call that finds the login only now; if a third call has the login's row and waits for the Owner row the database ends one of
+        // the two with a deadlock and withTx runs the function again, which then finds the login at its first read.
+        if (!existing) existing = (await tx.rows<UserRow>(byEmail, [body.email]))[0];
+        await refuseOtherSuperAdmin(tx, existing?.id ?? null);
         if (existing) {
-          // PROMOTE: the login keeps its password, its name and its other flags (a login that is not active stays so); only the role and the flag change. The same e-mail again changes nothing and is accepted.
+          // PROMOTE: the login keeps its password, its name and its other flags (a login that is not active stays so); only the role and the flag change. The same e-mail again changes nothing and is accepted. The event names the role it had (`from`).
           await tx.run('UPDATE users SET role = ?, is_super_admin = 1 WHERE id = ?', [OWNER_KEY, existing.id]);
-          await writeEvent(tx, { table: 'users', rowId: existing.id, facts: { event: 'admin_make_super_admin', created: false } });
+          await writeEvent(tx, { table: 'users', rowId: existing.id, facts: { event: 'admin_make_super_admin', created: false, from: existing.role } });
           return { created: false, user: { ...existing, role: OWNER_KEY, is_super_admin: 1 } };
         }
         await tx.run('INSERT INTO users (id, email, full_name, role, active, password_hash, must_change_password, is_super_admin) VALUES (?, ?, ?, ?, 1, ?, 1, 1)', [id, body.email, body.full_name, OWNER_KEY, hash]);

@@ -418,8 +418,10 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
     const made = await run(['add-user'], { answers: { email: e, name: 'Promote Me', role: 'biller' } });
     const temporary = passwordIn(made.out);
     const before = (await userRow(e))?.password_hash;
-    const r = await run(['make-super-admin'], { answers: { email: e.toUpperCase(), name: 'Someone Else' } });
+    const r = await run(['make-super-admin'], { answers: { email: e.toUpperCase(), confirm: ` ${e} ` } });
     expect(r.code, r.err).toBe(0);
+    expect(r.asked, 'the name is used only for a new login, so it is not asked').toEqual(['token', 'email', 'confirm']);
+    expect(r.out).toContain(`${e} already has a login: Promote Me, role biller, active.`);
     expect(r.out.match(PASSWORD_SHAPE), 'no temporary password is printed for a login that already has one').toBeNull();
     expect(r.out).toMatch(/Super Admin/);
     expect(r.out).toMatch(/password is (kept|unchanged)/i);
@@ -433,11 +435,101 @@ describe('T-E09 (HTTP side) `npm run admin -- add-user|reset|role|deactivate|act
     const asleep = email('cli-asleep');
     await run(['add-user'], { answers: { email: asleep, name: 'Asleep', role: 'staff' } });
     await run(['deactivate'], { answers: { email: asleep } });
-    const off = await run(['make-super-admin'], { answers: { email: asleep, name: 'Asleep' } });
+    const off = await run(['make-super-admin'], { answers: { email: asleep, confirm: asleep } });
     expect(off.code, off.err).toBe(0);
+    expect(off.out).toContain(`${asleep} already has a login: Asleep, role staff, NOT ACTIVE.`);
     expect(off.out).toMatch(/not active/i);
     expect(off.out).toMatch(/activate/);
     expect(await userRow(asleep)).toMatchObject({ role: 'owner', is_super_admin: 1, active: 0 });
+  });
+
+  /** The calls a command makes to the door ("GET /admin/v1/users"), recorded, through a fetch that adds an address of its own to each (the door counts ten a minute for each address). */
+  const recordingDoor = () => {
+    const calls: string[] = [];
+    const doorFetch = (url: string | URL | Request, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${new URL(String(url)).pathname}`);
+      return fetch(url, { ...init, headers: { ...(init?.headers as Record<string, string>), 'x-real-ip': ipFor() } });
+    };
+    return { calls, fetch: doorFetch as typeof fetch };
+  };
+  const loginCount = async () => Number((await world.sql.query<any[]>('SELECT COUNT(*) AS n FROM users'))[0][0].n);
+  const noSuperAdmin = () => world.sql.query('UPDATE users SET active = 0 WHERE is_super_admin = 1');
+
+  it('make-super-admin asks before it promotes a login that already exists: it prints the person and goes on only when the same e-mail is typed again; anything else stops it, exit 1, and nothing is sent (final review, Ruling Z)', async () => {
+    await noSuperAdmin();
+    const e = email('cli-ask');
+    await run(['add-user'], { answers: { email: e, name: 'Ask Me First', role: 'biller' } });
+    const before = await userRow(e);
+    const loginsBefore = await loginCount();
+
+    for (const typed of ['yes', '', 'someone-else@example.test', `${e}.x`]) {
+      const spy = recordingDoor();
+      const r = await run(['make-super-admin'], { answers: { email: e, confirm: typed, name: 'Never Asked' }, fetch: spy.fetch });
+      const what = JSON.stringify(typed);
+      expect(r.code, what).toBe(1);
+      expect(r.asked, what).toEqual(['token', 'email', 'confirm']);
+      expect(r.err, what).toMatch(/^Stopped: .*nothing was sent/);
+      expect(r.out, `${what}: the person was shown`).toContain(`${e} already has a login: Ask Me First, role biller, active.`);
+      expect(r.out, what).toContain('No command takes the Super Admin flag away again');
+      expect(spy.calls, `${what}: the list was read and nothing else was sent`).toEqual(['GET /admin/v1/users']);
+      expect(r.out + r.err, what).not.toContain(TOKEN);
+    }
+    expect(await userRow(e), 'the login is as it was').toEqual(before);
+    expect(await loginCount()).toBe(loginsBefore);
+
+    // the same e-mail typed again goes on, whatever its letter case and spaces
+    const spy = recordingDoor();
+    const done = await run(['make-super-admin'], { answers: { email: e, confirm: `  ${e.toUpperCase()}  ` }, fetch: spy.fetch });
+    expect(done.code, done.err).toBe(0);
+    expect(spy.calls).toEqual(['GET /admin/v1/users', 'POST /admin/v1/super-admin']);
+    expect(await userRow(e)).toMatchObject({ role: 'owner', is_super_admin: 1, full_name: 'Ask Me First' });
+  });
+
+  it('make-super-admin for a NEW e-mail asks nothing more: the token, the e-mail and the name; the list and the promotion are the only two calls, and the person is not shown (final review, Ruling Z)', async () => {
+    await noSuperAdmin();
+    const e = email('cli-new');
+    const spy = recordingDoor();
+    const r = await run(['make-super-admin'], { answers: { email: e, name: 'Brand New' }, fetch: spy.fetch });
+    expect(r.code, r.err).toBe(0);
+    expect(r.asked).toEqual(['token', 'email', 'name']);
+    expect(spy.calls).toEqual(['GET /admin/v1/users', 'POST /admin/v1/super-admin']);
+    expect(r.out.match(PASSWORD_SHAPE)).toHaveLength(1);
+    expect(r.out).not.toContain('already has a login');
+    expect(r.out, 'no hint for a login that was just made: its first answer is in hand').not.toContain('npm run admin -- reset');
+  });
+
+  it('a spelling that the database counts as the same e-mail (an accent, a capital) is asked about too: the command never skips the question where the door would promote, and the e-mail to type again is the one it shows', async () => {
+    await noSuperAdmin();
+    const e = email('cli-accent');
+    await run(['add-user'], { answers: { email: e, name: 'Accent Case', role: 'staff' } });
+    const typed = e.replace('@example.test', '@exampl\u00e9.test'); // the domain written with an accented e: utf8mb4_unicode_ci counts it as the plain e
+    const spy = recordingDoor();
+    const stopped = await run(['make-super-admin'], { answers: { email: typed, confirm: typed }, fetch: spy.fetch });
+    expect(stopped.code, 'the e-mail typed again must be the one that was shown').toBe(1);
+    expect(stopped.asked).toEqual(['token', 'email', 'confirm']);
+    expect(stopped.out).toContain(`${e} already has a login: Accent Case, role staff, active.`);
+    expect(spy.calls).toEqual(['GET /admin/v1/users']);
+    expect(await userRow(e)).toMatchObject({ role: 'staff', is_super_admin: 0 });
+    const done = await run(['make-super-admin'], { answers: { email: typed, confirm: e } });
+    expect(done.code, done.err).toBe(0);
+    expect(await userRow(e)).toMatchObject({ role: 'owner', is_super_admin: 1, full_name: 'Accent Case' });
+  });
+
+  it('a lost first answer: the same e-mail again is the promote path (the person is shown, no password is printed), and while the first password was never changed the command says what to do; after it was changed it says nothing (final review, Ruling Z)', async () => {
+    await noSuperAdmin();
+    const e = email('cli-lost');
+    const first = await run(['make-super-admin'], { answers: { email: e, name: 'Lost Answer' } });
+    passwordIn(first.out); // the answer that "was lost"
+    const retry = await run(['make-super-admin'], { answers: { email: e, confirm: e } });
+    expect(retry.code, retry.err).toBe(0);
+    expect(retry.out.match(PASSWORD_SHAPE), 'a promotion prints no password').toBeNull();
+    expect(retry.out).toContain(`${e} already has a login: Lost Answer, role owner (Super Admin), active.`);
+    expect(retry.out.trimEnd().split('\n').at(-1)).toBe("If you never saw this person's first password, use `npm run admin -- reset`.");
+    // the person changed the password: the line is not printed
+    await world.sql.query('UPDATE users SET must_change_password = 0 WHERE email = ?', [e]);
+    const later = await run(['make-super-admin'], { answers: { email: e, confirm: e } });
+    expect(later.code, later.err).toBe(0);
+    expect(later.out).not.toContain('first password');
   });
 
   it('make-super-admin and activate print the door\'s sentence when another Super Admin is active, exit 1 and change nothing', async () => {

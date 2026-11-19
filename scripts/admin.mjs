@@ -11,8 +11,10 @@
 //   clear-counters    clears the login counters, so that a shop a stranger has locked out can sign in at once (A13).
 //   record-pull       asks for the backup file and its SHA-256 and records that Harsh pulled it (O54). The pull tool (scripts/restore-cli.mjs) hands over what it already knows as
 //                     `--file F --sha256 H` (and `--at T --by N`, which the door does not need: it stamps the time and the actor itself); what is not given is asked for.
-//   make-super-admin  asks for the e-mail and the name: makes THE Super Admin (role owner, the flag that opens the People & Roles screen), or promotes the login that already has that e-mail (it keeps its
-//                     password; the name is used only for a new login). A new login gets a temporary password, printed ONCE. Refused while another Super Admin is active: switch that one off first (deactivate).
+//   make-super-admin  asks for the e-mail, then makes THE Super Admin (role owner, the flag that opens the People & Roles screen). A NEW e-mail asks for the name and makes a new login with a temporary password,
+//                     printed ONCE. An e-mail that already has a login is PROMOTED, and nothing can undo that (no command takes the flag away), so the command first reads `list`, prints the person (name, role,
+//                     whether active) and asks for the e-mail again: anything else stops it and nothing is sent. A promoted login keeps its password and its name, and when it never changed its first password the
+//                     command says to use `reset` if the first answer was lost. Refused while another Super Admin is active: switch that one off first (deactivate).
 //
 // A ROLE is the key of an active role: owner, biller, staff, or a role the Super Admin made. Which keys exist is the door's to say, so this file keeps no list of them: it sends what was typed (trimmed, in lower
 // case, as keys are) and prints the door's sentence when the door refuses it.
@@ -50,7 +52,7 @@ const USAGE = `Usage: npm run admin -- <command>
   list              show the users
   clear-counters    clear the login counters
   record-pull       record that you pulled a backup  (optional: --file F --sha256 H)
-  make-super-admin  make the Super Admin (or promote a login); a new login gets a temporary password, printed once
+  make-super-admin  make the Super Admin (or promote a login, after you type its e-mail again); a new login gets a temporary password, printed once
 `;
 
 // ------------------------------------------------------------------ talking to the door
@@ -122,7 +124,14 @@ function makeApi(base, token, fetchFn) {
 // ------------------------------------------------------------------ what each command asks and prints
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-const askEmail = async (io) => (await io.ask('email')).trim().toLowerCase();
+const askEmail = async (io, key = 'email') => (await io.ask(key)).trim().toLowerCase();
+
+/**
+ * Whether two e-mails are the same login. The database counts letter case, accents, trailing spaces and invisible characters as no difference (the collation of `users.email`), and make-super-admin must not promote a
+ * login that this check did not show to the operator, so it compares as the database does, only more widely: a doubt makes the command ask, never skip. The door has the last word.
+ */
+const fold = (email) => email.normalize('NFKD').replace(/[\p{M}\p{Cf}]/gu, '').trim().toLowerCase();
+const sameLogin = (a, b) => fold(a) === fold(b);
 
 /** The key of a role as typed: trimmed and in lower case, as keys are. Whether it is the key of an active role is for the door to say. */
 const askRole = (text) => text.trim().toLowerCase();
@@ -184,12 +193,23 @@ const HANDLERS = {
 
   async 'make-super-admin'(call, io) {
     const email = await askEmail(io);
-    const fullName = (await io.ask('name')).trim();
-    const done = await call('POST', '/admin/v1/super-admin', { email, full_name: fullName });
+    const { users } = await call('GET', '/admin/v1/users');
+    const found = users.find((u) => sameLogin(u.email, email));
+    if (found) {
+      // a promotion cannot be undone from here (no command takes the flag away): show who it is, and ask for the e-mail again
+      io.out(
+        `${found.email} already has a login: ${found.full_name}, role ${found.role}${found.is_super_admin ? ' (Super Admin)' : ''}, ${found.active ? 'active' : 'NOT ACTIVE'}.\n` +
+          'Making them the Super Admin changes their role to owner and gives them every right. Their password and name stay as they are. No command takes the Super Admin flag away again; deactivate only switches the login off.\n',
+      );
+      if ((await askEmail(io, 'confirm')) !== found.email.trim().toLowerCase()) throw new CliError('Stopped: that was not the same e-mail, so nothing was sent and the login is as it was.');
+    }
+    const fullName = found ? found.full_name : (await io.ask('name')).trim(); // the name is used only for a new login
+    const done = await call('POST', '/admin/v1/super-admin', { email: found ? found.email : email, full_name: fullName });
     if (done.created) return [`Made the Super Admin ${done.user.email} (role owner).`, ...temporaryLines(done.temporary_password)];
     return [
       `${done.user.email} is the Super Admin now (role owner). Their password is unchanged, and so is their name.`,
       ...(done.user.active ? [] : ['They are NOT active, so they cannot sign in yet. Switch them on with: npm run admin -- activate']),
+      ...(done.user.must_change_password ? ["If you never saw this person's first password, use `npm run admin -- reset`."] : []),
     ];
   },
 
@@ -204,7 +224,7 @@ const HANDLERS = {
 // ------------------------------------------------------------------ the command
 
 /**
- * Runs one command. `io` is { env, ask(key), askSecret(key), out(text), err(text), fetch }: the keys of the questions are token, api, email, name, role, file and sha256.
+ * Runs one command. `io` is { env, ask(key), askSecret(key), out(text), err(text), fetch }: the keys of the questions are token, api, email, name, role, file, sha256 and confirm.
  * Returns the exit code (0 when it worked). Nothing is thrown for a refusal: it is printed in words, without the token.
  */
 export async function runAdmin(argv, io) {
@@ -236,6 +256,7 @@ const QUESTIONS = {
   email: 'E-mail of the user: ',
   name: 'Full name: ',
   role: 'Role (owner, biller, staff, or the key of another active role): ',
+  confirm: 'Type that e-mail again to make them the Super Admin (anything else stops here): ',
   file: 'Backup file you pulled (for example daily/2026-10-16.enc): ',
   sha256: 'SHA-256 of that file (64 characters): ',
 };

@@ -663,7 +663,7 @@ describe('list shows is_super_admin; every call writes its event and no password
     expect(list.body).not.toMatch(/\$argon2|\$scrypt|password_hash|"password"/i);
   });
 
-  it('make-super-admin writes ONE event row, role admin-cli, with the facts {event, created} and nothing else; the rows the triggers write hold no password or hash; the log holds none either', async () => {
+  it('make-super-admin writes ONE event row, role admin-cli, with the facts {event, created} and, for a login that already existed, `from` (the role it had), and nothing else; the rows the triggers write hold no password or hash; the log holds none either', async () => {
     await noSuperAdmin();
     const email = newEmail('audited');
     const created = await call('POST', '/admin/v1/super-admin', { email, full_name: 'Audited Super' });
@@ -676,18 +676,18 @@ describe('list shows is_super_admin; every call writes its event and no password
     expect([created.statusCode, again.statusCode, promoted.statusCode]).toEqual([201, 200, 200]);
 
     const secrets = [TOKEN, HASH, temporary, biller.password, String((await userRow(id)).password_hash), String((await userRow(biller.id)).password_hash)];
-    const calls: [string, LightMyRequestResponse, string, boolean, number][] = [
-      // name, answer, the row of the event, the fact `created`, how many rows the audit triggers wrote for the change
-      ['a created login', created, id, true, 1],
-      ['the same e-mail again', again, id, false, 0],
-      ['a promoted login', promoted, biller.id, false, 1],
+    const calls: [string, LightMyRequestResponse, string, boolean, string | undefined, number][] = [
+      // name, answer, the row of the event, the fact `created`, the fact `from` (the role the login had; none for a new login), how many rows the audit triggers wrote for the change
+      ['a created login', created, id, true, undefined, 1],
+      ['the same e-mail again', again, id, false, 'owner', 0],
+      ['a promoted login', promoted, biller.id, false, 'biller', 1],
     ];
-    for (const [name, res, rowId, createdFact, triggerRows] of calls) {
+    for (const [name, res, rowId, createdFact, fromFact, triggerRows] of calls) {
       const rows = await auditOf(requestIdOf(res));
       const events = rows.filter((r) => r.action === 'event');
       expect(events, name).toHaveLength(1);
       expect(events[0], name).toMatchObject({ actor: null, actor_role: 'admin-cli', table_name: 'users', row_id: rowId, request_id: requestIdOf(res) });
-      expect(asObject(events[0].new_row), name).toEqual({ event: 'admin_make_super_admin', created: createdFact });
+      expect(asObject(events[0].new_row), name).toEqual({ event: 'admin_make_super_admin', created: createdFact, ...(fromFact === undefined ? {} : { from: fromFact }) });
       expect(rows.length - 1, `${name}: the other rows are the triggers' rows for the change`).toBe(triggerRows);
       for (const r of rows) expect(r.actor_role, name).toBe('admin-cli');
       const text = JSON.stringify(rows);
@@ -700,6 +700,84 @@ describe('list shows is_super_admin; every call writes its event and no password
     expect(asObject(update.new_row)).toMatchObject({ role: 'owner', is_super_admin: 1 });
     const log = world.logs.text();
     for (const s of secrets) expect(log).not.toContain(s);
+  });
+
+  it('the event of a promotion names the role the login had (`from`), whatever it was: a built-in role, a role the Super Admin made, a login that is not active; a new login has no `from`; never a password or a hash (final review, Ruling Z)', async () => {
+    await noSuperAdmin();
+    const custom = await world.addRole({ name: `Promoted Role ${randomUUID().slice(0, 8)}`, ticks: ['customer_view'] });
+    const cases: [string, string][] = [
+      ['staff', 'a built-in role'],
+      [custom.key, 'a role the Super Admin made'],
+    ];
+    for (const [role, what] of cases) {
+      const made = await addLogin(role);
+      const before = await countOf('audit_log');
+      const res = await call('POST', '/admin/v1/super-admin', { email: made.email, full_name: 'Ignored' });
+      expect(res.statusCode, `${what}: ${res.body}`).toBe(200);
+      const rows = await auditOf(requestIdOf(res));
+      const events = rows.filter((r) => r.action === 'event');
+      expect(events, what).toHaveLength(1);
+      expect(asObject(events[0].new_row), what).toEqual({ event: 'admin_make_super_admin', created: false, from: role });
+      expect(rows, `${what}: the event and the trigger row of the change, nothing else`).toHaveLength(2);
+      expect(await countOf('audit_log') - before, what).toBe(2);
+      expect(JSON.stringify(rows), what).not.toMatch(/\$argon2|\$scrypt|password_hash|temporary/);
+      await noSuperAdmin();
+    }
+    // a login that is not active keeps being so, and its event still names the role it had
+    const asleep = await addLogin('biller');
+    expect((await call('POST', `/admin/v1/users/${asleep.id}/deactivate`)).statusCode).toBe(200);
+    const off = await call('POST', '/admin/v1/super-admin', { email: asleep.email, full_name: 'Ignored' });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(asObject((await eventsOf(requestIdOf(off)))[0].new_row)).toEqual({ event: 'admin_make_super_admin', created: false, from: 'biller' });
+    // a new login has no `from`
+    await noSuperAdmin();
+    const fresh = await call('POST', '/admin/v1/super-admin', { email: newEmail('nofrom'), full_name: 'No From' });
+    expect(fresh.statusCode, fresh.body).toBe(201);
+    expect(asObject((await eventsOf(requestIdOf(fresh)))[0].new_row)).toEqual({ event: 'admin_make_super_admin', created: true });
+  });
+
+  it('a call that found no login for its e-mail and is then overtaken by another call for the same e-mail (which makes the login and commits while it waits for the guard) answers as a promotion, 200, with the role the login has and no temporary password, instead of being refused with its own e-mail (Task 10 minor, final review)', async () => {
+    for (const [what, spelling] of [
+      ['the same e-mail', (e: string) => e],
+      ['the same e-mail in capitals', (e: string) => e.toUpperCase()],
+      ['an accent the database counts as no difference', (e: string) => e.replace('@example.test', '@exampl\u00e9.test')],
+    ] as const) {
+      await noSuperAdmin();
+      const email = newEmail('overtaken');
+      const usersBefore = await countOf('users');
+      let other: LightMyRequestResponse | undefined;
+      // The overtaken call has read "no such login" and is about to ask for the guard's lock (the Owner role's row): the other call runs to its end at that moment, whatever the clock says, so the two overlap exactly as they do
+      // when they are made together and the second waits for the lock of the first.
+      world.spy.intercept = async (sent) => {
+        if (other !== undefined || !/FROM roles WHERE role_key = \? FOR UPDATE/.test(sent.sql)) return undefined;
+        world.spy.intercept = null;
+        other = await call('POST', '/admin/v1/super-admin', { email, full_name: 'The Other One' });
+        return undefined;
+      };
+      let overtaken: LightMyRequestResponse;
+      try {
+        overtaken = await call('POST', '/admin/v1/super-admin', { email: spelling(email), full_name: 'Overtaken' });
+      } finally {
+        world.spy.intercept = null;
+      }
+      expect(other, `${what}: the other call ran while the first waited for the guard`).toBeDefined();
+      const made = other as LightMyRequestResponse;
+      expect([made.statusCode, overtaken.statusCode], `${what}: ${made.body} ${overtaken.body}`).toEqual([201, 200]);
+      expect(Object.keys(overtaken.json()).sort(), `${what}: it gets the promote answer: no temporary password`).toEqual(['created', 'user']);
+      expect(overtaken.json().created).toBe(false);
+      expect(overtaken.json().user, what).toEqual({ id: made.json().user.id, email, full_name: 'The Other One', role: 'owner', active: true, must_change_password: true, is_super_admin: true });
+      expect(await countOf('users'), `${what}: one login was made`).toBe(usersBefore + 1);
+      expect(await activeSuperAdmins(), what).toEqual([email]);
+
+      // each call left its one event: the maker's {created: true}, the overtaken one's {created: false, from: owner}; the only row a trigger wrote is the insert of the login (promoting a Super Admin changes nothing)
+      const rows = [...(await auditOf(requestIdOf(made))), ...(await auditOf(requestIdOf(overtaken)))];
+      expect(rows.filter((r) => r.action === 'event').map((r) => asObject(r.new_row)), what).toEqual([
+        { event: 'admin_make_super_admin', created: true },
+        { event: 'admin_make_super_admin', created: false, from: 'owner' },
+      ]);
+      expect(rows.filter((r) => r.action !== 'event'), `${what}: one trigger row, for the insert`).toHaveLength(1);
+      expect(JSON.stringify(rows), what).not.toMatch(/\$argon2|\$scrypt|password_hash|temporary/);
+    }
   });
 
   it('a refused make-super-admin or activate leaves no event row', async () => {
