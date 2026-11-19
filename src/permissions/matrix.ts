@@ -6,7 +6,8 @@
 //
 // WHAT IS HERE
 //   MATRIX          one row for each thing a caller can do: each read resource (GET /v1/sync/<resource>) and the named read calls of C3, each direct edit (A5), each service function
-//                   X1 to X12 with its route (section 10), the Order Book of FB-E1 (its read, X13 create_order, its edit and its photo upload), the photo calls (P2, P3), the download record (B3) and the four session calls (U5, U8, U11). The row carries the address
+//                   X1 to X12 with its route (section 10), the Order Book of FB-E1 (its read, X13 create_order, its edit and its photo upload), the photo calls (P2, P3), the download record (B3), the four session calls (U5, U8, U11) and
+//                   the twelve rows of the Super Admin's own People & Roles API under /v1/super (kind `super`, access `superAdmin`: no tick opens them, DESIGN.md 6.3 and 6.6). The row carries the address
 //                   (method and path) too, so the route is registered by its action alone and the generated test (tests/matrix.generated.test.ts) knows what to call.
 //   READ_COLUMNS    the field allow-list of every read resource: a read names its columns and never uses SELECT * (A4). Whoever may call the resource's read row reads the list (R7).
 //   WRITE_COLUMNS   the fields of every direct edit, per tick (A5, R7): a field is allowed when a tick the person holds lists it; a field outside every list they hold is JV_FORBIDDEN, an
@@ -113,6 +114,8 @@ const read = (path: string, access: Access, reads: readonly ReadResource[], spec
 const edit = (method: HttpMethod, path: string, access: Access, e: EditSpec, spec: string) => ({ kind: 'edit', method, path, access, mustChange: false, spec, edit: e }) as const;
 const fn = (path: string, access: Access, spec: string) => ({ kind: 'fn', method: 'POST', path, access, mustChange: false, spec }) as const;
 const session = (method: HttpMethod, path: string, mustChange: boolean, spec: string) => ({ kind: 'session', method, path, access: OPEN, mustChange, spec }) as const;
+/** A row of the Super Admin's own API (R8): `{ superAdmin: true }` is the whole access, so no tick and no role key opens it; a person who must still change the password may not call it. */
+const superRow = (method: HttpMethod, path: string, spec: string) => ({ kind: 'super', method, path, access: { superAdmin: true }, mustChange: false, spec }) as const;
 
 const ROWS = {
   // ---- reads: GET /v1/sync/<resource> (C3), kebab-case in the address, the table's name in READ_COLUMNS
@@ -183,6 +186,21 @@ const ROWS = {
   'session:logout': session('POST', '/v1/auth/logout', true, 'U8, U11'),
   'session:change-password': session('POST', '/v1/auth/change-password', true, 'U11'),
   'session:activity': session('POST', '/v1/auth/activity', false, 'U4; U11 keeps it out for a user who must still change the password'),
+
+  // ---- the Super Admin's own API, People & Roles (access plan Task 12, DESIGN.md 6.3). Only isSuperAdmin passes (R8): the Owner does not, and no tick opens a row of it (6.6 guardrail 5). A caller with no session
+  //      gets 401 and everyone else 403 JV_FORBIDDEN (P5, tests/api/super-escalation.test.ts). The three reads have their routes (src/super/routes.ts); the nine writes get theirs in Tasks 13 (roles) and 14 (people).
+  'super:ticks': superRow('GET', '/v1/super/ticks', 'DESIGN 6.3: the catalogue of the 32 ticks (groups, words, help, sensitive, needs) the roles screen draws'),
+  'super:people.list': superRow('GET', '/v1/super/people', 'DESIGN 6.3: every login with its role name and the Super Admin flag, never a hash'),
+  'super:people.add': superRow('POST', '/v1/super/people', 'DESIGN 6.3 (Task 14): add a person with a role and a temporary password'),
+  'super:people.edit': superRow('PATCH', '/v1/super/people/:id', 'DESIGN 6.3 (Task 14): edit a person\'s name or e-mail'),
+  'super:people.role': superRow('POST', '/v1/super/people/:id/role', 'DESIGN 6.3 (Task 14): change a person\'s role'),
+  'super:people.active': superRow('POST', '/v1/super/people/:id/active', 'DESIGN 6.3 (Task 14): switch a person off or on'),
+  'super:people.reset': superRow('POST', '/v1/super/people/:id/reset-password', 'DESIGN 6.3 (Task 14): reset a person\'s password to a new temporary one'),
+  'super:roles.list': superRow('GET', '/v1/super/roles', 'DESIGN 6.3: every role with its ticks and how many active people hold it'),
+  'super:roles.create': superRow('POST', '/v1/super/roles', 'DESIGN 6.3 (Task 13): create a role as a copy of another'),
+  'super:roles.edit': superRow('PATCH', '/v1/super/roles/:key', 'DESIGN 6.3 (Task 13): edit a role\'s name or description'),
+  'super:roles.ticks': superRow('PUT', '/v1/super/roles/:key/ticks', 'DESIGN 6.3 (Task 13): set a role\'s ticks'),
+  'super:roles.active': superRow('POST', '/v1/super/roles/:key/active', 'DESIGN 6.3 (Task 13): switch a role off or on'),
 } as const satisfies Record<string, MatrixRow>;
 
 /** The name of a row. A route is registered by it (route.ts) and a service function checks it again at its start (assertMayCall). */

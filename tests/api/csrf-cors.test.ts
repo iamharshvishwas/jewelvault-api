@@ -408,21 +408,29 @@ describe('T-D23 CSRF runs before anything is read: a refused call touches no ses
 });
 
 describe('T-D23 no state change is reachable by GET', () => {
+  /**
+   * The three rows of the Super Admin's own API (kind `super`) that only read: the catalogue of ticks, the people and the roles (access plan Task 12). They are NAMED, so that a row of that API that writes
+   * (the other nine are POST, PUT and PATCH) can never be put on GET unnoticed: a GET row of kind `super` that is not one of these three is reported like any other GET that is not a read.
+   */
+  const SUPER_READS = ['super:ticks', 'super:people.list', 'super:roles.list'];
+
   /** The rows of a matrix that let a GET do something other than read, and the rows whose address a GET could reach. */
   function getsThatChangeState(matrix: Record<string, Pick<MatrixRow, 'kind' | 'method' | 'path'>>): string[] {
     const offenders: string[] = [];
     for (const [action, row] of Object.entries(matrix)) {
       if (row.method !== 'GET') continue;
-      if (row.kind !== 'read' && !(row.kind === 'session' && action === 'session:me')) offenders.push(`${action}: a GET row of kind ${row.kind}`);
+      if (row.kind !== 'read' && !(row.kind === 'session' && action === 'session:me') && !(row.kind === 'super' && SUPER_READS.includes(action))) offenders.push(`${action}: a GET row of kind ${row.kind}`);
     }
     return offenders;
   }
 
-  it('every GET row of the matrix is a read (or the session\'s "me"); everything else - functions, edits, photos, the download record, logout, change-password, activity - is POST, PUT or PATCH', () => {
+  it('every GET row of the matrix is a read (or the session\'s "me", or one of the three reads of the Super Admin); everything else - functions, edits, photos, the download record, logout, change-password, activity, the nine writes of People & Roles - is POST, PUT or PATCH', () => {
     expect(getsThatChangeState(MATRIX)).toEqual([]);
     for (const [action, row] of Object.entries(MATRIX)) {
-      if (row.kind !== 'read' && action !== 'session:me') expect(['POST', 'PUT', 'PATCH'], action).toContain(row.method);
+      if (row.kind !== 'read' && action !== 'session:me' && !SUPER_READS.includes(action)) expect(['POST', 'PUT', 'PATCH'], action).toContain(row.method);
     }
+    // the three named reads are rows of kind super and are GET; the other nine rows of that kind are not
+    expect(Object.entries(MATRIX).filter(([, row]) => row.kind === 'super' && row.method === 'GET').map(([action]) => action).sort()).toEqual([...SUPER_READS].sort());
     expect(Object.values(PUBLIC_ROUTES).filter((r) => r.method === 'GET').map((r) => r.path).sort()).toEqual(['/healthz', '/readyz', '/v1/photos/:photo_id/full', '/v1/photos/:photo_id/thumb']);
   });
 
@@ -431,6 +439,9 @@ describe('T-D23 no state change is reachable by GET', () => {
     expect(getsThatChangeState(doctored)).toEqual(['fn:create_bill: a GET row of kind fn']);
     const edit = { ...MATRIX, 'edit:skus.update': { ...MATRIX['edit:skus.update'], method: 'GET' as const } };
     expect(getsThatChangeState(edit)).toEqual(['edit:skus.update: a GET row of kind edit']);
+    // a write of the Super Admin's API put on GET is reported; the three named reads are not
+    const superWrite = { ...MATRIX, 'super:people.reset': { ...MATRIX['super:people.reset'], method: 'GET' as const } };
+    expect(getsThatChangeState(superWrite)).toEqual(['super:people.reset: a GET row of kind super']);
   });
 
   it('a GET to the address of a state-changing row is a 404, not the row (the address answers its own method only)', async () => {

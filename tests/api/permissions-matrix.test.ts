@@ -95,6 +95,20 @@ const ORACLE: Record<string, readonly [BuiltinRole[], string]> = {
   'edit:orders.update': [OB, 'PATCH /v1/orders/:id'],
   'fn:create_order': [OB, 'POST /v1/orders'],
   'photo:upload_order': [OB, 'PUT /v1/orders/:order_id/photos/:photo_id'],
+  // The access plan, Task 12 (DESIGN.md 6.3): the Super Admin's own API, People & Roles. NONE of the three built-in roles may call one of the twelve: the Owner holds every tick and is refused too, because the rows
+  // ask the Super Admin flag alone (R8). Who passes, and who is refused with what, is walked in tests/api/super-escalation.test.ts (P5).
+  'super:ticks': [[], 'GET /v1/super/ticks'],
+  'super:people.list': [[], 'GET /v1/super/people'],
+  'super:people.add': [[], 'POST /v1/super/people'],
+  'super:people.edit': [[], 'PATCH /v1/super/people/:id'],
+  'super:people.role': [[], 'POST /v1/super/people/:id/role'],
+  'super:people.active': [[], 'POST /v1/super/people/:id/active'],
+  'super:people.reset': [[], 'POST /v1/super/people/:id/reset-password'],
+  'super:roles.list': [[], 'GET /v1/super/roles'],
+  'super:roles.create': [[], 'POST /v1/super/roles'],
+  'super:roles.edit': [[], 'PATCH /v1/super/roles/:key'],
+  'super:roles.ticks': [[], 'PUT /v1/super/roles/:key/ticks'],
+  'super:roles.active': [[], 'POST /v1/super/roles/:key/active'],
 };
 
 describe('T-D02 the matrix file says what A4 and section 10 say', () => {
