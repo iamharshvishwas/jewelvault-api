@@ -1,5 +1,6 @@
 // A13: the one in-memory limiter. Every throttle row of A13 that is not kept in the database is counted here: the admin door (API09), the change of password and every call that has no row of its own
-// (API08), the photo upload and the photo read (API17), the job tick (API33), and the Super Admin's password check on every write of People & Roles (access plan R9). The login rows are the ones that
+// (API08), the photo upload and the photo read (API17), the job tick (API33), the Super Admin's password check on every write of People & Roles (access plan R9) and the two limits of a forgotten password (a
+// link asked for by e-mail: per e-mail and per address, src/auth/resetRoutes.ts). The login rows are the ones that
 // live in the database (sys_login_attempts, D24) and so survive a restart; everything here starts from zero when the process starts, and nothing is written anywhere ("that is accepted", A13).
 //
 // A FIXED WINDOW for each key, the way @fastify/rate-limit counts (NODE-DESIGN 2.5): the window begins at the first call and ends `windowMs` later; `limit` calls fit in it, the next is refused
@@ -62,6 +63,10 @@ export const THROTTLES = Object.freeze({
   photoReadUntrusted: Object.freeze({ limit: 120, windowMs: 1000 }),
   /** Everything else: 300 a minute for each user (API08). */
   everything: Object.freeze({ limit: 300, windowMs: MINUTE }),
+  /** Forgot password: 3 asks an hour for each e-mail (as typed, trimmed and in lower case), whether it has a login or not; over it the answer is the same and no link is made (src/auth/resetRoutes.ts) ... */
+  resetPerEmail: Object.freeze({ limit: 3, windowMs: HOUR }),
+  /** ... and 10 asks an hour for each address (an address that cannot be trusted is the one shared key `unknown`). */
+  resetPerAddress: Object.freeze({ limit: 10, windowMs: HOUR }),
 });
 
 /** The refusal of every throttle: 429 JV_RATE_LIMITED, and the whole seconds to wait in Retry-After (at least 1). */

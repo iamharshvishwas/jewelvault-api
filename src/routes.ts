@@ -6,6 +6,7 @@
 // and the error handling without the application's routes builds the app with `routes: false`.
 //
 //   API05  the session routes (me, logout, change-password, activity) and the login
+//   forgot password by e-mail: the two public routes forgot-password and reset-password (src/auth/resetRoutes.ts)
 //   API07  /readyz (below)
 //   API09  the admin door and the job routes
 //   API33  the hourly tick (POST /internal/jobs/tick)
@@ -16,6 +17,7 @@
 import type { FastifyInstance } from 'fastify';
 import { registerAdminRoutes } from './admin/routes.js';
 import { registerAuthRoutes } from './auth/loginRoutes.js';
+import { registerResetRoutes } from './auth/resetRoutes.js';
 import { registerDownloadRoutes } from './download/record.js';
 import { registerEditRoutes } from './edit/routes.js';
 import { registerJobRoutes } from './jobs/routes.js';
@@ -40,6 +42,7 @@ import { registerSyncRoutes } from './sync/routes.js';
 export function registerRoutes(app: FastifyInstance): void {
   // /healthz is registered by buildApp() itself, because the start-up gate (S11) names it.
   registerAuthRoutes(app);
+  registerResetRoutes(app); // forgot password by e-mail: ask for a link, set a new password with it (public, no session)
   registerSyncRoutes(app);
   registerReadRoutes(app); // API12: the ledger, the daily totals, the audit log, the health lists, the dashboard line
   registerAdminRoutes(app); // API09: the admin door, only while JV_ADMIN_TOKEN_HASH is set

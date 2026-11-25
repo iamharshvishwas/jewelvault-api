@@ -6,6 +6,7 @@ import { type Clock, createClock, formatTimestamp } from '../../src/clock';
 import type { Config } from '../../src/config';
 import { type DbPool, createDbPool } from '../../src/db/pool';
 import { limits } from '../../src/limits';
+import type { Mailer } from '../../src/mail/mailer';
 import { type Access, type Action, MATRIX, type MatrixRow, PUBLIC_ROUTES, type PublicName } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, hashTicket, newTicket } from '../../src/permissions/session';
@@ -122,6 +123,8 @@ export interface WorldOptions {
   clock?: Clock;
   /** Config values over `testConfig` (API09: the admin door exists only while `adminTokenHash` is set). */
   config?: Partial<Config>;
+  /** The application's mailer (the buildApp seam): a fake that keeps the messages, or one that fails. Default: made from `config.mail`, none when that is null. */
+  mailer?: Mailer;
 }
 
 /** The pool, but every statement it sends is seen by the spy. */
@@ -190,7 +193,7 @@ export async function makeWorld(options: WorldOptions = {}): Promise<World> {
   const spy = spyOn(realPool);
   const logs = logSink();
   const handled: string[] = [];
-  const app = buildApp({ config: testConfig({ logLevel: 'warn', ...options.config }), db: spiedPool(realPool, spy), clock: options.clock ?? createClock(() => now), logStream: logs.stream, routes: options.routes ?? false });
+  const app = buildApp({ config: testConfig({ logLevel: 'warn', ...options.config }), db: spiedPool(realPool, spy), clock: options.clock ?? createClock(() => now), logStream: logs.stream, routes: options.routes ?? false, mailer: options.mailer });
   options.build?.(app, { handled });
   await app.ready();
   if (!app.startup?.ok) throw new Error(`the start-up check of the fixture database failed: ${JSON.stringify(app.startup?.problems)}`);

@@ -866,7 +866,8 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
     for (const [action, row] of Object.entries(MATRIX)) if ('edit' in row && row.edit) expect(row.edit.table, action).not.toBe('users');
   });
 
-  it('A8 (changed on purpose, Task 14), U2: the statements that insert into or update `users` are in the admin door, in the session routes for the user\'s own password, and in the Super Admin\'s five people calls: nowhere else, and none outside the door sets the Super Admin flag', () => {
+  // changed on purpose again (forgot password by e-mail, Task 3): the reset through a mailed link writes the person's own password with the same statement as change-password, from src/auth/resetRoutes.ts
+  it('A8 (changed on purpose, Task 14), U2: the statements that insert into or update `users` are in the admin door, in the session routes for the user\'s own password, in the reset through a mailed link, and in the Super Admin\'s five people calls: nowhere else, and none outside the door sets the Super Admin flag', () => {
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
@@ -883,10 +884,10 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
     }
     for (const [file, hits] of Object.entries(found)) {
       if (file.startsWith(`src${'/'}admin${'/'}`)) continue;
-      expect(['src/auth/loginRoutes.ts', 'src/super/people.ts'], 'a statement that writes users outside the admin door and the Super Admin\'s people calls').toContain(file);
+      expect(['src/auth/loginRoutes.ts', 'src/auth/resetRoutes.ts', 'src/super/people.ts'], 'a statement that writes users outside the admin door and the Super Admin\'s people calls').toContain(file);
       for (const h of hits) expect(h, `${file} sets the Super Admin flag`).not.toMatch(/is_super_admin/i); // DESIGN 6.6 rule 3: the flag is set by the admin door only
       if (file === 'src/super/people.ts') expect(hits, 'the five statements of the people calls (the add, and the edit, role, switch and reset updates): a sixth is a new way to write a login and is added here on purpose').toHaveLength(5);
-      if (file === 'src/auth/loginRoutes.ts') {
+      if (file === 'src/auth/loginRoutes.ts' || file === 'src/auth/resetRoutes.ts') {
         for (const h of hits) {
           expect(h).toMatch(/SET\s+password_hash\s*=\s*\?,\s*must_change_password\s*=\s*0\s+WHERE\s+id\s*=\s*\?/i);
           expect(h).not.toMatch(/\b(role|active|email)\s*=/i);

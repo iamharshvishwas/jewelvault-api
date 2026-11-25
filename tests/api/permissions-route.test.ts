@@ -140,7 +140,7 @@ describe('T-D01 the route list is printed, with who may call every route', () =>
     expect(unroutedActions(app)).toEqual([]);
     expect(unroutedPublic(app)).toEqual([]);
     expect(unroutedActions(bare()).sort()).toEqual(Object.keys(MATRIX).sort());
-    expect(unroutedPublic(bare()).sort()).toEqual(['login', 'photo-full', 'photo-thumb', 'ready']); // /healthz is the one public route the application has so far
+    expect(unroutedPublic(bare()).sort()).toEqual(['forgot-password', 'login', 'photo-full', 'photo-thumb', 'ready', 'reset-password']); // /healthz is the one public route the application has so far
   });
 
   it('npm run check:routes (the compiled app) prints the routes with their access and the rows still waiting for their route, and exits 0', () => {
