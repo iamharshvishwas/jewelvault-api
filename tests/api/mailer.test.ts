@@ -70,14 +70,18 @@ describe('mailer: outbox (tests and the e2e lane)', () => {
 });
 
 describe('mailer: SMTP', () => {
-  it('smtp transport uses secure for 465 and not for 587', async () => {
+  it('smtp transport uses secure for 465 and not for 587, makes 587 and every other port upgrade (requireTLS, never a plain send), and times out a silent socket', async () => {
     const pass = secret('smtp');
     createMailer(smtpConfig(465, pass));
     createMailer(smtpConfig(587, pass));
     expect(nodemailer.createTransport).toHaveBeenCalledTimes(2);
     const [implicit, starttls] = nodemailer.createTransport.mock.calls.map((c) => c[0]);
-    expect(implicit).toEqual({ host: 'smtp.example.test', port: 465, secure: true, auth: { user: 'no-reply@example.test', pass }, connectionTimeout: 15_000, greetingTimeout: 15_000 });
-    expect(starttls).toMatchObject({ host: 'smtp.example.test', port: 587, secure: false, auth: { user: 'no-reply@example.test', pass }, connectionTimeout: 15_000, greetingTimeout: 15_000 });
+    // 465 is TLS from the first byte (requireTLS only concerns the STARTTLS upgrade, so it stays false there); a silent socket is cut after 15 s as the connect and the greeting are
+    expect(implicit).toEqual({ host: 'smtp.example.test', port: 465, secure: true, requireTLS: false, auth: { user: 'no-reply@example.test', pass }, connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 15_000 });
+    // 587 starts plain and upgrades with STARTTLS: requireTLS ends the send when the server cannot upgrade, so the password and the mail are never sent in the clear
+    expect(starttls).toEqual({ host: 'smtp.example.test', port: 587, secure: false, requireTLS: true, auth: { user: 'no-reply@example.test', pass }, connectionTimeout: 15_000, greetingTimeout: 15_000, socketTimeout: 15_000 });
+    createMailer(smtpConfig(25, pass));
+    expect(nodemailer.createTransport.mock.calls[2][0]).toMatchObject({ port: 25, secure: false, requireTLS: true });
   });
 
   it('send hands the configured sender and the whole message to the transport, and a refusal reaches the caller', async () => {

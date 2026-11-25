@@ -37,20 +37,22 @@ const tokenHash = z
 // D24, U10: the secret salt of the login counter slots. Optional: without it the salt is made from the database password (src/auth/throttle.ts loginSaltOf).
 const secretSalt = z.string().min(16).max(256);
 
-// Forgot password by e-mail: the page the mailed link opens. https anywhere, http only on the developer's own Mac (exactly `localhost`, so `localhost.example.com` or `localhost@host` do not pass), and never a `#`:
-// the mail adds `#t=<token>` itself, and the token must stay out of anything a server sees. The value is kept as written.
-const resetLinkBase = z
-  .string()
-  .min(1)
-  .refine((value) => {
-    if (value.includes('#')) return false;
-    try {
-      const url = new URL(value);
-      return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost');
-    } catch {
-      return false;
-    }
-  });
+// Forgot password by e-mail: the page the mailed link opens. The mail adds `#t=<token>` to it, so the value must already be the exact address of that page and nothing else:
+// https anywhere, http only on the developer's own Mac (exactly `localhost`, so `localhost.example.com` or `localhost@host` do not pass); a page (a path, not the bare site); no whitespace, no username or
+// password, no query and never a `#` (the token must stay out of anything a server sees); and written the way the URL parser writes it (lower-case host, no default port, no `..`), so the value is the link.
+// Judged on the value after loadConfig trimmed it. That its origin is one of ALLOWED_ORIGINS is checked beside it (linkOriginProblem): the link opens the website, the one origin the API answers.
+function isResetLinkBase(value: string): boolean {
+  if (/\s/.test(value) || value.includes('#') || value.includes('?')) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.href !== value || url.username !== '' || url.password !== '' || url.pathname === '/') return false;
+  return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost');
+}
+const resetLinkBase = z.string().min(1).refine(isResetLinkBase);
 
 const schema = z.object({
   DB_HOST: text,
@@ -84,7 +86,7 @@ export const CONFIG_VARIABLES = Object.keys(schema.shape) as (keyof typeof schem
 export interface MailConfig {
   /** The sender as the mail shows it, e.g. `Jaishri Gold Palace <no-reply@jaishrigoldpalace.com>` (JV_MAIL_FROM). */
   readonly from: string;
-  /** The page the link opens (JV_RESET_LINK_BASE): an https address (http only on localhost) without a `#`. The link in the mail is this, then `#t=<token>`. */
+  /** The page the link opens (JV_RESET_LINK_BASE, trimmed): the exact address of a page of the website, https (http only on localhost), with no query, no `#` and no credentials, on an origin of ALLOWED_ORIGINS. The link in the mail is this, then `#t=<token>`. */
   readonly resetLinkBase: string;
   readonly transport:
     | { readonly kind: 'smtp'; readonly host: string; readonly port: number; readonly user: string; readonly password: string }
@@ -132,11 +134,22 @@ export class ConfigError extends Error {
 
 const MAIL_SMTP_VARIABLES = ['JV_SMTP_HOST', 'JV_SMTP_PORT', 'JV_SMTP_USER', 'JV_SMTP_PASSWORD'] as const;
 const MAIL_SHARED_VARIABLES = ['JV_MAIL_FROM', 'JV_RESET_LINK_BASE'] as const;
+/** Every mail variable is typed or pasted into hPanel by hand: a space or a newline at either end is dropped before anything is checked (loadConfig). Nothing inside a value is touched, the password's included. */
+const MAIL_TRIMMED: readonly string[] = [...MAIL_SMTP_VARIABLES, ...MAIL_SHARED_VARIABLES, 'JV_MAIL_OUTBOX_DIR'];
+
+/** The link is a page of the website, and the website is the origin the API answers: a link base on any other origin is a setting slip (or a mail that sends people elsewhere). Judged on the given values; when either is not valid in itself that one is the problem. */
+function linkOriginProblem(raw: Record<string, string | undefined>): ConfigProblem[] {
+  const { JV_RESET_LINK_BASE: base, ALLOWED_ORIGINS: origins } = raw;
+  if (base === undefined || origins === undefined || !isResetLinkBase(base)) return [];
+  const allowed = parseAllowedOrigins(origins);
+  if (allowed === null || allowed.includes(new URL(base).origin)) return [];
+  return [{ name: 'JV_RESET_LINK_BASE', problem: 'invalid' }];
+}
 
 /**
  * The mail variables are optional as a group: none set means no mail, the outbox needs JV_MAIL_OUTBOX_DIR with the sender and the link base, SMTP needs its four variables with the sender and the link base.
  * Anything in between names what is missing. The outbox together with an SMTP variable is refused too: the outbox is for tests, and a live setting must never be quietly swapped for files in a folder.
- * Judged on what was given (an empty variable counts as not given), so it can be listed together with the problems zod found.
+ * Judged on what was given (an empty variable counts as not given), so it can be listed together with the problems zod found. A link base on an origin the API does not answer is listed here as well.
  */
 function mailProblems(raw: Record<string, string | undefined>): ConfigProblem[] {
   const given = (name: string) => raw[name] !== undefined;
@@ -145,7 +158,7 @@ function mailProblems(raw: Record<string, string | undefined>): ConfigProblem[] 
   if (!outbox && !smtp && !MAIL_SHARED_VARIABLES.some(given)) return [];
   if (outbox && smtp) return [{ name: 'JV_MAIL_OUTBOX_DIR', problem: 'invalid' }];
   const needed = outbox ? MAIL_SHARED_VARIABLES : [...MAIL_SMTP_VARIABLES, ...MAIL_SHARED_VARIABLES];
-  return needed.filter((name) => !given(name)).map((name) => ({ name, problem: 'missing' as const }));
+  return [...needed.filter((name) => !given(name)).map((name) => ({ name, problem: 'missing' as const })), ...linkOriginProblem(raw)];
 }
 
 /** The mail settings of a config that passed mailProblems: complete, or none at all. */
@@ -161,7 +174,10 @@ function mailOf(v: z.infer<typeof schema>): MailConfig | null {
 /** Reads and checks the environment. Pass the environment in; server.ts passes process.env, once. */
 export function loadConfig(env: Record<string, string | undefined>): Config {
   const raw: Record<string, string | undefined> = {};
-  for (const name of CONFIG_VARIABLES) raw[name] = env[name] === '' ? undefined : env[name];
+  for (const name of CONFIG_VARIABLES) {
+    const value = MAIL_TRIMMED.includes(name) ? env[name]?.trim() : env[name];
+    raw[name] = value === '' ? undefined : value; // an empty variable, or one holding only whitespace (a mail one), is an unset one
+  }
   const parsed = schema.safeParse(raw);
   const mailIssues = mailProblems(raw);
   if (!parsed.success) {

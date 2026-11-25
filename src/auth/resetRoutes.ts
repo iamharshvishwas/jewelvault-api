@@ -180,11 +180,11 @@ async function mailLink(app: FastifyInstance, request: FastifyRequest, job: Link
   }
 }
 
-/** The two limits of an ask, counted now: the address's first, and the e-mail's only for a call within it. */
-function withinLimits(app: FastifyInstance, request: FastifyRequest, email: string): boolean {
+/** The two limits of an ask, counted now: the address's first, and the e-mail's only for a call within it. Which one refused the ask, or null when it is within both. */
+function limitReached(app: FastifyInstance, request: FastifyRequest, email: string): 'address' | 'email' | null {
   const limiter = limiterOf(app);
-  if (!limiter.take(`reset-address:${visitorAddress(request.headers).key}`, THROTTLES.resetPerAddress).ok) return false;
-  return limiter.take(`reset-email:${email}`, THROTTLES.resetPerEmail).ok;
+  if (!limiter.take(`reset-address:${visitorAddress(request.headers).key}`, THROTTLES.resetPerAddress).ok) return 'address';
+  return limiter.take(`reset-email:${email}`, THROTTLES.resetPerEmail).ok ? null : 'email';
 }
 
 // ------------------------------------------------------------------ the routes
@@ -204,7 +204,10 @@ export function registerResetRoutes(app: FastifyInstance): void {
       if (mailer === null || mail === null) throw MAIL_NOT_SET_UP();
       const db = databaseOf(a);
       const email = body.email.trim().toLowerCase(); // D1, RV1-5: as the login reads it
-      if (withinLimits(a, request, email)) detach(a, () => mailLink(a, request, { db, email, mailer, linkBase: mail.resetLinkBase }));
+      const refusedBy = limitReached(a, request, email);
+      if (refusedBy === null) detach(a, () => mailLink(a, request, { db, email, mailer, linkBase: mail.resetLinkBase }));
+      // the person is told nothing (the answer is the same), so the log says why a mail that was asked for never came: which limit, and neither the e-mail, nor the address, nor any token
+      else request.log.info({ limit: refusedBy }, 'forgot-password: an ask over its limit got no link');
       reply.code(202);
       return { ok: true };
     },

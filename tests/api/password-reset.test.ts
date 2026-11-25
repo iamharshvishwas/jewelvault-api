@@ -65,6 +65,9 @@ const forgot = (email: string, address: string = nextAddress()) =>
 const reset = (token: string, password: string) => world.app.inject({ method: 'POST', url: '/v1/auth/reset-password', headers: csrfHeaders(), payload: { token, new_password: password } });
 const login = (email: string, password: string) =>
   world.app.inject({ method: 'POST', url: '/v1/auth/login', headers: { ...csrfHeaders(), 'x-real-ip': nextAddress() }, payload: { email, password } });
+/** The lines the forgot route wrote for an ask that was over a limit and got no link: the limit that refused it, and nothing about who asked. */
+const LIMIT_LINE = 'forgot-password: an ask over its limit got no link';
+const limitLines = (limit: 'email' | 'address') => world.logs.lines().filter((l) => l.msg === LIMIT_LINE && l.limit === limit);
 /** The work after the answer, and the rows it handed to the error log. */
 const settle = async () => {
   await resetWork.idle();
@@ -127,7 +130,7 @@ beforeAll(async () => {
   PASSWORD = secret('Pw');
   typed.push(PASSWORD);
   HASH = await passwords.hash(PASSWORD);
-  world = await makeWorld({ label: 'pwreset', routes: true, clock: createClock(() => micros), config: { mail: MAIL }, mailer: fakeMailer });
+  world = await makeWorld({ label: 'pwreset', routes: true, clock: createClock(() => micros), config: { mail: MAIL, logLevel: 'info' }, mailer: fakeMailer }); // info: the line of an ask over a limit is an info line
 }, 120_000);
 
 afterAll(async () => {
@@ -222,6 +225,14 @@ describe('POST /v1/auth/forgot-password', () => {
     await settle();
     expect(outbox.attempted.length, 'the 4th ask sends nothing').toBe(before);
     expect(await linksOf(u.userId)).toHaveLength(3);
+    // the refusal is told to the log (the person is not told): which limit, and neither the e-mail, nor the address, nor a token
+    expect(limitLines('email'), 'one line for the e-mail limit').toHaveLength(1);
+    const [byEmail] = limitLines('email');
+    const { level, time, pid, hostname, reqId, ...rest } = byEmail;
+    expect([level, typeof time, typeof pid, typeof hostname, typeof reqId]).toEqual([30, 'number', 'number', 'string', 'string']); // an info line, from the request's logger
+    expect(rest).toEqual({ msg: LIMIT_LINE, limit: 'email' });
+    expect(JSON.stringify(byEmail)).not.toContain('@');
+    expect(limitLines('address'), 'no address limit was reached yet').toHaveLength(0);
 
     // one address: ten calls an hour, whatever the e-mails; the eleventh, for a login that would get a mail, is answered the same and sends nothing
     const address = nextAddress();
@@ -234,6 +245,12 @@ describe('POST /v1/auth/forgot-password', () => {
     await settle();
     expect(outbox.attempted.length, 'the 11th call from one address sends nothing').toBe(before);
     expect(await linksOf(v.userId)).toHaveLength(0);
+    expect(limitLines('address'), 'one line for the address limit').toHaveLength(1);
+    expect(limitLines('email'), 'and no new line for the e-mail limit').toHaveLength(1);
+    const lineText = JSON.stringify(limitLines('address')[0]);
+    expect(lineText).not.toContain('@');
+    expect(lineText).not.toContain(address);
+    expect(lineText).not.toContain(v.email);
     // it was the address: the same e-mail from another address gets its mail
     expect((await mailsFor(v.email)).map((m) => m.to)).toEqual([v.email]);
     // and a call refused for its address is not counted for its e-mail (as the login counts), so one address cannot use up the asks of e-mails it names

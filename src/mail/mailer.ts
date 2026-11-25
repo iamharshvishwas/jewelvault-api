@@ -18,7 +18,7 @@ export interface Mailer {
   send(message: MailMessage): Promise<void>;
 }
 
-/** A server that does not answer must not hold a send for the transport's defaults (2 minutes to connect, 30 s for the greeting): each gets 15 s. */
+/** A server that does not answer must not hold a send for the transport's defaults (2 minutes to connect, 30 s for the greeting, 10 minutes of silence on an open socket): each gets 15 s. */
 const SMTP_TIMEOUT_MS = 15_000;
 
 /** The test and e2e transport: `<dir>/<ISO time>-<random>.json`, one file per message, holding to, subject, text and html. The random part keeps two mails of the same millisecond apart. */
@@ -36,14 +36,17 @@ function outboxMailer(dir: string): Mailer {
 export function createMailer(mail: MailConfig): Mailer {
   const { transport } = mail;
   if (transport.kind === 'outbox') return outboxMailer(transport.dir);
-  // port 465 is TLS from the first byte; any other port (587) starts plain and upgrades with STARTTLS
+  // port 465 is TLS from the first byte; any other port (587) starts plain and upgrades with STARTTLS, and requireTLS makes the upgrade a must: a server that does not offer it ends the send
+  // (nodemailer would otherwise log in and send over the open connection, the password and the link in the clear)
   const smtp = nodemailer.createTransport({
     host: transport.host,
     port: transport.port,
     secure: transport.port === 465,
+    requireTLS: transport.port !== 465,
     auth: { user: transport.user, pass: transport.password },
     connectionTimeout: SMTP_TIMEOUT_MS,
     greetingTimeout: SMTP_TIMEOUT_MS,
+    socketTimeout: SMTP_TIMEOUT_MS,
   });
   return {
     async send(message) {
