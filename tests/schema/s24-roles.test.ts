@@ -70,7 +70,7 @@ describe('s24 roles (R1, R3, R17): the migration', () => {
       for (const u of users) await insert(old, 'users', u);
       const before = (await old.query<any[]>('SELECT id, email, role, active, password_hash, updated_at FROM users ORDER BY id'))[0];
       const result = await migrate(old, { seeds: false });
-      expect(result.applied).toEqual(['0012']);
+      expect(result.applied).toEqual(['0012', '0013']); // the rest: 0012 and every file after it
       const after = (await old.query<any[]>('SELECT id, email, role, active, password_hash, updated_at, is_super_admin FROM users ORDER BY id'))[0];
       expect(after.map(({ is_super_admin, ...rest }) => rest)).toEqual(before);
       expect(after.map((u) => Number(u.is_super_admin))).toEqual([0, 0, 0]);

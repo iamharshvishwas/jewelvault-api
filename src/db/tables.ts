@@ -26,6 +26,7 @@ export const REQUIRED_TABLES: readonly string[] = [
   'sys_import_batches',
   'sys_job_runs',
   'sys_login_attempts',
+  'sys_password_resets',
   'sys_photo_copies',
   'users',
 ];

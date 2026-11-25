@@ -93,6 +93,7 @@ export const UNIQUE_KEYS: readonly string[] = [
   'sys_error_log.uq_error_log_slot(code,minute_at,seq)',
   'sys_import_batches.uq_import_batches_name(name)',
   'sys_job_runs.uq_job_runs_day(job,run_date)',
+  'sys_password_resets.uq_password_resets_token(token_hash)', // forgot password by e-mail, 0013: the hash of a link's token never changes
   'users.uq_users_email(email)',
 ];
 

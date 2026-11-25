@@ -412,9 +412,9 @@ async function catalogueProblems(c: Connection, database: string): Promise<strin
 }
 
 describe('T-D01 every table has a primary key and InnoDB', () => {
-  it('the migrated schema: all 28 tables (the 26 of the code, with the orders of FB-E1, the roles of 0012, and schema_migrations)', async () => {
+  it('the migrated schema: all 29 tables (the 28 of the code, with the orders of FB-E1, the roles of 0012, the reset links of 0013, and schema_migrations)', async () => {
     const [tables] = await conn.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [scratch.database]);
-    expect(Number(tables[0].n)).toBe(28);
+    expect(Number(tables[0].n)).toBe(29);
     expect(await catalogueProblems(conn, scratch.database)).toEqual([]);
   });
 

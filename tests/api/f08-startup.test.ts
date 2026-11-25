@@ -75,12 +75,12 @@ describe('T-F08 the tables the code needs are named in the code, and they are th
     expect(new Set(REQUIRED_TABLES).size).toBe(REQUIRED_TABLES.length);
   });
 
-  it('and they are what a migrated lane database really holds: 27 tables besides schema_migrations (with the orders of FB-E1 and the roles of the access plan)', async () => {
+  it('and they are what a migrated lane database really holds: 28 tables besides schema_migrations (with the orders of FB-E1, the roles of the access plan and the reset links of the password help)', async () => {
     const root = await laneRoot();
     const [rows] = await root.query<any[]>("SELECT TABLE_NAME AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [laneDbSettings().name]);
     await root.end();
     expect(rows.map((r) => r.n as string).filter((n) => n !== 'schema_migrations').sort()).toEqual([...REQUIRED_TABLES].sort());
-    expect(REQUIRED_TABLES).toHaveLength(27);
+    expect(REQUIRED_TABLES).toHaveLength(28);
   });
 });
 

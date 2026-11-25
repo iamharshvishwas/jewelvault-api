@@ -73,10 +73,10 @@ describe('T-D11 the catalogue of the schema (A7, D19, S3, S4)', () => {
     expect(NAMED_CHECKS.filter((n) => !real.checks.has(n))).toEqual([]);
   });
 
-  it('the UNIQUE keys are exactly the expected list: the immutable columns and the composite keys of D19 (19 of them), the order number of FB-E1 and the role name of the access plan', () => {
+  it('the UNIQUE keys are exactly the expected list: the immutable columns and the composite keys of D19 (19 of them), the order number of FB-E1, the role name of the access plan and the reset-link hash of the password help', () => {
     const actual = real.indexes.filter((i) => i.unique && i.name !== 'PRIMARY').map((i) => `${i.table}.${i.name}(${i.columns.join(',')})`).sort();
     expect(actual).toEqual([...UNIQUE_KEYS].sort());
-    expect(UNIQUE_KEYS).toHaveLength(21);
+    expect(UNIQUE_KEYS).toHaveLength(22);
   });
 
   it('every polled table has an index on (updated_at, its primary key): 13 tables and the orders of FB-E1', () => {
