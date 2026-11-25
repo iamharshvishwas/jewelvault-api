@@ -6,6 +6,7 @@ import type { DbPool } from './db/pool.js';
 import { BusyError, type JvError, classifyError, describeCause, errorBody, unavailableError } from './errors.js';
 import { checkBackupFolderAtStart } from './jobs/backupProbe.js';
 import { createLogger } from './logging.js';
+import { type Mailer, createMailer } from './mail/mailer.js';
 import { installPermissions, route } from './permissions/route.js';
 import { type PreflightResult, runPreflight } from './preflight.js';
 import { registerRoutes } from './routes.js';
@@ -25,6 +26,8 @@ declare module 'fastify' {
     startup: PreflightResult | null;
     /** D25, A14: where the unexpected errors are kept (sys_error_log, at most 20 rows a minute for each code). record() returns at once; idle() waits for what was handed over. */
     errorLog: ErrorLog;
+    /** Sends the password reset mail, or null when no mail settings were given (config.mail is null): the forgot-password route then answers 503. */
+    mailer: Mailer | null;
   }
   interface FastifyRequest {
     /** When the request arrived, on the monotonic clock (performance.now()): the 12-second deadline of S12 counts from here, the wait for a pool connection included. */
@@ -54,6 +57,11 @@ export interface BuildAppOptions {
    * server.ts never passes it.
    */
   timers?: Partial<RequestTimers>;
+  /**
+   * A seam for tests: a mailer of their own (a fake that keeps the messages, or one that fails). Without it the mailer is made from config.mail, and is null when that is null. server.ts never passes it,
+   * so a production process always sends through config.mail.
+   */
+  mailer?: Mailer | null;
 }
 
 /** S11: the one thing a client is told when the start-up check failed. The reason is in the log only. The S8 body: error code, message and details, and the request id. */
@@ -103,6 +111,7 @@ export function buildApp(options: BuildAppOptions): FastifyInstance {
   app.decorate('db', options.db ?? null);
   app.decorate('startup', null);
   app.decorate('errorLog', createErrorLog(options.db ?? null, app.log));
+  app.decorate('mailer', options.mailer ?? (config.mail ? createMailer(config.mail) : null));
   app.decorateRequest('arrivedAt', 0);
   // the first hook of every request: the deadline of S12 starts here
   app.addHook('onRequest', async (request) => {

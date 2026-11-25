@@ -37,6 +37,21 @@ const tokenHash = z
 // D24, U10: the secret salt of the login counter slots. Optional: without it the salt is made from the database password (src/auth/throttle.ts loginSaltOf).
 const secretSalt = z.string().min(16).max(256);
 
+// Forgot password by e-mail: the page the mailed link opens. https anywhere, http only on the developer's own Mac (exactly `localhost`, so `localhost.example.com` or `localhost@host` do not pass), and never a `#`:
+// the mail adds `#t=<token>` itself, and the token must stay out of anything a server sees. The value is kept as written.
+const resetLinkBase = z
+  .string()
+  .min(1)
+  .refine((value) => {
+    if (value.includes('#')) return false;
+    try {
+      const url = new URL(value);
+      return url.protocol === 'https:' || (url.protocol === 'http:' && url.hostname === 'localhost');
+    } catch {
+      return false;
+    }
+  });
+
 const schema = z.object({
   DB_HOST: text,
   DB_PORT: portNumber,
@@ -51,10 +66,30 @@ const schema = z.object({
   PORT: portNumber.optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).optional(),
   JV_AUDIT_MODE: z.enum(AUDIT_MODES).optional(),
+  // Forgot password by e-mail. All optional, but all-or-nothing: see mailProblems and mailOf.
+  JV_SMTP_HOST: text.optional(),
+  JV_SMTP_PORT: portNumber.optional(),
+  JV_SMTP_USER: text.optional(),
+  JV_SMTP_PASSWORD: text.optional(),
+  JV_MAIL_FROM: text.optional(),
+  JV_RESET_LINK_BASE: resetLinkBase.optional(),
+  /** For tests and the website's e2e lane only: every mail is written as a JSON file into this folder instead of being sent. */
+  JV_MAIL_OUTBOX_DIR: text.optional(),
 });
 
 /** Every variable the API reads; .env.example lists exactly these. */
 export const CONFIG_VARIABLES = Object.keys(schema.shape) as (keyof typeof schema.shape)[];
+
+/** How the API sends the password reset mail. Made from the JV_SMTP_*, JV_MAIL_FROM, JV_RESET_LINK_BASE and JV_MAIL_OUTBOX_DIR variables; src/mail/mailer.ts turns it into a Mailer. */
+export interface MailConfig {
+  /** The sender as the mail shows it, e.g. `Jaishri Gold Palace <no-reply@jaishrigoldpalace.com>` (JV_MAIL_FROM). */
+  readonly from: string;
+  /** The page the link opens (JV_RESET_LINK_BASE): an https address (http only on localhost) without a `#`. The link in the mail is this, then `#t=<token>`. */
+  readonly resetLinkBase: string;
+  readonly transport:
+    | { readonly kind: 'smtp'; readonly host: string; readonly port: number; readonly user: string; readonly password: string }
+    | { readonly kind: 'outbox'; readonly dir: string };
+}
 
 export interface Config {
   /** The port to listen on (PORT, default 3000). */
@@ -76,6 +111,8 @@ export interface Config {
   readonly backupDir?: string | undefined;
   /** L1: which mechanism writes the audit rows (JV_AUDIT_MODE, default 'triggers'). 'node' only on a database without the audit triggers (O50). */
   readonly auditMode: AuditMode;
+  /** How the password reset mail is sent, or null when none of the mail variables is set: the API then starts as before and the forgot-password route answers 503 (JV_UNAVAILABLE). */
+  readonly mail: MailConfig | null;
   readonly db: { readonly host: string; readonly port: number; readonly name: string; readonly user: string; readonly password: string };
 }
 
@@ -93,16 +130,47 @@ export class ConfigError extends Error {
   }
 }
 
+const MAIL_SMTP_VARIABLES = ['JV_SMTP_HOST', 'JV_SMTP_PORT', 'JV_SMTP_USER', 'JV_SMTP_PASSWORD'] as const;
+const MAIL_SHARED_VARIABLES = ['JV_MAIL_FROM', 'JV_RESET_LINK_BASE'] as const;
+
+/**
+ * The mail variables are optional as a group: none set means no mail, the outbox needs JV_MAIL_OUTBOX_DIR with the sender and the link base, SMTP needs its four variables with the sender and the link base.
+ * Anything in between names what is missing. The outbox together with an SMTP variable is refused too: the outbox is for tests, and a live setting must never be quietly swapped for files in a folder.
+ * Judged on what was given (an empty variable counts as not given), so it can be listed together with the problems zod found.
+ */
+function mailProblems(raw: Record<string, string | undefined>): ConfigProblem[] {
+  const given = (name: string) => raw[name] !== undefined;
+  const outbox = given('JV_MAIL_OUTBOX_DIR');
+  const smtp = MAIL_SMTP_VARIABLES.some(given);
+  if (!outbox && !smtp && !MAIL_SHARED_VARIABLES.some(given)) return [];
+  if (outbox && smtp) return [{ name: 'JV_MAIL_OUTBOX_DIR', problem: 'invalid' }];
+  const needed = outbox ? MAIL_SHARED_VARIABLES : [...MAIL_SMTP_VARIABLES, ...MAIL_SHARED_VARIABLES];
+  return needed.filter((name) => !given(name)).map((name) => ({ name, problem: 'missing' as const }));
+}
+
+/** The mail settings of a config that passed mailProblems: complete, or none at all. */
+function mailOf(v: z.infer<typeof schema>): MailConfig | null {
+  const { JV_MAIL_FROM: from, JV_RESET_LINK_BASE: resetLinkBase } = v;
+  if (from === undefined || resetLinkBase === undefined) return null;
+  if (v.JV_MAIL_OUTBOX_DIR !== undefined) return Object.freeze({ from, resetLinkBase, transport: Object.freeze({ kind: 'outbox' as const, dir: v.JV_MAIL_OUTBOX_DIR }) });
+  const { JV_SMTP_HOST: host, JV_SMTP_PORT: port, JV_SMTP_USER: user, JV_SMTP_PASSWORD: password } = v;
+  if (host === undefined || port === undefined || user === undefined || password === undefined) return null;
+  return Object.freeze({ from, resetLinkBase, transport: Object.freeze({ kind: 'smtp' as const, host, port, user, password }) });
+}
+
 /** Reads and checks the environment. Pass the environment in; server.ts passes process.env, once. */
 export function loadConfig(env: Record<string, string | undefined>): Config {
   const raw: Record<string, string | undefined> = {};
   for (const name of CONFIG_VARIABLES) raw[name] = env[name] === '' ? undefined : env[name];
   const parsed = schema.safeParse(raw);
+  const mailIssues = mailProblems(raw);
   if (!parsed.success) {
     const names = new Set(parsed.error.issues.map((i) => String(i.path[0])));
     // our own wording: a zod message could repeat the value that was wrong
-    throw new ConfigError([...names].map((name) => ({ name, problem: raw[name] === undefined ? ('missing' as const) : ('invalid' as const) })));
+    const problems: ConfigProblem[] = [...names].map((name) => ({ name, problem: raw[name] === undefined ? ('missing' as const) : ('invalid' as const) }));
+    throw new ConfigError([...problems, ...mailIssues.filter((m) => !names.has(m.name))]);
   }
+  if (mailIssues.length > 0) throw new ConfigError(mailIssues);
   const v = parsed.data;
   return Object.freeze({
     port: v.PORT ?? 3000,
@@ -113,6 +181,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     loginSalt: v.JV_LOGIN_SALT,
     backupDir: v.JV_BACKUP_DIR,
     auditMode: v.JV_AUDIT_MODE ?? 'triggers',
+    mail: mailOf(v),
     db: Object.freeze({ host: v.DB_HOST, port: v.DB_PORT, name: v.DB_NAME, user: v.DB_USER, password: v.DB_PASSWORD }),
   });
 }

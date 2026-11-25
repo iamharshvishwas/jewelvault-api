@@ -17,7 +17,7 @@ const { describeRoutes, unroutedActions, unroutedPublic } = await load('permissi
 const { MATRIX, PUBLIC_ROUTES, describeAccess } = await load('permissions/matrix.js');
 
 // adminTokenHash is a made-up value: the admin door exists only while JV_ADMIN_TOKEN_HASH is set, and the list is to show every route the built app can have (A1)
-const config = { port: 0, logLevel: 'silent', allowedOrigins: ['https://check.example.test'], adminTokenHash: '0'.repeat(64), db: { host: '127.0.0.1', port: 3306, name: 'check', user: 'check', password: 'not-used' } };
+const config = { port: 0, logLevel: 'silent', allowedOrigins: ['https://check.example.test'], adminTokenHash: '0'.repeat(64), mail: null, db: { host: '127.0.0.1', port: 3306, name: 'check', user: 'check', password: 'not-used' } };
 let app;
 try {
   app = buildApp({ config });
