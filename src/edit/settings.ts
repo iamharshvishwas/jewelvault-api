@@ -1,4 +1,4 @@
-// D3, A4, B3, O54: the settings (PUT /v1/settings/:key). One row for each key, never one blob; the owner is the only writer (the matrix row `edit:settings.update`, the field `value`). The
+// D3, A4, B3, O54: the settings (PUT /v1/settings/:key). One row for each key, never one blob; only a holder of `settings_change` writes (the matrix row `edit:settings.update`, the field `value`). The
 // body is the fields themselves, `{ value }`: the row of the matrix has the shape `fields`, so there is no `expected_updated_at` and the last write wins (the row is locked while it is written).
 //
 //   - the key is in the address: 1 to 64 lower-case letters, digits and underscores, starting with a letter. The database compares keys case-insensitively and ignoring trailing spaces

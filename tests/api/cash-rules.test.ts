@@ -53,10 +53,12 @@ describe('T-A12 / T-B23 Z1: a named customer\'s cash reaching the limit or more 
     const none = refusal(() => judgeCash({ ...named, mayOverride: true, reason: undefined, cash: LAKH2, before: 0n }));
     expect(none.code).toBe('JV_CASH_LIMIT');
     expect(none.message).toMatch(/reason/i);
+    expect(none.message, 'what a permitted person reads is unchanged').toContain('Give the reason in cash_override_reason (at least 10 characters) to save it.');
     expect(refusal(() => judgeCash({ ...named, mayOverride: true, reason: null, cash: LAKH2, before: 0n })).code).toBe('JV_CASH_LIMIT');
     const biller = refusal(() => judgeCash({ ...named, mayOverride: false, reason: 'ten people paid', cash: LAKH2, before: 0n }));
     expect(biller.code).toBe('JV_CASH_LIMIT');
-    expect(biller.message).toMatch(/owner/i);
+    expect(biller.message).toContain('Your role cannot take cash over the limit.');
+    expect(biller.message, 'the words name no role: a custom role without the tick reads them too').not.toMatch(/owner/i);
   });
 
   it('a reason is returned only when it was needed: below the limit nothing is stored, though the owner sent one', () => {

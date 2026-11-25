@@ -148,7 +148,14 @@ const TOO_MANY_ERRNOS = new Set([1040, 1203]);
  * so that they never raise a duplicate (L3, L5): a 1062 there is a bug, JV_INTERNAL. tests/api/c19-tx.test.ts compares this list and INTERNAL_KEYS with the unique keys of a migrated database,
  * so a migration that adds one has to say which kind it is.
  */
-export const BUSINESS_KEYS: readonly string[] = ['uq_designs_no', 'uq_users_email', 'uq_categories_name', 'uq_subcategories_name', 'uq_daily_rates_day'];
+export const BUSINESS_KEYS: readonly string[] = [
+  'uq_designs_no',
+  'uq_users_email',
+  'uq_categories_name',
+  'uq_subcategories_name',
+  'uq_daily_rates_day',
+  'uq_roles_name', // the access plan, R1: a role name a person types; the role writes check it first and answer field `name` "is already used by another role"
+];
 export const INTERNAL_KEYS: readonly string[] = [
   'PRIMARY',
   'uq_import_batches_name',

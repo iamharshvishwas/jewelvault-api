@@ -499,7 +499,7 @@ describe('X0 the order of work inside the transaction, as the statements say it'
 
 describe('T-D09 the matrix row of X11 (POST /v1/customers/:id/refunds: owner only) for the five callers', () => {
   it('the route is registered through route() with the action of the row', () => {
-    expect(w.world.app.routeTable.find((r) => r.action === 'fn:issue_refund')).toMatchObject({ method: 'POST', url: '/v1/customers/:id/refunds', kind: 'matrix', roles: ['owner'], mustChange: false });
+    expect(w.world.app.routeTable.find((r) => r.action === 'fn:issue_refund')).toMatchObject({ method: 'POST', url: '/v1/customers/:id/refunds', kind: 'matrix', access: { anyOf: ['refund_give'] }, mustChange: false });
   });
 
   it('no session is 401, a biller and staff are 403 JV_FORBIDDEN, a user who must change the password is 403 JV_PASSWORD_CHANGE_REQUIRED, and none of them reads or writes the books', async () => {

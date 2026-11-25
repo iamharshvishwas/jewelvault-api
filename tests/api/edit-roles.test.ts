@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { MATRIX } from '../../src/permissions/matrix';
+import { MATRIX, mayCall, type Action } from '../../src/permissions/matrix';
+import { builtinGrants } from './builtin-roles';
 import type { CallerName } from './cells';
 import { TODAY, addRate, allRows, patchRate, postRate, putSetting, rateBody } from './edit-13b-support';
 import { type EditWorld, STAMP_WIRE, addDesign, addPiece, codeOf, dbRow, editWorld, patch, snapshot } from './edit-support';
@@ -75,7 +76,7 @@ describe('T-D04 a biller cannot change stock, settings or users: every edit row 
     const stockOrSettings = Object.entries(MATRIX).filter(([action, row]) => row.kind === 'edit' && /^edit:(settings|categories|subcategories|designs|skus|sku_private)\./.test(action));
     expect(stockOrSettings.length).toBe(8); // settings (1), categories (2), subcategories (2), designs, skus, sku_private
     for (const [action, row] of stockOrSettings) {
-      expect(row.roles as readonly string[], action).not.toContain('biller');
+      expect(mayCall(builtinGrants('biller'), action as Action), action).toBe(false);
       if (!routed.has(action as never)) continue;
       const url = row.path.replace(/:([a-z_]+)/g, (_m, name: string) => (name === 'key' ? 'numbering' : randomUUID()));
       const res = await w.world.call('biller', row.method, url, { payload: row.method === 'PATCH' ? { expected_updated_at: STAMP_WIRE, changes: { name: 'x' } } : {} });

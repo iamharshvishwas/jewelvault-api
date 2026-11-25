@@ -1,6 +1,7 @@
 // D2, A2, A10, U4, U12: how a request becomes a user and a role. The cookie carries only an opaque ticket; the API turns it into a `sessions` row (looked up by the SHA-256 of the ticket) and
-// then into the `users` row, and the role and the `active` flag come from that read and from nothing else: not from the cookie, a header, the query or the body. This is the only place in the
-// program that turns a session into a role (S10). A missing, ended or expired session, or a user who is not active, is a 401 and no business data is read or written.
+// then into the `users` row joined with its `roles` row, and the role, its ticks, the Super Admin flag and the `active` flags come from that read and from nothing else: not from the cookie, a
+// header, the query or the body. This is the only place in the program that turns a session into grants (S10, R4, G4: read on every request, no cache that outlives a write). A missing, ended or
+// expired session, a user who is not active, or a user whose role row is missing or switched off, is a 401 and no business data is read or written.
 //
 // The bookkeeping of the session itself (U4) is here too, because it belongs to the lookup:
 //   - a session past its absolute lifetime or idle for more than 12 hours is ENDED on the call that finds it (revoked_at; the row stays, S7) and the answer is JV_SESSION_EXPIRED, which the cookie
@@ -13,7 +14,7 @@ import { withAutocommit } from '../db/autocommit.js';
 import { txContextFor, withRead } from '../db/tx.js';
 import { JvError } from '../errors.js';
 import { limits } from '../limits.js';
-import { ROLES, type Role } from './matrix.js';
+import { type Grants, accessFingerprint, grantsOf } from './grants.js';
 
 /** U12: the name of the session cookie. */
 export const SESSION_COOKIE = '__Host-jv_session';
@@ -44,13 +45,20 @@ export function readTicket(cookieHeader: string | undefined): string | null {
   return null;
 }
 
-/** Who is calling, as the read of D2 found them. The role is a value, never a string a handler compares with. */
+/** Who is calling, as the read of D2 found them. What they may do is `grants`, never the role key: the key is kept for the audit trail and for display. */
 export interface Auth {
   readonly user: {
     readonly id: string;
     readonly email: string;
     readonly fullName: string;
-    readonly role: Role;
+    /** the role key (`users.role`), as the audit trail records it; never compared to decide what is allowed */
+    readonly role: string;
+    /** the role's name as the Super Admin wrote it (`roles.name`) */
+    readonly roleName: string;
+    /** the ticks of the role and the Super Admin flag (R4) */
+    readonly grants: Grants;
+    /** the access fingerprint of R5: `me` and every poll answer carry it */
+    readonly access: string;
     readonly mustChangePassword: boolean;
   };
   readonly session: {
@@ -77,6 +85,12 @@ interface UserRow {
   role: string;
   active: number | string;
   must_change_password: number | string;
+  is_super_admin: number | string;
+  /** null when the user's role has no row (the foreign key forbids it; fail closed all the same) */
+  role_name: string | null;
+  role_active: number | string | null;
+  /** the JSON column, parsed or as text, as the driver gives it */
+  ticks: unknown;
 }
 
 const UNAUTHENTICATED = () => new JvError('JV_UNAUTHENTICATED', 'Sign in to continue.');
@@ -91,7 +105,8 @@ export function microsOfDbTimestamp(text: string): bigint {
 }
 
 const SESSION_SQL = 'SELECT id, user_id, created_at, last_seen_at, expires_at, revoked_at FROM sessions WHERE token_hash = ?';
-const USER_SQL = 'SELECT id, email, full_name, role, active, must_change_password FROM users WHERE id = ?';
+const USER_SQL =
+  'SELECT u.id, u.email, u.full_name, u.role, u.active, u.must_change_password, u.is_super_admin, r.name AS role_name, r.active AS role_active, r.ticks FROM users u LEFT JOIN roles r ON r.role_key = u.role WHERE u.id = ?';
 const END_SQL = 'UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL';
 const TOUCH_SQL = 'UPDATE sessions SET last_seen_at = ? WHERE id = ? AND revoked_at IS NULL AND last_seen_at < ?';
 
@@ -100,7 +115,8 @@ type Looked = { auth: Auth } | { over: { id: string; ended: boolean } };
 
 /**
  * D2: the cookie's ticket to a `sessions` row, and the row to its `users` row. Throws the 401 for every way of not being signed in:
- *   no cookie, a value that cannot be a ticket (nothing is read), a ticket nobody holds, an ended session (revoked_at), a user who is not active or has no row: JV_UNAUTHENTICATED;
+ *   no cookie, a value that cannot be a ticket (nothing is read), a ticket nobody holds, an ended session (revoked_at), a user who is not active or has no row, a user whose role has no row or
+ *   is switched off: JV_UNAUTHENTICATED;
  *   a session past its absolute lifetime (expires_at) or idle for more than 12 hours (last_seen_at): JV_SESSION_EXPIRED, and the session is marked ended if it was not (U4).
  * It stops at the first reason: an expired session never reads the user ("nothing else is read", D2). It reads on a short checkout of its own that is given back before the handler runs, so a
  * slow call never holds a pool place for its session.
@@ -121,11 +137,21 @@ export async function lookupSession(app: FastifyInstance, request: FastifyReques
     if (s.revoked_at !== null) throw UNAUTHENTICATED();
     const [u] = await reader.rows<UserRow>(USER_SQL, [s.user_id]);
     if (!u || Number(u.active) !== 1) throw UNAUTHENTICATED();
-    // a role the matrix does not know (the table's CHECK forbids it) is no role at all: fail closed
-    if (!(ROLES as readonly string[]).includes(u.role)) throw UNAUTHENTICATED();
+    // a role with no row (the foreign key forbids it) or a role that is switched off is no role at all: fail closed (DESIGN 6.3)
+    if (u.role_name === null || Number(u.role_active) !== 1) throw UNAUTHENTICATED();
+    const grants = grantsOf({ roleKey: u.role, roleTicks: u.ticks, isSuperAdmin: Number(u.is_super_admin) === 1 });
     return {
       auth: {
-        user: { id: u.id, email: u.email, fullName: u.full_name, role: u.role as Role, mustChangePassword: Number(u.must_change_password) === 1 },
+        user: {
+          id: u.id,
+          email: u.email,
+          fullName: u.full_name,
+          role: u.role,
+          roleName: u.role_name,
+          grants,
+          access: accessFingerprint(u.role, grants),
+          mustChangePassword: Number(u.must_change_password) === 1,
+        },
         session: { id: s.id, createdAt: s.created_at, lastSeenAt: s.last_seen_at, expiresAt: s.expires_at },
       },
     };

@@ -6,6 +6,8 @@ import { bodyOf, syncWorld } from './sync-support';
 
 // T-D18 (API12; I12, spec section 12): GET /v1/dashboard/health, the dashboard line of the owner in one call. The line itself is readHealth (scripts/health.mjs, MB03/MB05), asked through its twin in
 // src/reads/health.ts (tests/api/health-twin.test.ts keeps the two equal); the route repeats its figures and reasons and adds nothing of its own. The API's clock is "now" (S5): 17 Oct 2026 10:00 UTC.
+// Who may call is the tick activity_log, asked of the person's grants; the Owner is the one built-in role that holds it, so "the owner alone" below is the three built-in roles. A custom role holding
+// activity_log, and one holding every other tick, are in tests/api/access-reads.test.ts.
 
 let world: World;
 let root: Awaited<ReturnType<World['scratch']['root']>>;

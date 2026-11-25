@@ -11,6 +11,7 @@
 import type { Param } from '../db/stmt.js';
 import type { Reader } from '../db/tx.js';
 import { limits } from '../limits.js';
+import type { Grants } from '../permissions/grants.js';
 import { UUID_TEXT, formatRow, isBusinessDate, timestampFromWire, timestampToWire } from '../wire/format.js';
 import * as wire from '../wire/zod.js';
 import { readColumns, selectList } from './columns.js';
@@ -86,10 +87,10 @@ const KINDS = {
   fine_balance: 'weight',
 } as const;
 
-/** One page of the ledger of `customerId` for `role`. A customer with no events (or no such customer) has an empty ledger. */
-export async function readLedger(db: Reader, role: string, customerId: string, req: { after: LedgerCursor | null; limit: number }): Promise<LedgerPage> {
-  const columns = readColumns('customer_ledger', role);
-  for (const key of ['entry_date', 'entry_at', 'kind_rank', 'id']) if (!columns.includes(key)) throw new Error(`the ledger columns of the role lack ${key}, which the cursor needs`);
+/** One page of the ledger of `customerId` for a person with these `grants`. A customer with no events (or no such customer) has an empty ledger. */
+export async function readLedger(db: Reader, grants: Grants, customerId: string, req: { after: LedgerCursor | null; limit: number }): Promise<LedgerPage> {
+  const columns = readColumns('customer_ledger', grants);
+  for (const key of ['entry_date', 'entry_at', 'kind_rank', 'id']) if (!columns.includes(key)) throw new Error(`the ledger columns of the person lack ${key}, which the cursor needs`);
   if (!Number.isInteger(req.limit) || req.limit < 1 || req.limit > limits.syncPageRows) throw new RangeError('the ledger page is 1 to the sync page size');
   const raw = await db.rows<Record<string, unknown>>(ledgerStatement(columns, req.after !== null), ledgerParams(customerId, req.after, req.limit));
   const rows = raw.map((r) => {

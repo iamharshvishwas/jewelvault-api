@@ -77,14 +77,14 @@ const readSkus = async (tx: Tx, ids: readonly string[]): Promise<Map<string, Row
 
 /** X9. `key` is the Idempotency-Key as idempotencyKey() read it. */
 export async function setSkuStatus(app: FastifyInstance, request: FastifyRequest, auth: Auth, key: string, body: SetSkuStatusBody): Promise<{ value: SetSkuStatusResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   assertEachOnce(body.sku_ids);
   const target: SkuStatus = body.status;
   const note = body.note ?? null;
 
   return withTx(contextOf(app, request, auth), async (tx) => {
     const c = await claim(tx, { key, fn: 'set_sku_status', route: 'POST /v1/skus/status', body });
-    assertMayCall(role, 'fn:set_sku_status'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, 'fn:set_sku_status'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as SetSkuStatusResult, replayed: true };
 
     const locked = await lockPieces(tx, body.sku_ids); // ONE statement, MariaDB's id order (X0 item 5)
@@ -125,7 +125,7 @@ export async function setSkuStatus(app: FastifyInstance, request: FastifyRequest
     const after = changing.length === 0 ? before : await readSkus(tx, body.sku_ids);
     for (const id of changing) await auditChange(tx, { table: 'skus', action: 'update', before: before.get(id) as AuditedRow, after: after.get(id) as AuditedRow });
 
-    const value: SetSkuStatusResult = { skus: body.sku_ids.map((id) => wireRow('skus', role, after.get(id) as Row)) };
+    const value: SetSkuStatusResult = { skus: body.sku_ids.map((id) => wireRow('skus', grants, after.get(id) as Row)) };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };
   });

@@ -127,6 +127,7 @@ describe('T-D27 (HTTP half) the admin door exists only while JV_ADMIN_TOKEN_HASH
     ['POST', `/admin/v1/users/${randomUUID()}/activate`],
     ['POST', '/admin/v1/login-counters/clear'],
     ['POST', '/admin/v1/backup-pulls'],
+    ['POST', '/admin/v1/super-admin'],
   ] as const;
 
   it('with the hash unset every address of the door is 404 JV_NOT_FOUND, whatever token is sent, and no route of the door is registered', async () => {
@@ -141,11 +142,11 @@ describe('T-D27 (HTTP half) the admin door exists only while JV_ADMIN_TOKEN_HASH
     await app.close();
   });
 
-  it('with the hash set the door has its eight routes, all of the admin door under /admin/v1/, registered through route()', async () => {
+  it('with the hash set the door has its nine routes, all of the admin door under /admin/v1/, registered through route()', async () => {
     const app = buildApp({ config: testConfig({ logLevel: 'silent', adminTokenHash: HASH }) });
     await app.ready();
     const token = app.routeTable.filter((r) => r.kind === 'token');
-    expect(token).toHaveLength(8);
+    expect(token).toHaveLength(9);
     for (const r of token) {
       expect(r.name).toBe('admin');
       expect(r.url.startsWith('/admin/v1/')).toBe(true);
@@ -160,6 +161,7 @@ describe('T-D27 (HTTP half) the admin door exists only while JV_ADMIN_TOKEN_HASH
         'POST /admin/v1/users/:id/role',
         'POST /admin/v1/login-counters/clear',
         'POST /admin/v1/backup-pulls',
+        'POST /admin/v1/super-admin',
       ].sort(),
     );
     await app.close();
@@ -278,10 +280,10 @@ describe('T-D27 (HTTP half) the admin door exists only while JV_ADMIN_TOKEN_HASH
     expect(res.statusCode).toBe(201);
     const body = res.json() as { user: Record<string, any>; temporary_password: string };
     expect(Object.keys(body).sort()).toEqual(['temporary_password', 'user']);
-    expect(body.user).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), email: email.toLowerCase(), full_name: 'Meena Sharma', role: 'biller', active: true, must_change_password: true });
+    expect(body.user).toEqual({ id: expect.stringMatching(/^[0-9a-f-]{36}$/), email: email.toLowerCase(), full_name: 'Meena Sharma', role: 'biller', active: true, must_change_password: true, is_super_admin: false });
     expect(body.temporary_password.length).toBeGreaterThanOrEqual(16);
     const row = await userRow(body.user.id);
-    expect(row).toMatchObject({ email: email.toLowerCase(), full_name: 'Meena Sharma', role: 'biller', active: 1, must_change_password: 1, last_login_at: null });
+    expect(row).toMatchObject({ email: email.toLowerCase(), full_name: 'Meena Sharma', role: 'biller', active: 1, must_change_password: 1, last_login_at: null, is_super_admin: 0 });
     expect(row.password_hash).toMatch(/^\$(argon2id|scrypt)\$/);
     expect(row.password_hash).not.toContain(body.temporary_password);
     expect(await passwords.verify(body.temporary_password, row.password_hash)).toBe(true);
@@ -304,12 +306,14 @@ describe('T-D27 (HTTP half) the admin door exists only while JV_ADMIN_TOKEN_HASH
     expect(again.body).not.toContain(owner.email);
   });
 
-  it('refuses a body that is not exactly {email, full_name, role}: an unknown field, a role that does not exist, no name, a bad e-mail, a name that is too long, no body', async () => {
+  it('refuses a body that is not exactly {email, full_name, role}: an unknown field, a role that is not an active role (or not the shape of a role key), no name, a bad e-mail, a name that is too long, no body', async () => {
     const good = { email: newEmail(), full_name: 'Good Name', role: 'staff' };
     const bad: [string, unknown][] = [
       ['an unknown field (active)', { ...good, active: false }],
       ['an unknown field (password)', { ...good, password: 'x'.repeat(20) }],
+      ['an unknown field (is_super_admin)', { ...good, is_super_admin: true }],
       ['a role that does not exist', { ...good, role: 'admin' }],
+      ['a role key with a capital letter', { ...good, role: 'Staff' }],
       ['an empty role', { ...good, role: '' }],
       ['no name', { email: good.email, role: 'staff' }],
       ['a blank name', { ...good, full_name: '   ' }],
@@ -482,7 +486,7 @@ describe('T-D27 (HTTP half) the admin door exists only while JV_ADMIN_TOKEN_HASH
     expect(res.statusCode).toBe(200);
     const users = (res.json() as { users: Record<string, any>[] }).users;
     const mine = users.find((u) => u.id === made.id)!;
-    expect(mine).toEqual({ id: made.id, email: made.email, full_name: 'Made biller', role: 'biller', active: true, must_change_password: true, last_login_at: null, created_at: expect.stringMatching(/Z$/) });
+    expect(mine).toEqual({ id: made.id, email: made.email, full_name: 'Made biller', role: 'biller', active: true, must_change_password: true, is_super_admin: false, last_login_at: null, created_at: expect.stringMatching(/Z$/) });
     expect(users.length).toBe(await countOf('users'));
     expect(res.body).not.toMatch(/\$argon2|\$scrypt|password_hash|"password"/i);
     for (const u of users) expect(Object.keys(u).sort()).toEqual(Object.keys(mine).sort());
@@ -589,8 +593,9 @@ describe('T-D27 the temporary password is random, readable, and long enough to b
 // ------------------------------------------------------------------------------------------------ T-D14 clause
 
 describe('T-D14 (API09 clause) every admin call writes one `event` row with the role admin-cli, and no token or password is in any audit row of it', () => {
-  it('each of the eight calls leaves exactly one event row (actor empty, role admin-cli, its own request id), plus only the rows the triggers write for the change itself', async () => {
+  it('each of the nine calls leaves exactly one event row (actor empty, role admin-cli, its own request id), plus only the rows the triggers write for the change itself', async () => {
     const secrets: string[] = [TOKEN, HASH];
+    await world.sql.query('UPDATE users SET active = 0 WHERE is_super_admin = 1'); // the fixture holds an active Super Admin, and the door refuses a second one (R13)
     const calls: { name: string; res: LightMyRequestResponse; event: string; table: string; triggerRows: number }[] = [];
     const make = await call('POST', '/admin/v1/users', { payload: { email: newEmail(), full_name: 'Audit Subject', role: 'staff' } });
     const subject = (make.json() as { user: { id: string }; temporary_password: string });
@@ -605,6 +610,9 @@ describe('T-D14 (API09 clause) every admin call writes one `event` row with the 
     calls.push({ name: 'list', res: await call('GET', '/admin/v1/users'), event: 'admin_list_users', table: 'users', triggerRows: 0 });
     calls.push({ name: 'clear counters', res: await call('POST', '/admin/v1/login-counters/clear'), event: 'admin_clear_login_counters', table: 'sys_login_attempts', triggerRows: 0 });
     calls.push({ name: 'record pull', res: await call('POST', '/admin/v1/backup-pulls', { payload: { file: 'daily/2026-10-17.enc', sha256: randomBytes(32).toString('hex') } }), event: 'admin_record_pull', table: 'settings', triggerRows: 1 });
+    const superAdmin = await call('POST', '/admin/v1/super-admin', { payload: { email: newEmail(), full_name: 'Audit Super' } });
+    secrets.push((superAdmin.json() as { temporary_password: string }).temporary_password);
+    calls.push({ name: 'make super admin', res: superAdmin, event: 'admin_make_super_admin', table: 'users', triggerRows: 1 });
 
     for (const c of calls) {
       expect(c.res.statusCode, c.name).toBeLessThan(300);
@@ -845,14 +853,20 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
     }
   });
 
-  it('the route table: the only routes that can create or change a user are token routes of the admin door; no session route writes under /users', () => {
-    const writes = world.app.routeTable.filter((r) => r.method !== 'GET' && /users/.test(r.url));
+  // A8 CHANGED ON PURPOSE (access plan Task 14): the admin door was the only way to create or change a person. The Super Admin's own five calls under /v1/super/people now do as well (add, edit the name or e-mail,
+  // change the role, switch off or on, reset the password); they are `super` rows that only the one Super Admin passes, and never on her own login but for the edit (tests/api/super-people.test.ts says all of it).
+  it('the route table: the routes that create or change a person are the token routes of the admin door and the five rows of the Super Admin under /v1/super/people; no other session route writes under /users or /people', () => {
+    const writes = world.app.routeTable.filter((r) => r.method !== 'GET' && /(users|people)/.test(r.url)); // a substring, as the filter was before the people calls: any write whose address holds either word
     expect(writes.length).toBeGreaterThan(0);
-    for (const r of writes) expect(r, `${r.method} ${r.url}`).toMatchObject({ kind: 'token', name: 'admin' });
+    const FIVE = ['super:people.active', 'super:people.add', 'super:people.edit', 'super:people.reset', 'super:people.role'];
+    for (const r of writes.filter((x) => x.kind === 'token')) expect(r, `${r.method} ${r.url}`).toMatchObject({ kind: 'token', name: 'admin' });
+    const session = writes.filter((r) => r.kind !== 'token');
+    expect(session.map((r) => r.action).sort()).toEqual(FIVE);
+    for (const r of session) expect(r, `${r.method} ${r.url}`).toMatchObject({ kind: 'matrix', access: { superAdmin: true } });
     for (const [action, row] of Object.entries(MATRIX)) if ('edit' in row && row.edit) expect(row.edit.table, action).not.toBe('users');
   });
 
-  it('A8, U2: the statements that insert into or update `users` are in the admin door and, for the user\'s own password, the session routes: nowhere else, and none outside the door sets a role or active', () => {
+  it('A8 (changed on purpose, Task 14), U2: the statements that insert into or update `users` are in the admin door, in the session routes for the user\'s own password, and in the Super Admin\'s five people calls: nowhere else, and none outside the door sets the Super Admin flag', () => {
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
@@ -869,10 +883,14 @@ describe('T-D20 (HTTP half) no route updates users in M1: PATCH, PUT and POST on
     }
     for (const [file, hits] of Object.entries(found)) {
       if (file.startsWith(`src${'/'}admin${'/'}`)) continue;
-      expect(file, 'a statement that writes users outside the admin door').toBe('src/auth/loginRoutes.ts');
-      for (const h of hits) {
-        expect(h).toMatch(/SET\s+password_hash\s*=\s*\?,\s*must_change_password\s*=\s*0\s+WHERE\s+id\s*=\s*\?/i);
-        expect(h).not.toMatch(/\b(role|active|email)\s*=/i);
+      expect(['src/auth/loginRoutes.ts', 'src/super/people.ts'], 'a statement that writes users outside the admin door and the Super Admin\'s people calls').toContain(file);
+      for (const h of hits) expect(h, `${file} sets the Super Admin flag`).not.toMatch(/is_super_admin/i); // DESIGN 6.6 rule 3: the flag is set by the admin door only
+      if (file === 'src/super/people.ts') expect(hits, 'the five statements of the people calls (the add, and the edit, role, switch and reset updates): a sixth is a new way to write a login and is added here on purpose').toHaveLength(5);
+      if (file === 'src/auth/loginRoutes.ts') {
+        for (const h of hits) {
+          expect(h).toMatch(/SET\s+password_hash\s*=\s*\?,\s*must_change_password\s*=\s*0\s+WHERE\s+id\s*=\s*\?/i);
+          expect(h).not.toMatch(/\b(role|active|email)\s*=/i);
+        }
       }
     }
     expect(Object.keys(found).some((f) => f.startsWith(`src${'/'}admin${'/'}`)), 'the door has its statements').toBe(true);

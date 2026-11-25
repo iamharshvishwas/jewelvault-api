@@ -1,0 +1,1766 @@
+{
+  "dailyTotalsDays": {
+    "biller": 2,
+    "owner": null,
+    "staff": 0
+  },
+  "fields": {
+    "back_dates": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "cash_override_reason": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "change_closed_order": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "original_net_weight": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "rewrite_photo_ids": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    }
+  },
+  "rateReviewRoles": [
+    "biller"
+  ],
+  "readColumns": {
+    "audit_log": {
+      "biller": null,
+      "owner": [
+        "id",
+        "at",
+        "actor",
+        "actor_role",
+        "request_id",
+        "table_name",
+        "row_id",
+        "action",
+        "old_row",
+        "new_row"
+      ],
+      "staff": null
+    },
+    "backup_runs": {
+      "biller": null,
+      "owner": [
+        "id",
+        "ran_at",
+        "kind",
+        "ok",
+        "bytes",
+        "detail"
+      ],
+      "staff": null
+    },
+    "bill_items": {
+      "biller": [
+        "id",
+        "bill_id",
+        "line_no",
+        "sku_id",
+        "design_no",
+        "sku_no",
+        "category",
+        "material",
+        "purity",
+        "selling_method",
+        "gross_weight",
+        "customer_net_weight",
+        "quantity",
+        "metal_rate",
+        "labour_rate",
+        "labour_amount",
+        "piroi",
+        "other_charges",
+        "metal_amount",
+        "fine_weight_due",
+        "item_total",
+        "tax_rate",
+        "tax_amount",
+        "list_metal_rate",
+        "list_labour_rate",
+        "created_at",
+        "updated_at"
+      ],
+      "owner": [
+        "id",
+        "bill_id",
+        "line_no",
+        "sku_id",
+        "design_no",
+        "sku_no",
+        "category",
+        "material",
+        "purity",
+        "selling_method",
+        "gross_weight",
+        "customer_net_weight",
+        "quantity",
+        "metal_rate",
+        "labour_rate",
+        "labour_amount",
+        "piroi",
+        "other_charges",
+        "metal_amount",
+        "fine_weight_due",
+        "item_total",
+        "tax_rate",
+        "tax_amount",
+        "list_metal_rate",
+        "list_labour_rate",
+        "created_at",
+        "updated_at"
+      ],
+      "staff": null
+    },
+    "bill_summary": {
+      "biller": [
+        "id",
+        "bill_no",
+        "customer_id",
+        "bill_date",
+        "doc_type",
+        "sale_type",
+        "status",
+        "reissue_of",
+        "grand_total",
+        "received",
+        "pending",
+        "fine_due",
+        "fine_settled",
+        "fine_pending",
+        "payment_status",
+        "item_count",
+        "created_at",
+        "updated_at"
+      ],
+      "owner": [
+        "id",
+        "bill_no",
+        "customer_id",
+        "bill_date",
+        "doc_type",
+        "sale_type",
+        "status",
+        "reissue_of",
+        "grand_total",
+        "received",
+        "pending",
+        "fine_due",
+        "fine_settled",
+        "fine_pending",
+        "payment_status",
+        "item_count",
+        "created_at",
+        "updated_at"
+      ],
+      "staff": null
+    },
+    "bills": {
+      "biller": [
+        "id",
+        "bill_no",
+        "customer_id",
+        "bill_date",
+        "doc_type",
+        "sale_type",
+        "status",
+        "cancel_reason",
+        "cancelled_at",
+        "cancelled_on",
+        "cancelled_by",
+        "reissue_of",
+        "pricing_version",
+        "subtotal",
+        "discount",
+        "additional_charges",
+        "gst_percent",
+        "gst_amount",
+        "grand_total",
+        "round_off",
+        "fine_weight_due",
+        "notes",
+        "cash_override_reason",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "bill_no",
+        "customer_id",
+        "bill_date",
+        "doc_type",
+        "sale_type",
+        "status",
+        "cancel_reason",
+        "cancelled_at",
+        "cancelled_on",
+        "cancelled_by",
+        "reissue_of",
+        "pricing_version",
+        "subtotal",
+        "discount",
+        "additional_charges",
+        "gst_percent",
+        "gst_amount",
+        "grand_total",
+        "round_off",
+        "fine_weight_due",
+        "notes",
+        "cash_override_reason",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": null
+    },
+    "categories": {
+      "biller": [
+        "id",
+        "name",
+        "prefix",
+        "active",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "name",
+        "prefix",
+        "active",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": [
+        "id",
+        "name",
+        "prefix",
+        "active",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ]
+    },
+    "check_runs": {
+      "biller": null,
+      "owner": [
+        "id",
+        "ran_at",
+        "ok",
+        "details"
+      ],
+      "staff": null
+    },
+    "customer_balances": {
+      "biller": [
+        "id",
+        "billed",
+        "total_purchases",
+        "received",
+        "refunded",
+        "allocated",
+        "outstanding",
+        "advance",
+        "balance",
+        "fine_billed",
+        "fine_received",
+        "fine_allocated",
+        "fine_outstanding",
+        "fine_advance",
+        "fine_balance",
+        "last_purchase",
+        "updated_at"
+      ],
+      "owner": [
+        "id",
+        "billed",
+        "total_purchases",
+        "received",
+        "refunded",
+        "allocated",
+        "outstanding",
+        "advance",
+        "balance",
+        "fine_billed",
+        "fine_received",
+        "fine_allocated",
+        "fine_outstanding",
+        "fine_advance",
+        "fine_balance",
+        "last_purchase",
+        "updated_at"
+      ],
+      "staff": null
+    },
+    "customer_ledger": {
+      "biller": [
+        "customer_id",
+        "entry_date",
+        "entry_at",
+        "kind_rank",
+        "id",
+        "kind",
+        "description",
+        "debit",
+        "credit",
+        "fine_debit",
+        "fine_credit",
+        "balance",
+        "fine_balance"
+      ],
+      "owner": [
+        "customer_id",
+        "entry_date",
+        "entry_at",
+        "kind_rank",
+        "id",
+        "kind",
+        "description",
+        "debit",
+        "credit",
+        "fine_debit",
+        "fine_credit",
+        "balance",
+        "fine_balance"
+      ],
+      "staff": null
+    },
+    "customers": {
+      "biller": [
+        "id",
+        "name",
+        "mobile",
+        "customer_type",
+        "email",
+        "address",
+        "gst_number",
+        "pan",
+        "notes",
+        "is_walkin",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "name",
+        "mobile",
+        "customer_type",
+        "email",
+        "address",
+        "gst_number",
+        "pan",
+        "notes",
+        "is_walkin",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": null
+    },
+    "daily_rates": {
+      "biller": [
+        "id",
+        "material",
+        "purity",
+        "rate_per_gram",
+        "rate_date",
+        "confirmed_by",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "material",
+        "purity",
+        "rate_per_gram",
+        "rate_date",
+        "confirmed_by",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": [
+        "id",
+        "material",
+        "purity",
+        "rate_per_gram",
+        "rate_date",
+        "confirmed_by",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ]
+    },
+    "daily_totals": {
+      "biller": [
+        "business_date",
+        "mode",
+        "money_in",
+        "money_out",
+        "net"
+      ],
+      "owner": [
+        "business_date",
+        "mode",
+        "money_in",
+        "money_out",
+        "net"
+      ],
+      "staff": null
+    },
+    "designs": {
+      "biller": [
+        "id",
+        "design_no",
+        "name",
+        "category_id",
+        "subcategory_id",
+        "material",
+        "purity",
+        "selling_method",
+        "description",
+        "notes",
+        "tags",
+        "primary_photo_id",
+        "photo_ids",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "design_no",
+        "name",
+        "category_id",
+        "subcategory_id",
+        "material",
+        "purity",
+        "selling_method",
+        "description",
+        "notes",
+        "tags",
+        "primary_photo_id",
+        "photo_ids",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": [
+        "id",
+        "design_no",
+        "name",
+        "category_id",
+        "subcategory_id",
+        "material",
+        "purity",
+        "selling_method",
+        "description",
+        "notes",
+        "tags",
+        "primary_photo_id",
+        "photo_ids",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ]
+    },
+    "orders": {
+      "biller": [
+        "id",
+        "order_no",
+        "customer_id",
+        "description",
+        "delivery_date",
+        "status",
+        "photo_ids",
+        "notes",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "order_no",
+        "customer_id",
+        "description",
+        "delivery_date",
+        "status",
+        "photo_ids",
+        "notes",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": [
+        "id",
+        "order_no",
+        "customer_id",
+        "description",
+        "delivery_date",
+        "status",
+        "photo_ids",
+        "notes",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ]
+    },
+    "receipt_allocations": {
+      "biller": [
+        "id",
+        "receipt_id",
+        "bill_id",
+        "customer_id",
+        "amount",
+        "fine_grams",
+        "released_at",
+        "created_at",
+        "updated_at"
+      ],
+      "owner": [
+        "id",
+        "receipt_id",
+        "bill_id",
+        "customer_id",
+        "amount",
+        "fine_grams",
+        "released_at",
+        "created_at",
+        "updated_at"
+      ],
+      "staff": null
+    },
+    "receipts": {
+      "biller": [
+        "id",
+        "customer_id",
+        "kind",
+        "mode",
+        "amount",
+        "fine_grams",
+        "silver_rate",
+        "paid_on",
+        "reference",
+        "notes",
+        "is_opening",
+        "cash_override_reason",
+        "status",
+        "void_reason",
+        "voided_at",
+        "voided_on",
+        "voided_by",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "customer_id",
+        "kind",
+        "mode",
+        "amount",
+        "fine_grams",
+        "silver_rate",
+        "paid_on",
+        "reference",
+        "notes",
+        "is_opening",
+        "cash_override_reason",
+        "status",
+        "void_reason",
+        "voided_at",
+        "voided_on",
+        "voided_by",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": null
+    },
+    "settings": {
+      "biller": [
+        "setting_key",
+        "value",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "setting_key",
+        "value",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": [
+        "setting_key",
+        "value",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ]
+    },
+    "sku_private": {
+      "biller": null,
+      "owner": [
+        "sku_id",
+        "original_net_weight",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": null
+    },
+    "skus": {
+      "biller": [
+        "id",
+        "design_id",
+        "sku_no",
+        "barcode",
+        "gross_weight",
+        "customer_net_weight",
+        "stones",
+        "stone_weight",
+        "kundan",
+        "kundan_weight",
+        "piroi",
+        "labour_retail",
+        "labour_semi",
+        "labour_wholesale",
+        "status",
+        "location",
+        "notes",
+        "sold_bill_id",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "design_id",
+        "sku_no",
+        "barcode",
+        "gross_weight",
+        "customer_net_weight",
+        "stones",
+        "stone_weight",
+        "kundan",
+        "kundan_weight",
+        "piroi",
+        "labour_retail",
+        "labour_semi",
+        "labour_wholesale",
+        "status",
+        "location",
+        "notes",
+        "sold_bill_id",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": [
+        "id",
+        "design_id",
+        "sku_no",
+        "barcode",
+        "gross_weight",
+        "customer_net_weight",
+        "stones",
+        "stone_weight",
+        "kundan",
+        "kundan_weight",
+        "piroi",
+        "labour_retail",
+        "labour_semi",
+        "labour_wholesale",
+        "status",
+        "location",
+        "notes",
+        "sold_bill_id",
+        "archived_at",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ]
+    },
+    "subcategories": {
+      "biller": [
+        "id",
+        "category_id",
+        "name",
+        "active",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "owner": [
+        "id",
+        "category_id",
+        "name",
+        "active",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ],
+      "staff": [
+        "id",
+        "category_id",
+        "name",
+        "active",
+        "created_at",
+        "updated_at",
+        "created_by",
+        "updated_by"
+      ]
+    },
+    "users": {
+      "biller": [
+        "id",
+        "full_name",
+        "role",
+        "active",
+        "updated_at"
+      ],
+      "owner": [
+        "id",
+        "full_name",
+        "role",
+        "active",
+        "updated_at"
+      ],
+      "staff": [
+        "id",
+        "full_name",
+        "role",
+        "active",
+        "updated_at"
+      ]
+    }
+  },
+  "rows": {
+    "edit:categories.insert": {
+      "biller": false,
+      "owner": true,
+      "staff": true
+    },
+    "edit:categories.update": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "edit:customers.update": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "edit:daily_rates.insert": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "edit:daily_rates.update": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "edit:designs.update": {
+      "biller": false,
+      "owner": true,
+      "staff": true
+    },
+    "edit:orders.update": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "edit:settings.update": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "edit:sku_private.update": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "edit:skus.update": {
+      "biller": false,
+      "owner": true,
+      "staff": true
+    },
+    "edit:subcategories.insert": {
+      "biller": false,
+      "owner": true,
+      "staff": true
+    },
+    "edit:subcategories.update": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "fn:add_opening_balance": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "fn:cancel_bill": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "fn:create_bill": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "fn:create_customer": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "fn:create_design": {
+      "biller": false,
+      "owner": true,
+      "staff": true
+    },
+    "fn:create_order": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "fn:issue_refund": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "fn:quote_bill": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "fn:record_payment": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "fn:reissue_bill": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "fn:set_sku_status": {
+      "biller": false,
+      "owner": true,
+      "staff": true
+    },
+    "fn:settle_fine": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "fn:void_receipt": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "owner:download_record": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "photo:remove": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "photo:upload": {
+      "biller": false,
+      "owner": true,
+      "staff": true
+    },
+    "photo:upload_order": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:audit_log": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "read:bill_items": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:bill_summary": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:bills": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:categories": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:customer_balances": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:customer_ledger": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:customers": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:daily_rates": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:daily_totals": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:dashboard_health": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "read:designs": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:health_checks": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "read:orders": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:poll": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:receipt_allocations": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:receipts": {
+      "biller": true,
+      "owner": true,
+      "staff": false
+    },
+    "read:settings": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:sku_private": {
+      "biller": false,
+      "owner": true,
+      "staff": false
+    },
+    "read:skus": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:subcategories": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "read:users": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "session:activity": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "session:change-password": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "session:logout": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    },
+    "session:me": {
+      "biller": true,
+      "owner": true,
+      "staff": true
+    }
+  },
+  "settingKeys": {
+    "biller": null,
+    "owner": null,
+    "staff": [
+      "numbering",
+      "materials",
+      "locations",
+      "custom_fields",
+      "tag_template",
+      "photos",
+      "data_epoch"
+    ]
+  },
+  "writeVerdicts": {
+    "edit:categories.insert": {
+      "biller": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "prefix": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "prefix": "allowed",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "prefix": "allowed",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:categories.update": {
+      "biller": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "prefix": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "active": "allowed",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "prefix": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "prefix": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:customers.update": {
+      "biller": {
+        "address": "allowed",
+        "archived_at": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_type": "allowed",
+        "email": "allowed",
+        "gst_number": "allowed",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "is_walkin": "forbidden",
+        "mobile": "allowed",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "pan": "allowed",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown",
+        "walkin_key": "forbidden"
+      },
+      "owner": {
+        "address": "allowed",
+        "archived_at": "allowed",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_type": "allowed",
+        "email": "allowed",
+        "gst_number": "allowed",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "is_walkin": "forbidden",
+        "mobile": "allowed",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "pan": "allowed",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown",
+        "walkin_key": "forbidden"
+      },
+      "staff": {
+        "address": "forbidden",
+        "archived_at": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_type": "forbidden",
+        "email": "forbidden",
+        "gst_number": "forbidden",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "is_walkin": "forbidden",
+        "mobile": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "notes": "forbidden",
+        "pan": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown",
+        "walkin_key": "forbidden"
+      }
+    },
+    "edit:daily_rates.insert": {
+      "biller": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "material": "allowed",
+        "nonexistent_field": "unknown",
+        "purity": "allowed",
+        "rate_date": "allowed",
+        "rate_per_gram": "allowed",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "material": "allowed",
+        "nonexistent_field": "unknown",
+        "purity": "allowed",
+        "rate_date": "allowed",
+        "rate_per_gram": "allowed",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "material": "forbidden",
+        "nonexistent_field": "unknown",
+        "purity": "forbidden",
+        "rate_date": "forbidden",
+        "rate_per_gram": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:daily_rates.update": {
+      "biller": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "material": "forbidden",
+        "nonexistent_field": "unknown",
+        "purity": "forbidden",
+        "rate_date": "forbidden",
+        "rate_per_gram": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "material": "forbidden",
+        "nonexistent_field": "unknown",
+        "purity": "forbidden",
+        "rate_date": "forbidden",
+        "rate_per_gram": "allowed",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "material": "forbidden",
+        "nonexistent_field": "unknown",
+        "purity": "forbidden",
+        "rate_date": "forbidden",
+        "rate_per_gram": "forbidden",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:designs.update": {
+      "biller": {
+        "archived_at": "forbidden",
+        "cancelled_by": "unknown",
+        "category_id": "forbidden",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "description": "forbidden",
+        "design_no": "forbidden",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "material": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "notes": "forbidden",
+        "photo_ids": "forbidden",
+        "primary_photo_id": "forbidden",
+        "purity": "forbidden",
+        "selling_method": "forbidden",
+        "set_by": "unknown",
+        "subcategory_id": "forbidden",
+        "tags": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "archived_at": "allowed",
+        "cancelled_by": "unknown",
+        "category_id": "allowed",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "description": "allowed",
+        "design_no": "forbidden",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "material": "allowed",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "photo_ids": "allowed",
+        "primary_photo_id": "allowed",
+        "purity": "allowed",
+        "selling_method": "allowed",
+        "set_by": "unknown",
+        "subcategory_id": "allowed",
+        "tags": "allowed",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "archived_at": "allowed",
+        "cancelled_by": "unknown",
+        "category_id": "allowed",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "description": "allowed",
+        "design_no": "forbidden",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "material": "forbidden",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "photo_ids": "allowed",
+        "primary_photo_id": "allowed",
+        "purity": "forbidden",
+        "selling_method": "forbidden",
+        "set_by": "unknown",
+        "subcategory_id": "allowed",
+        "tags": "allowed",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:orders.update": {
+      "biller": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_id": "forbidden",
+        "delivery_date": "allowed",
+        "description": "allowed",
+        "id": "forbidden",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "order_no": "forbidden",
+        "photo_ids": "allowed",
+        "set_by": "unknown",
+        "status": "allowed",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_id": "forbidden",
+        "delivery_date": "allowed",
+        "description": "allowed",
+        "id": "forbidden",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "order_no": "forbidden",
+        "photo_ids": "allowed",
+        "set_by": "unknown",
+        "status": "allowed",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_id": "forbidden",
+        "delivery_date": "forbidden",
+        "description": "forbidden",
+        "id": "forbidden",
+        "nonexistent_field": "unknown",
+        "notes": "forbidden",
+        "order_no": "forbidden",
+        "photo_ids": "forbidden",
+        "set_by": "unknown",
+        "status": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:settings.update": {
+      "biller": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "unknown",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "setting_key": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "value": "forbidden",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "unknown",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "setting_key": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "value": "allowed",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "unknown",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "setting_key": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "value": "forbidden",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:sku_private.update": {
+      "biller": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "unknown",
+        "nonexistent_field": "unknown",
+        "original_net_weight": "forbidden",
+        "set_by": "unknown",
+        "sku_id": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "unknown",
+        "nonexistent_field": "unknown",
+        "original_net_weight": "allowed",
+        "set_by": "unknown",
+        "sku_id": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "unknown",
+        "nonexistent_field": "unknown",
+        "original_net_weight": "forbidden",
+        "set_by": "unknown",
+        "sku_id": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:skus.update": {
+      "biller": {
+        "archived_at": "forbidden",
+        "barcode": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_net_weight": "forbidden",
+        "design_id": "forbidden",
+        "gross_weight": "forbidden",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "kundan": "forbidden",
+        "kundan_weight": "forbidden",
+        "labour_retail": "forbidden",
+        "labour_semi": "forbidden",
+        "labour_wholesale": "forbidden",
+        "location": "forbidden",
+        "nonexistent_field": "unknown",
+        "notes": "forbidden",
+        "piroi": "forbidden",
+        "set_by": "unknown",
+        "sku_no": "forbidden",
+        "sold_bill_id": "forbidden",
+        "status": "forbidden",
+        "stone_weight": "forbidden",
+        "stones": "forbidden",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "archived_at": "forbidden",
+        "barcode": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_net_weight": "allowed",
+        "design_id": "forbidden",
+        "gross_weight": "allowed",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "kundan": "allowed",
+        "kundan_weight": "allowed",
+        "labour_retail": "allowed",
+        "labour_semi": "allowed",
+        "labour_wholesale": "allowed",
+        "location": "allowed",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "piroi": "allowed",
+        "set_by": "unknown",
+        "sku_no": "forbidden",
+        "sold_bill_id": "forbidden",
+        "status": "forbidden",
+        "stone_weight": "allowed",
+        "stones": "allowed",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "archived_at": "forbidden",
+        "barcode": "forbidden",
+        "cancelled_by": "unknown",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "customer_net_weight": "allowed",
+        "design_id": "forbidden",
+        "gross_weight": "allowed",
+        "id": "forbidden",
+        "import_batch_id": "forbidden",
+        "kundan": "allowed",
+        "kundan_weight": "allowed",
+        "labour_retail": "allowed",
+        "labour_semi": "allowed",
+        "labour_wholesale": "allowed",
+        "location": "allowed",
+        "nonexistent_field": "unknown",
+        "notes": "allowed",
+        "piroi": "allowed",
+        "set_by": "unknown",
+        "sku_no": "forbidden",
+        "sold_bill_id": "forbidden",
+        "status": "forbidden",
+        "stone_weight": "allowed",
+        "stones": "allowed",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:subcategories.insert": {
+      "biller": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "category_id": "forbidden",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "category_id": "allowed",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "category_id": "allowed",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    },
+    "edit:subcategories.update": {
+      "biller": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "category_id": "forbidden",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "owner": {
+        "active": "allowed",
+        "cancelled_by": "unknown",
+        "category_id": "forbidden",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "allowed",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      },
+      "staff": {
+        "active": "forbidden",
+        "cancelled_by": "unknown",
+        "category_id": "forbidden",
+        "confirmed_by": "unknown",
+        "created_at": "unknown",
+        "created_by": "unknown",
+        "id": "forbidden",
+        "name": "forbidden",
+        "nonexistent_field": "unknown",
+        "set_by": "unknown",
+        "updated_at": "unknown",
+        "updated_by": "unknown",
+        "voided_by": "unknown"
+      }
+    }
+  }
+}

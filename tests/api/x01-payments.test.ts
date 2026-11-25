@@ -340,6 +340,7 @@ describe('T-A12 (create_bill) the cash limit, the owner\'s reason, the PAN promp
     for (const cash of ['200000.00', '1000.00']) {
       const error = await refusedWith(sell(c, '300000.00', { payments: [cashOf(cash)], cash_override_reason: REASON }, 'biller'), 403, 'JV_FORBIDDEN', before);
       expect(error.details).toMatchObject({ field: 'cash_override_reason' });
+      expect(error.message).toBe('Your role cannot give a reason for cash over the limit.');
     }
   });
 

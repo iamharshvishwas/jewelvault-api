@@ -1,17 +1,20 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { basename, join, relative } from 'node:path';
 import Fastify from 'fastify';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { buildApp } from '../../src/app';
 import { JvError } from '../../src/errors';
+import { NO_GRANTS } from '../../src/permissions/grants';
 import { MATRIX, PUBLIC_ROUTES } from '../../src/permissions/matrix';
 import { RouteDeclarationError, createRoute, describeRoutes, installRouteGuard, route, unroutedActions, unroutedPublic } from '../../src/permissions/route';
 import { SESSION_COOKIE } from '../../src/permissions/session';
 import * as wire from '../../src/wire/zod';
+import { builtinGrants } from './builtin-roles';
 import { CALLERS, type CallerName, type World, makeWorld, registerStubs } from './cells';
+import { sourceFiles as listSources } from './static-lib';
 import { REPO, buildDist, csrfHeaders, secret, testConfig } from './support';
 
 /** The application with its wrapper and its error handling and none of its own routes (routes: false), so a test can register what it likes. */
@@ -55,7 +58,7 @@ describe('T-D01 an endpoint is registered through route(), with an action of the
     route(app, { token: 'admin', method: 'POST', url: '/admin/v1/users', verify: () => undefined, handler });
     route(app, { token: 'job', method: 'GET', url: '/internal/jobs/health', verify: () => undefined, handler });
     const byUrl = Object.fromEntries(app.routeTable.map((r) => [r.url, r]));
-    expect(byUrl['/v1/receipts/:id/void']).toMatchObject({ kind: 'matrix', method: 'POST', action: 'fn:void_receipt', roles: ['owner'] });
+    expect(byUrl['/v1/receipts/:id/void']).toMatchObject({ kind: 'matrix', method: 'POST', action: 'fn:void_receipt', access: { anyOf: ['payment_void'] } });
     expect(byUrl['/readyz']).toMatchObject({ kind: 'public', method: 'GET', name: 'ready' });
     expect(byUrl['/admin/v1/users']).toMatchObject({ kind: 'token', method: 'POST', name: 'admin' });
     expect(byUrl['/internal/jobs/health']).toMatchObject({ kind: 'token', method: 'GET', name: 'job' });
@@ -121,8 +124,8 @@ describe('T-D01 an endpoint is registered through route(), with an action of the
   }, 120_000);
 });
 
-describe('T-D01 the route list is printed, with the roles of every route', () => {
-  it('describeRoutes names every registered route with its address, its kind, its action and its roles; unroutedActions names the rows that have no route yet', () => {
+describe('T-D01 the route list is printed, with who may call every route', () => {
+  it('describeRoutes names every registered route with its address, its kind, its action and its access (open, super, or the ticks any one of which opens it); unroutedActions names the rows that have no route yet', () => {
     const app = bare();
     registerStubs(app, []);
     const lines = describeRoutes(app);
@@ -130,7 +133,8 @@ describe('T-D01 the route list is printed, with the roles of every route', () =>
       const line = lines.find((l) => l.includes(` ${row.path} `) && l.startsWith(row.method));
       expect(line, action).toBeDefined();
       expect(line, action).toContain(action);
-      expect(line, action).toContain(`roles=${row.roles.join(',')}`);
+      const a = row.access;
+      expect(line, action).toContain(`access=${'open' in a ? 'open' : 'superAdmin' in a ? 'super' : `any(${a.anyOf.join(',')})`}`);
     }
     for (const [name, p] of Object.entries(PUBLIC_ROUTES)) expect(lines.some((l) => l.startsWith(p.method) && l.includes(` ${p.path} `) && l.includes('public') && l.includes(name)), name).toBe(true);
     expect(unroutedActions(app)).toEqual([]);
@@ -139,7 +143,7 @@ describe('T-D01 the route list is printed, with the roles of every route', () =>
     expect(unroutedPublic(bare()).sort()).toEqual(['login', 'photo-full', 'photo-thumb', 'ready']); // /healthz is the one public route the application has so far
   });
 
-  it('npm run check:routes (the compiled app) prints the routes with their roles and the rows still waiting for their route, and exits 0', () => {
+  it('npm run check:routes (the compiled app) prints the routes with their access and the rows still waiting for their route, and exits 0', () => {
     const dist = buildDist();
     const out = execFileSync(process.execPath, [join(REPO, 'scripts', 'check-routes.mjs'), dist], { cwd: REPO, encoding: 'utf8' });
     expect(out).toMatch(/GET\s+\/healthz\s+public/);
@@ -484,7 +488,7 @@ describe('T-D08 no route inserts or updates bills, bill_items, receipts or recei
 
   it('control: with a route that does PATCH /v1/bills/:id behind the wrapper the same probe finds it', async () => {
     const wrong = createRoute({
-      matrix: { 'edit:bills.update': { kind: 'edit', method: 'PATCH', path: '/v1/bills/:id', roles: ['owner'], mustChange: false, spec: 'a mutant', edit: { table: 'bills', op: 'update', shape: 'changes' } } },
+      matrix: { 'edit:bills.update': { kind: 'edit', method: 'PATCH', path: '/v1/bills/:id', access: { anyOf: ['bill_cancel'] }, mustChange: false, spec: 'a mutant', edit: { table: 'bills', op: 'update', shape: 'changes' } } },
       publicRoutes: {},
       tokenDoors: {},
     });
@@ -581,14 +585,178 @@ describe('T-D10 roles are checked in one place: no role string outside the permi
 
   it('a service function checks the role again at its start through the matrix, with no role string of its own (A6, X0 item 2)', async () => {
     const { assertMayCall } = await import('../../src/permissions/route');
-    expect(() => assertMayCall('biller', 'fn:void_receipt')).toThrow(JvError);
+    expect(() => assertMayCall(builtinGrants('biller'), 'fn:void_receipt')).toThrow(JvError);
     try {
-      assertMayCall('biller', 'fn:void_receipt');
+      assertMayCall(builtinGrants('biller'), 'fn:void_receipt');
     } catch (e) {
       expect((e as JvError).code).toBe('JV_FORBIDDEN');
       expect((e as JvError).status).toBe(403);
     }
-    expect(() => assertMayCall('owner', 'fn:void_receipt')).not.toThrow();
-    expect(() => assertMayCall('whoever', 'fn:void_receipt')).toThrow(JvError);
+    expect(() => assertMayCall(builtinGrants('owner'), 'fn:void_receipt')).not.toThrow();
+    expect(() => assertMayCall(NO_GRANTS, 'fn:void_receipt')).toThrow(JvError); // a person with no tick at all
+  });
+});
+
+// ------------------------------------------------------------------ T-D10b
+
+describe('T-D10b the permission functions are given the grants the session read, never a role: no call outside src/permissions/ passes the role, and every money function checks again', () => {
+  // The functions that decide who may do what. Each takes the person's Grants (src/permissions/grants.ts). The role KEY (`auth.user.role`) is kept for the audit trail and for display and is never an
+  // argument of these: the types refuse a string now, and this test is the second wall, so that a role name cannot come back into a check by a widened type or a cast.
+  const GATES = new Set(['mayCall', 'mayUseField', 'assertMayCall', 'readableSettingKeys', 'dailyTotalsWindowDays', 'writeFieldVerdict', 'checkBillDate']);
+  const ROLE_NAMES = new Set(['role', 'roleKey', 'roleName']);
+
+  interface Found {
+    file: string;
+    line: number;
+    text: string;
+  }
+
+  const parse = (file: string, source: string) => ts.createSourceFile(file, source, ts.ScriptTarget.ES2022, true, ts.ScriptKind.TS);
+  const srcDir = join(REPO, 'src');
+  const tsFiles = (dir: string) => listSources(dir, /\.(ts|mts)$/).filter((f) => !f.endsWith('.d.ts'));
+
+  /** A call of one of the gate functions with an argument that names a role: `auth.user.role`, `user['role']` or a bare `role` (also `roleKey` and `roleName`). */
+  function roleArguments(file: string, source: string): Found[] {
+    const sf = parse(file, source);
+    const found: Found[] = [];
+    const namesRole = (n: ts.Node): boolean =>
+      (ts.isIdentifier(n) && ROLE_NAMES.has(n.text)) || (ts.isElementAccessExpression(n) && ts.isStringLiteralLike(n.argumentExpression) && ROLE_NAMES.has(n.argumentExpression.text)) || ts.forEachChild(n, namesRole) === true;
+    const visit = (n: ts.Node) => {
+      if (ts.isCallExpression(n)) {
+        const callee = ts.isIdentifier(n.expression) ? n.expression.text : ts.isPropertyAccessExpression(n.expression) ? n.expression.name.text : '';
+        if (GATES.has(callee) && n.arguments.some(namesRole)) found.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, text: n.getText(sf) });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return found;
+  }
+
+  /** The text of an expression that is a string literal, or an identifier that a module-level `const NAME = '...'` gives one (`as const` and brackets looked through): how a function file spells its action, `'fn:create_bill'` or `ACTION`. */
+  function stringOf(sf: ts.SourceFile, expression: ts.Expression | undefined): string | undefined {
+    let e = expression;
+    while (e !== undefined && (ts.isAsExpression(e) || ts.isParenthesizedExpression(e) || ts.isSatisfiesExpression(e))) e = e.expression;
+    if (e === undefined) return undefined;
+    if (ts.isStringLiteralLike(e)) return e.text;
+    if (!ts.isIdentifier(e)) return undefined;
+    for (const statement of sf.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const d of statement.declarationList.declarations) if (ts.isIdentifier(d.name) && d.name.text === e.text && d.initializer !== undefined) return stringOf(sf, d.initializer);
+    }
+    return undefined;
+  }
+
+  /**
+   * Whether the source holds the second check of X0 item 2 FOR ITS OWN ROW: a call `assertMayCall(grants, <the action of the file's own route>)`, made inside the transaction. The file's own row is the `action: ...` of its route
+   * registration (the other `action:` keys of these files are audit verbs, `'insert'` and `'update'`, and never start with `fn:`); the call may spell it as the same literal or as the constant the registration names.
+   * A call for another row does not count: x01CreateBill.ts holds two calls, one in assertMayUseBody for `fn:record_payment` (payment lines) and its own for `fn:create_bill` at the end of createBill, and deleting the
+   * second must leave this false. The same text in a comment or in a string is not a call.
+   */
+  function hasSecondCheck(file: string, source: string): boolean {
+    const sf = parse(file, source);
+    const own = new Set<string>();
+    const checked = new Set<string>();
+    const visit = (n: ts.Node) => {
+      if (ts.isPropertyAssignment(n) && (ts.isIdentifier(n.name) || ts.isStringLiteral(n.name)) && n.name.text === 'action') {
+        const action = stringOf(sf, n.initializer);
+        if (action !== undefined && action.startsWith('fn:')) own.add(action);
+      }
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'assertMayCall') {
+        const first = n.arguments[0];
+        const second = stringOf(sf, n.arguments[1]);
+        if (first !== undefined && ts.isIdentifier(first) && first.text === 'grants' && second !== undefined) checked.add(second);
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    return own.size === 1 && [...checked].some((action) => own.has(action));
+  }
+
+  it('the scanner can see a role handed to a gate function (control): it flags every spelling in a sample and leaves the calls that pass grants and the uses of the role that are not a check', () => {
+    const sample = [
+      "mayCall(auth.user.role, 'fn:create_bill');",
+      "mayUseField(request.auth!.user.role, 'back_dates');",
+      "assertMayCall(user['role'], 'fn:void_receipt');",
+      'readableSettingKeys(role);',
+      'dailyTotalsWindowDays(auth.user.roleKey);',
+      "writeFieldVerdict('edit:designs.update', auth.user.roleName, 'name');",
+      "checkBillDate(sent, today, auth.user.role, 'paid_on');",
+      "matrix.mayCall(session.role.toLowerCase(), 'x');",
+      // none of these is a role handed to a gate
+      "mayCall(auth.user.grants, 'fn:create_bill');",
+      "assertMayCall(grants, 'fn:void_receipt');",
+      "const shown = auth.user.role; log({ role: auth.user.role }); somethingElse(auth.user.role);",
+      "// mayCall(auth.user.role, 'x') is only a comment",
+    ].join('\n');
+    expect(roleArguments('sample.ts', sample).map((h) => h.line)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it('src/ outside src/permissions/ passes no role to mayCall, mayUseField, assertMayCall, readableSettingKeys, dailyTotalsWindowDays, writeFieldVerdict or checkBillDate', () => {
+    const files = tsFiles(srcDir).filter((f) => !relative(srcDir, f).startsWith('permissions/'));
+    expect(files.length, 'the scan found the source files').toBeGreaterThan(40);
+    const hits = files.flatMap((f) => roleArguments(f, readFileSync(f, 'utf8')));
+    expect(hits.map((h) => `${relative(REPO, h.file)}:${h.line} ${h.text}`)).toEqual([]);
+  });
+
+  // How a function file looks to the scanner: the route registration names the row the file answers, and the second check is a call for that row. The x01 shape is the one with two calls (the payment lines' and its own).
+  const X01_SHAPE = (own: boolean) =>
+    [
+      "export function assertMayUseBody(grants: Grants, input: Body): void {",
+      "  if (hasPayments(input)) assertMayCall(grants, 'fn:record_payment');",
+      '}',
+      'export async function createBill(grants: Grants, input: Body) {',
+      '  return withTx(ctx, async (tx) => {',
+      '    await claim(tx);',
+      own ? "    assertMayCall(grants, 'fn:create_bill'); // X0 item 2" : '',
+      '    assertMayUseBody(grants, input);',
+      "    await auditChange(tx, { table: 'bills', action: 'insert', before: null, after: row });",
+      '  });',
+      '}',
+      "route(app, { action: 'fn:create_bill', handler: createBill });",
+    ].join('\n');
+
+  it('the second-check scanner sees a missing call (control): the call is found in a function, for the file\'s own row, and not in a comment, a string, another name, another first argument or another row', () => {
+    const constant = "const ACTION = 'fn:void_receipt';\nexport async function f(grants: Grants) { return withTx(ctx, async (tx) => { await claim(tx); assertMayCall(grants, ACTION); }); }\nroute(app, { action: ACTION, handler: f });";
+    expect(hasSecondCheck('constant.ts', constant), 'the constant spelling (ACTION)').toBe(true);
+    expect(hasSecondCheck('literal.ts', X01_SHAPE(true)), 'the literal spelling, with the audit verbs of the file in the way').toBe(true);
+    const own = "assertMayCall(grants, ACTION);";
+    const registration = "const ACTION = 'fn:void_receipt'; route(app, { action: ACTION, handler });";
+    for (const [what, call] of [
+      ['a comment', "/* assertMayCall(grants, ACTION) */ // assertMayCall(grants, ACTION)"],
+      ['a string', "log('assertMayCall(grants, ACTION)');"],
+      ['another name', 'mayCall(grants, ACTION);'],
+      ['another first argument', 'assertMayCall(auth.user.grants, ACTION); assertMayCall(ACTION, grants);'],
+      ['another row', "assertMayCall(grants, 'fn:record_payment');"],
+      ['an argument it cannot read', 'assertMayCall(grants, action);'],
+      ['no call at all', 'return grants;'],
+    ] as const) {
+      expect(hasSecondCheck('missing.ts', `${registration}\nexport async function f(grants: Grants) {\n${call}\n}`), what).toBe(false);
+      expect(hasSecondCheck('present.ts', `${registration}\nexport async function f(grants: Grants) {\n${call}\n${own}\n}`), `${what}, and the call for the file's own row next to it`).toBe(true);
+    }
+    expect(hasSecondCheck('unrouted.ts', 'export async function f(grants: Grants) { assertMayCall(grants, ACTION); }'), 'no route registration: the file\'s own row cannot be known').toBe(false);
+    expect(hasSecondCheck('two.ts', "route(app, { action: 'fn:a', handler }); route(app, { action: 'fn:b', handler }); assertMayCall(grants, 'fn:a');"), 'two rows in one file: not the shape of these files').toBe(false);
+  });
+
+  it('x01 holds two calls and the scanner counts only its own (control): with the call of createBill gone, the one for payment lines in assertMayUseBody is not enough', () => {
+    expect(hasSecondCheck('x01.ts', X01_SHAPE(true)), 'both calls').toBe(true);
+    expect(hasSecondCheck('x01.ts', X01_SHAPE(false)), 'only the call for fn:record_payment is left').toBe(false);
+    // the same on the real file, in memory: take out the line of createBill's own call and the scanner must notice
+    const file = join(srcDir, 'money', 'x01CreateBill.ts');
+    const real = readFileSync(file, 'utf8');
+    const lines = real.split('\n');
+    const ownCalls = lines.filter((l) => /assertMayCall\(grants, 'fn:create_bill'\)/.test(l));
+    const paymentCalls = lines.filter((l) => /assertMayCall\(grants, 'fn:record_payment'\)/.test(l));
+    expect(ownCalls, 'x01 makes its own second check on one line').toHaveLength(1);
+    expect(paymentCalls, 'and the one for payment lines on another').toHaveLength(1);
+    expect(hasSecondCheck(file, real), 'the real x01').toBe(true);
+    expect(hasSecondCheck(file, lines.filter((l) => !ownCalls.includes(l)).join('\n')), 'the real x01 without its own call').toBe(false);
+    expect(hasSecondCheck(file, lines.filter((l) => !paymentCalls.includes(l)).join('\n')), 'the real x01 without the call for payment lines: its own is still there').toBe(true);
+  });
+
+  it('every function that writes under a claim (src/money x01 to x07 and x10 to x12, src/stock x08 and x09, src/orders x13) checks the caller again for its own row with assertMayCall(grants, <its action>), so a deleted second check is noticed (X0 item 2)', () => {
+    const functions = ['money', 'stock', 'orders'].flatMap((d) => tsFiles(join(srcDir, d)).filter((f) => /^x\d{2}[A-Za-z0-9]*\.ts$/.test(basename(f))));
+    const numbers = functions.map((f) => basename(f).slice(0, 3)).sort();
+    expect(numbers, 'the thirteen files of the functions are the ones scanned (a new one is added to this list on purpose)').toEqual(['x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13']);
+    expect(functions.filter((f) => !hasSecondCheck(f, readFileSync(f, 'utf8'))).map((f) => relative(REPO, f))).toEqual([]);
   });
 });

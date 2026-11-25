@@ -291,7 +291,7 @@ describe('T-R05 only the owner records a download', () => {
   });
 
   it('the row of the matrix lets the owner in and nobody else', () => {
-    expect(MATRIX['owner:download_record']).toMatchObject({ method: 'POST', path: URL, roles: ['owner'] });
+    expect(MATRIX['owner:download_record']).toMatchObject({ method: 'POST', path: URL, access: { anyOf: ['download_all'] } });
   });
 
   it('the generic settings edit cannot write `last_download`, not even for the owner, not to make a first one and not to change a recorded one (RF5-17): 403 JV_FORBIDDEN, and the books are as they were', async () => {
@@ -316,7 +316,7 @@ describe('T-R05 only the owner records a download', () => {
     const before = await snapshot();
     const row = MATRIX['owner:download_record'];
     for (const caller of ['anon', 'ended', 'expired', 'idle', 'inactive', 'must_change', 'staff', 'biller'] as const) {
-      const problem = await checkCell(world, { action: 'owner:download_record', method: row.method, path: row.path, roles: row.roles, mustChange: row.mustChange, payload: body(counts) }, caller);
+      const problem = await checkCell(world, { action: 'owner:download_record', method: row.method, path: row.path, access: row.access, mustChange: row.mustChange, payload: body(counts) }, caller);
       expect(problem, caller).toBeNull();
       const res = await record(body(counts), caller);
       expect([401, 403], caller).toContain(res.statusCode);

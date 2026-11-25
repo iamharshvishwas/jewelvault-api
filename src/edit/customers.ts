@@ -1,5 +1,5 @@
-// A4, A5, D10, Z3, K4: the content columns of a customer (PATCH /v1/customers/:id). The columns are the matrix's (WRITE_COLUMNS: the owner and a biller `name`, `mobile`, `customer_type`, `email`,
-// `address`, `gst_number`, `pan` and `notes`; only the owner `archived_at`). A customer is MADE by X6 create_customer (src/money/x06CreateCustomer.ts), never here.
+// A4, A5, D10, Z3, K4: the content columns of a customer (PATCH /v1/customers/:id). The columns are the matrix's (WRITE_COLUMNS: `customer_edit` lists `name`, `mobile`, `customer_type`, `email`,
+// `address`, `gst_number`, `pan` and `notes`; `customer_archive` lists `archived_at`). A customer is MADE by X6 create_customer (src/money/x06CreateCustomer.ts), never here.
 //
 // The rules that are code and not columns, here:
 //   - a named customer keeps a mobile number: it may be blanked only for an imported customer (D10, O33: the screen asks for the number when the customer is selected). The pattern of the number
@@ -11,7 +11,7 @@
 //     check and the archive: it waits at the customer lock, and when the archive has committed it finds the customer archived. Not an archive: an edit that does not set `archived_at`, an
 //     `archived_at` that is already set (nothing changes), and bringing a customer back (`archived_at` null) read no books. The interleaving with a payment is T-C20 (API29).
 //   - the order of the answers: the stale check first (the screen reloads), then the walk-in, then the books. A payment that committed since the screen read the customer moves the customer's stamp
-//     (D23), so an archive sent with the old stamp is answered JV_STALE with the fresh row and not with the balance: the screen shows the row again and the owner decides again.
+//     (D23), so an archive sent with the old stamp is answered JV_STALE with the fresh row and not with the balance: the screen shows the row again and the person decides again.
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { lockCustomer } from '../db/locks.js';
 import { readCustomerTotals } from '../db/state.js';

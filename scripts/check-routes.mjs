@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// npm run check:routes (T-D01, A1): prints every route the built app registers, with what it is (a session route with its action and roles, a public route, a token door), and every row of the
+// npm run check:routes (T-D01, A1): prints every route the built app registers, with what it is (a session route with its action and who may call it, a public route, a token door), and every row of the
 // permission matrix that has no route yet, with its address. Exits 1 when the build is missing, when the app cannot be built (a route registered without route() fails the start) or when
 // /healthz is not there. Usage: node scripts/check-routes.mjs [dist-folder]   (default: dist, the output of npm run build)
 import { existsSync } from 'node:fs';
@@ -14,7 +14,7 @@ if (!existsSync(join(dist, 'app.js')) || !existsSync(join(dist, 'permissions', '
 const load = (file) => import(pathToFileURL(join(dist, file)).href);
 const { buildApp } = await load('app.js');
 const { describeRoutes, unroutedActions, unroutedPublic } = await load('permissions/route.js');
-const { MATRIX, PUBLIC_ROUTES } = await load('permissions/matrix.js');
+const { MATRIX, PUBLIC_ROUTES, describeAccess } = await load('permissions/matrix.js');
 
 // adminTokenHash is a made-up value: the admin door exists only while JV_ADMIN_TOKEN_HASH is set, and the list is to show every route the built app can have (A1)
 const config = { port: 0, logLevel: 'silent', allowedOrigins: ['https://check.example.test'], adminTokenHash: '0'.repeat(64), db: { host: '127.0.0.1', port: 3306, name: 'check', user: 'check', password: 'not-used' } };
@@ -34,7 +34,7 @@ console.log('');
 console.log(`${waiting.length} of ${Object.keys(MATRIX).length} rows of the matrix are waiting for their route (the task that builds the route registers it with route(); the generated test walks it from then on):`);
 for (const action of waiting) {
   const row = MATRIX[action];
-  console.log(`  ${row.method} ${row.path}  ${action}  roles=${row.roles.join(',')}`);
+  console.log(`  ${row.method} ${row.path}  ${action}  access=${describeAccess(row.access)}`);
 }
 const waitingPublic = unroutedPublic(app);
 console.log('');

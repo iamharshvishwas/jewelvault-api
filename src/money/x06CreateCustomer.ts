@@ -4,10 +4,10 @@
 //            notes. The widths, the mobile pattern and the PAN pattern are the fields of the customer edit (src/edit/customers.ts), so a customer cannot be made with something a PATCH would refuse.
 //            Every pattern is checked here, before any statement is sent: a mistake is a refusal of the field (422), never the database's CHECK (4025, which would be a bug and a 500).
 //   header   Idempotency-Key (a UUID the screen makes once for each customer it saves and reuses for a retry).
-//   answer   201 { customer }: the row in the wire format of the sync read of the caller's role, so the cache applies it as it applies a polled row. A repeat of the key answers the same body and
+//   answer   201 { customer }: the row in the wire format of the sync read, cut to the columns the caller's grants may read, so the cache applies it as it applies a polled row. A repeat of the key answers the same body and
 //            status with `Idempotent-Replay: true`.
 //
-// ORDER OF WORK (NODE-DESIGN 4.3, X0). The route wrapper has already refused everything it can without a database (no session, a role not on the row, an invalid body), and none of that touches the
+// ORDER OF WORK (NODE-DESIGN 4.3, X0). The route wrapper has already refused everything it can without a database (no session, a caller who holds none of the row's ticks, an invalid body), and none of that touches the
 // Idempotency-Key. Then: the key is read from the header (missing or not a UUID: 422 naming the header, nothing claimed) and ONE transaction runs: the claim of the key (first statement), the role
 // check again (X0 item 2), the insert, the audit row of mechanism (b) when JV_AUDIT_MODE=node (mechanism (a) writes it by itself), the stored result. A new customer has nothing to lock and nobody to
 // number: no customer lock, no piece lock, no counter. A failure anywhere rolls the claim back with the rest, so a retry of the key runs again.
@@ -66,11 +66,11 @@ export interface CreatedCustomer {
  */
 export async function createCustomer(app: FastifyInstance, request: FastifyRequest, auth: Auth, key: string, input: CreateCustomerInput): Promise<{ value: CreatedCustomer; replayed: boolean }> {
   if (!app.db) throw unavailableError();
-  const { id: userId, role } = auth.user;
+  const { id: userId, role, grants } = auth.user; // the audit actor keeps the role KEY; what the person may do is their grants
   const ctx = txContextFor(app.db, request, { id: userId, role });
   return withTx(ctx, (tx) =>
     idempotent<CreatedCustomer>(tx, { key, fn: 'create_customer', route: ROUTE_NAME, body: input }, async () => {
-      assertMayCall(role, ACTION); // X0 item 2: the wrapper has checked; the function checks again, after the claim, so a refusal here rolls the claim back
+      assertMayCall(grants, ACTION); // X0 item 2: the wrapper has checked; the function checks again, after the claim, so a refusal here rolls the claim back
       const at = app.clock.read(); // both stamps from one reading of the API clock (S6)
       const id = newId();
       await tx.run(INSERT_SQL, [
@@ -91,7 +91,7 @@ export async function createCustomer(app: FastifyInstance, request: FastifyReque
       const after = await readRow(tx, 'customers', id, false);
       if (!after) throw new Error(`customers ${id}: the row is gone after its own insert`);
       await auditChange(tx, { table: 'customers', rowId: id, action: 'insert', before: null, after }); // L1 (b): only when JV_AUDIT_MODE=node; the triggers of (a) write their own row
-      return { customer: wireRow('customers', role, after) };
+      return { customer: wireRow('customers', grants, after) };
     }),
   );
 }

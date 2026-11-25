@@ -1,14 +1,15 @@
 // A1, A6, A11, D2, S10, U11: route() is the only way to register an endpoint.
 //
-//   route(app, { action: 'fn:create_bill', body: schema, handler })    a session route: its address and its roles come from the row of the permission matrix (matrix.ts)
+//   route(app, { action: 'fn:create_bill', body: schema, handler })    a session route: its address and who may call it come from the row of the permission matrix (matrix.ts)
 //   route(app, { public: 'ready', handler })                           one of the short list of public routes (PUBLIC_ROUTES): no session is looked up
 //   route(app, { token: 'admin', method, url, verify, handler })       a route of a token door (/admin/v1/*, /internal/jobs/*), with its own token check, `verify`
 //
 // For a session route the order of work is fixed (A6, NODE-DESIGN 3.1), and each step ends the call when it refuses, so that a refused caller learns nothing about the next:
-//   1. the session: the cookie's ticket to a `sessions` row and then the `users` row; no ticket, an ended or expired session, a user who is not active: 401 (D2, session.ts)
+//   1. the session: the cookie's ticket to a `sessions` row and then the `users` row with its `roles` row; no ticket, an ended or expired session, a user who is not active, a role that is
+//      missing or switched off: 401 (D2, session.ts)
 //      then the user's throttle (A13): over its limit, 429 (src/auth/throttle.ts)
 //   2. the must-change-password gate: a user who must still change the password may call only the rows marked `mustChange` (U11): 403 JV_PASSWORD_CHANGE_REQUIRED
-//   3. the matrix row: a role that is not on the row: 403 JV_FORBIDDEN
+//   3. the matrix row: a caller whose grants do not pass the row's access: 403 JV_FORBIDDEN
 //      then, for a call that got through and is not polling (U4): `last_seen_at` moves, in a statement of its own in autocommit (touchSession)
 //   4. the body, with the route's strict Zod schema (a route without one takes no body): 422 JV_INVALID_INPUT
 //   5. the handler, which is given `auth` (the user and the role as the read of step 1 found them), the parsed `body`, the request and the reply
@@ -16,14 +17,16 @@
 //
 // A route registered any other way fails the start: installRouteGuard() makes every route that did not come through route() throw. A call with no action, an action that is not in the matrix,
 // a public name that is not on the list, a token route outside its door or without its check throws a RouteDeclarationError, and the types of the specs below make the compiler refuse the
-// same calls, so a route without an action fails the build and not only the start. Nothing here holds a role string: roles are read from the matrix, and a service function that wants to check
-// again at its start calls assertMayCall(role, action).
+// same calls, so a route without an action fails the build and not only the start. Nothing here holds a role string or a tick: who may call is read from the matrix, and a service function that
+// wants to check again at its start calls assertMayCall(grants, action).
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodType, output } from 'zod';
 import { throttleSessionCall } from '../auth/throttle.js';
 import { JvError, errorBody } from '../errors.js';
 import * as wire from '../wire/zod.js';
+import type { Grants } from './grants.js';
 import {
+  type Access,
   type Action,
   FRAMEWORK_ROUTES,
   type HttpMethod,
@@ -32,10 +35,11 @@ import {
   PUBLIC_ROUTES,
   type PublicName,
   type PublicRoute,
-  type Role,
   TOKEN_DOORS,
   type TokenDoor,
   type TokenDoorName,
+  accessAllows,
+  describeAccess,
   mayCall,
 } from './matrix.js';
 import { type Auth, countsAsActivity, lookupSession, touchSession } from './session.js';
@@ -59,8 +63,8 @@ export interface RouteInfo {
   readonly action?: string;
   /** the name of a public route, or the door of a token route */
   readonly name?: string;
-  /** who may call a matrix route; empty for the others (a public route is open, a token route has its own check) */
-  readonly roles: readonly Role[];
+  /** who may call a matrix route (its row's access); null for the others (a public route is open, a token route has its own check) */
+  readonly access: Access | null;
   /** U11: a user who must still change the password may call it */
   readonly mustChange: boolean;
 }
@@ -82,7 +86,7 @@ const MARK = Symbol('jv.route');
 type BodyOf<S> = S extends ZodType ? output<S> : undefined;
 
 export interface SessionSpec<A extends string, S extends ZodType | undefined> {
-  /** A row of the permission matrix: its address, its roles and its U11 flag come from there. */
+  /** A row of the permission matrix: its address, who may call it and its U11 flag come from there. */
   action: A;
   public?: never;
   token?: never;
@@ -160,7 +164,8 @@ function sessionHook(app: FastifyInstance, info: RouteInfo) {
     const auth = await lookupSession(app, request); // 1. D2
     throttleSessionCall(app, info.action ?? '', auth.user.id); // A13: change-password 5 per 15 minutes, every other call 300 a minute, for each user; 429 JV_RATE_LIMITED with Retry-After
     if (auth.user.mustChangePassword && !info.mustChange) throw new JvError('JV_PASSWORD_CHANGE_REQUIRED', 'Change your password to continue.'); // 2. U11
-    if (!info.roles.includes(auth.user.role)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.'); // 3. A4
+    // 3. A4, R8: the row's access against the grants the session read (the role's ticks and the Super Admin flag)
+    if (info.access === null || !accessAllows(info.access, auth.user.grants)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
     if (countsAsActivity(info)) await touchSession(app, request, auth.session.id); // U4: last_seen_at, its own autocommit statement, before the handler and so before any claim of a money call
     request.auth = auth;
   };
@@ -184,21 +189,21 @@ function register(table: PermissionTable, app: FastifyInstance, loose: LooseSpec
     if (loose.method !== undefined || loose.url !== undefined || loose.verify !== undefined) fail(`the route of ${action} comes from its row of the matrix: give an action and a handler, nothing else`);
     if (app.routeTable.some((r) => r.action === action)) fail(`${action} already has a route: a row of the matrix has one`);
     const row = table.matrix[action];
-    info = { method: row.method, url: row.path, kind: 'matrix', action, roles: row.roles, mustChange: row.mustChange };
+    info = { method: row.method, url: row.path, kind: 'matrix', action, access: row.access, mustChange: row.mustChange };
   } else if (loose.public !== undefined) {
     const name = loose.public;
     if (typeof name !== 'string' || !Object.hasOwn(table.publicRoutes, name)) return fail(`${JSON.stringify(String(name))} is not on the public list (src/permissions/matrix.ts PUBLIC_ROUTES)`);
     if (loose.method !== undefined || loose.url !== undefined || loose.verify !== undefined) fail(`the address of the public route ${name} comes from the list: give the name and a handler, nothing else`);
     if (app.routeTable.some((r) => r.kind === 'public' && r.name === name)) fail(`the public route ${name} is already registered`);
     const p = table.publicRoutes[name];
-    info = { method: p.method, url: p.path, kind: 'public', name, roles: [], mustChange: false };
+    info = { method: p.method, url: p.path, kind: 'public', name, access: null, mustChange: false };
   } else {
     const door = loose.token;
     if (typeof door !== 'string' || !Object.hasOwn(table.tokenDoors, door)) return fail(`${JSON.stringify(String(door))} is not a token door (src/permissions/matrix.ts TOKEN_DOORS)`);
     if (typeof loose.verify !== 'function') fail(`a route of the ${door} door needs its token check (verify)`);
     if (typeof loose.url !== 'string' || !loose.url.startsWith(table.tokenDoors[door].prefix)) fail(`a route of the ${door} door lives under ${table.tokenDoors[door].prefix}`);
     if (typeof loose.method !== 'string') fail(`a route of the ${door} door needs a method`);
-    info = { method: loose.method as HttpMethod, url: loose.url as string, kind: 'token', name: door, roles: [], mustChange: false };
+    info = { method: loose.method as HttpMethod, url: loose.url as string, kind: 'token', name: door, access: null, mustChange: false };
   }
 
   const verify = loose.verify as ((request: FastifyRequest) => void | Promise<void>) | undefined;
@@ -276,17 +281,17 @@ export function installPermissions(app: FastifyInstance): void {
 }
 
 /**
- * A service function checks the role again at its start (X0 item 2, A6): after the idempotency claim, whose row the rollback removes when this refuses. It asks the matrix for the action, so
- * it holds no role string.
+ * A service function checks the caller again at its start (X0 item 2, A6): after the idempotency claim, whose row the rollback removes when this refuses. It asks the matrix for the action, so
+ * it holds no role string and no tick. It takes the person's Grants (the ticks of their role and the Super Admin flag, as the session read them), never the role key.
  */
-export function assertMayCall(role: string, action: Action): void {
-  if (!mayCall(role, action)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
+export function assertMayCall(grants: Grants, action: Action): void {
+  if (!mayCall(grants, action)) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
 }
 
-/** The route list (T-D01, A1), one line for every registered route: method, address, what it is, its action and its roles. */
+/** The route list (T-D01, A1), one line for every registered route: method, address, what it is, its action and who may call it. */
 export function describeRoutes(app: FastifyInstance): string[] {
   return app.routeTable.map((r) => {
-    const what = r.kind === 'matrix' ? `session  ${r.action}  roles=${r.roles.join(',')}${r.mustChange ? '  (open while the password must be changed)' : ''}` : r.kind === 'public' ? `public   ${r.name}  (no session)` : `token    ${r.name}  (own token check)`;
+    const what = r.kind === 'matrix' && r.access !== null ? `session  ${r.action}  access=${describeAccess(r.access)}${r.mustChange ? '  (open while the password must be changed)' : ''}` : r.kind === 'public' ? `public   ${r.name}  (no session)` : `token    ${r.name}  (own token check)`;
     return `${r.method.padEnd(6)} ${r.url.padEnd(46)} ${what}`;
   });
 }

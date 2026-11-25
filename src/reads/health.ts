@@ -1,4 +1,4 @@
-// I12 and the dashboard line of spec section 12 (owner only): GET /v1/dashboard/health, and the lists of GET /v1/health/checks.
+// I12 and the dashboard line of spec section 12 (for a person holding activity_log, the Owner among the built-in roles): GET /v1/dashboard/health, and the lists of GET /v1/health/checks.
 //
 // readHealth is the TYPESCRIPT TWIN of readHealth in scripts/health.mjs (MB03, MB05): src/ is compiled alone (tsconfig.build.json, rootDir src) and cannot import scripts/*.mjs. It does what the
 // original does, statement for statement, and tests/api/health-twin.test.ts asks both the same question on every state of the database (never run, healthy, each red and amber reason, the rights of
@@ -17,6 +17,7 @@
 import type { Connection, RowDataPacket } from 'mysql2/promise';
 import type { Reader } from '../db/tx.js';
 import { limits } from '../limits.js';
+import type { Grants } from '../permissions/grants.js';
 import { scopeMatches } from '../preflight.js';
 import { formatRow, timestampToWire } from '../wire/format.js';
 import * as wire from '../wire/zod.js';
@@ -310,7 +311,7 @@ export function wireHealth(h: Health): Health {
 
 // ------------------------------------------------------------------ GET /v1/health/checks
 
-/** The newest runs of the nightly check and of the backup jobs (A4: check_runs and backup_runs are read by the owner alone). Parameter: the limit. Exported for the EXPLAIN test (A7). */
+/** The newest runs of the nightly check and of the backup jobs (A4: check_runs and backup_runs are read by a person holding activity_log). Parameter: the limit. Exported for the EXPLAIN test (A7). */
 export const checkRunsStatement = (columns: readonly string[]): string => `SELECT ${selectList('c', columns)} FROM check_runs c ORDER BY c.ran_at DESC, c.id DESC LIMIT ?`;
 export const backupRunsStatement = (columns: readonly string[]): string => `SELECT ${selectList('b', columns)} FROM backup_runs b ORDER BY b.ran_at DESC, b.id DESC LIMIT ?`;
 
@@ -334,10 +335,10 @@ function listRow(raw: Record<string, unknown>, json: string): Record<string, unk
   return out;
 }
 
-export async function readHealthLists(db: Reader, role: string, q: z.output<typeof checksQuery>): Promise<HealthLists> {
+export async function readHealthLists(db: Reader, grants: Grants, q: z.output<typeof checksQuery>): Promise<HealthLists> {
   const asked = q.limit === undefined ? DEFAULT_CHECK_ROWS : Number(q.limit);
   if (asked > limits.ownerPageRows) throw new wire.InvalidInputError('limit', limitMessage); // the cap is the contract: asking for more is refused, not cut
-  const checks = await db.rows<Record<string, unknown>>(checkRunsStatement(readColumns('check_runs', role)), [asked]);
-  const backups = await db.rows<Record<string, unknown>>(backupRunsStatement(readColumns('backup_runs', role)), [asked]);
+  const checks = await db.rows<Record<string, unknown>>(checkRunsStatement(readColumns('check_runs', grants)), [asked]);
+  const backups = await db.rows<Record<string, unknown>>(backupRunsStatement(readColumns('backup_runs', grants)), [asked]);
   return { check_runs: checks.map((r) => listRow(r, 'details')), backup_runs: backups.map((r) => listRow(r, 'detail')) };
 }

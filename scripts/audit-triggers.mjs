@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const AUDITED_TABLES = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'orders'];
+export const AUDITED_TABLES = ['users', 'settings', 'daily_rates', 'categories', 'subcategories', 'designs', 'skus', 'sku_private', 'customers', 'bills', 'bill_items', 'receipts', 'receipt_allocations', 'orders', 'roles'];
 export const EXCLUDE_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'optional', 'audit-exclude.json');
 export const TRIGGER_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'optional', '0910_audit_triggers.sql');
 /** A column with a name like this on an audited table must be on the exclude list or the generator refuses: nobody decides by accident that a secret goes into the log. */

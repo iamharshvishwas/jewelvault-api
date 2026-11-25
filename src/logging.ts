@@ -6,7 +6,7 @@ import type { LogLevel } from './config.js';
 // Fastify's own request lines carry method, path, host and address only (the serializer below); this list is for what the API's code logs itself (a header set, a body, an error with a config).
 
 const HEADER_KEYS = ['cookie', 'authorization', 'proxy-authorization', 'set-cookie'];
-const PASSWORD_KEYS = ['password', 'passwd', 'password_hash', 'new_password', 'current_password', 'old_password', 'passwordHash', 'newPassword', 'currentPassword', 'oldPassword', 'DB_PASSWORD'];
+const PASSWORD_KEYS = ['password', 'passwd', 'password_hash', 'new_password', 'current_password', 'old_password', 'temporary_password', 'passwordHash', 'newPassword', 'currentPassword', 'oldPassword', 'temporaryPassword', 'DB_PASSWORD'];
 const BRACKET = (key: string) => (/^[A-Za-z_$][\w$]*$/.test(key) ? `.${key}` : `["${key}"]`);
 
 // fast-redact wildcards stand for exactly one level, so the list repeats the pattern for the top level and up to three levels down.

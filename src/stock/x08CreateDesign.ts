@@ -62,7 +62,7 @@ const pieceGroup = wire.strictObject({
     .max(limits.maxPiecesPerGroup, piecesMessage),
   gross_weight: wire.weight.optional(),
   customer_net_weight: wire.weight.optional(),
-  /** Owner only (D9, X8): from anyone else the call is JV_FORBIDDEN, after the claim. */
+  /** Only a holder of `secret_weight` (D9, X8): from anyone else the call is JV_FORBIDDEN, after the claim. */
   original_net_weight: wire.weight.optional(),
   stones: countField.optional(),
   stone_weight: wire.weight.optional(),
@@ -240,7 +240,7 @@ function contextOf(app: FastifyInstance, request: FastifyRequest, auth: Auth) {
 
 /** X8. `key` is the Idempotency-Key as idempotencyKey() read it. Returns the answer and whether it is the stored answer of an earlier call. */
 export async function createDesign(app: FastifyInstance, request: FastifyRequest, auth: Auth, key: string, body: CreateDesignBody): Promise<{ value: CreateDesignResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const prepared = prepare(body);
   const ctx = contextOf(app, request, auth);
 
@@ -251,10 +251,10 @@ export async function createDesign(app: FastifyInstance, request: FastifyRequest
 
   return withTx(ctx, async (tx) => {
     const c = await claim(tx, { key, fn: 'create_design', route: 'POST /v1/designs', body });
-    assertMayCall(role, 'fn:create_design'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
-    const mayEnterWeight = mayUseField(role, 'original_net_weight');
+    assertMayCall(grants, 'fn:create_design'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    const mayEnterWeight = mayUseField(grants, 'original_net_weight');
     if (!mayEnterWeight && prepared.firstOriginal >= 0) {
-      throw new JvError('JV_FORBIDDEN', 'The original net weight can only be entered by the owner.', { details: { field: `pieces[${prepared.firstOriginal}].original_net_weight` } });
+      throw new JvError('JV_FORBIDDEN', 'Your role cannot enter the original net weight.', { details: { field: `pieces[${prepared.firstOriginal}].original_net_weight` } });
     }
     if (!c.first) return { value: c.result as CreateDesignResult, replayed: true };
 
@@ -316,9 +316,9 @@ export async function createDesign(app: FastifyInstance, request: FastifyRequest
     for (const id of weightIds) await auditChange(tx, { table: 'sku_private', action: 'insert', before: null, after: weightById.get(id) as AuditedRow });
 
     const value: CreateDesignResult = {
-      design: wireRow('designs', role, designRow),
-      skus: skuRows.map((r) => wireRow('skus', role, r)),
-      ...(mayEnterWeight ? { sku_private: weightIds.map((id) => wireRow('sku_private', role, weightById.get(id) as Row)) } : {}),
+      design: wireRow('designs', grants, designRow),
+      skus: skuRows.map((r) => wireRow('skus', grants, r)),
+      ...(mayEnterWeight ? { sku_private: weightIds.map((id) => wireRow('sku_private', grants, weightById.get(id) as Row)) } : {}),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

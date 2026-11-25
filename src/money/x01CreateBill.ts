@@ -4,20 +4,21 @@
 //            [mode, amount, reference] (a row of amount 0 is ignored), confirm_held [piece ids], cash_override_reason. The items, the sale type, the date and the two charges are the body of quote_bill (X7): ONE definition, so a quote and
 //            a bill are asked in the same words. A weight is never an input: the net weight, the material, the purity and the method of a line are the PIECE's, read under the lock.
 //   header   Idempotency-Key (a UUID the screen makes once for each save and reuses for a retry).
-//   answer   201 {bill, items, receipts, allocations, warnings, advance_applied}: `bill` and `items` are the rows in the wire format of the sync read of the caller's role (so the cache applies them as
+//   answer   201 {bill, items, receipts, allocations, warnings, advance_applied}: `bill` and `items` are the rows in the wire format of the sync read, cut to the columns the caller's grants may read (so the cache applies them as
 //            it applies a polled row), `warnings` holds PAN_MISSING, RATE_MISSING and RATE_STALE (unique, sorted). A repeat of the key answers the same body and status with `Idempotent-Replay: true`.
 //
 // THE PAYMENT ROWS (X1 (e) and (i), API23). `payments` are the money received with the bill: each row of an amount above 0 is one `money` receipt and one allocation to THIS bill, dated the bill date;
 // a row of amount 0 is ignored. Together they may not exceed the grand total (JV_OVERPAYMENT, Y5). The Credit mode does not exist (D13, Y2): it is refused with the other words that are not one of the
 // five modes. The cash rules of section 13 (src/domain/cashRules.ts) judge the Cash rows before the number is taken: a named customer's cash of the bill date reaching the limit is JV_CASH_LIMIT
-// unless the owner gives `cash_override_reason`, which is then stored on the bill (Z1); for the walk-in a bill of the PAN threshold or more is refused (JV_NOT_ALLOWED) and so is a single cash
+// unless a holder of `cash_over_limit` gives `cash_override_reason`, which is then stored on the bill (Z1); for the walk-in a bill of the PAN threshold or more is refused (JV_NOT_ALLOWED) and so is a single cash
 // payment at the limit (Z2); a named customer without a PAN gets the warning PAN_MISSING at the threshold (Z3). The rebalance of Y6 (j) comes AFTER the payment rows (API21,
 // src/domain/rebalance.ts): an advance the customer holds is applied to what the rows leave pending, the new bill among the oldest, and `advance_applied` says how much of it went to THIS bill.
 // `planPayments` and `writePayments` are exported for X10, which makes the new payments of a re-issue by the rules of X1.
 //
 // ORDER OF WORK (X1 and X0). Before the transaction: one reading of the API clock (`day`: the business date for Y8 and for a bill_date left out, and the year of the number series, S5), the prefix of the bill
 // numbers (settings.estimate, NODE-DESIGN 5.5), and the counter row of the series (ensureSeries: a series made inside a transaction can deadlock, spike F3). Then, in one withTx:
-//   1. the claim of the key (L5) and the role check (X0 items 1 and 2: a refusal rolls the claim back, so the key stays unused), then the stored answer if the key is a repeat;
+//   1. the claim of the key (L5), the role check and the two checks of the body (X0 items 1 and 2, assertMayUseBody: a refusal rolls the claim back, so the key stays unused), then the stored
+//      answer if the key is a repeat;
 //   2. the customer row FOR UPDATE (X0 item 3), then the validation of what needs no more reading (Y8, each piece once, the confirm list, the payments), then "the customer exists and is not archived";
 //   3. the state of the customer, read once (X0 item 8, `create_bill.after_read` of the test build: the hook is a wrapper of the test build, not a line of this file); the rebalance (j) allocates
 //      from it and reads nothing again;
@@ -49,6 +50,7 @@ import { type Row, invalid, readRow, wireRow } from '../edit/engine.js';
 import * as f from '../edit/fields.js';
 import { BusyError, JvError, unavailableError } from '../errors.js';
 import { limits } from '../limits.js';
+import type { Grants } from '../permissions/grants.js';
 import { columnsOfTable, mayUseField } from '../permissions/matrix.js';
 import { type Auth, assertMayCall, route } from '../permissions/route.js';
 import * as wire from '../wire/zod.js';
@@ -85,7 +87,7 @@ const paymentRow = wire.strictObject({
   reference: (f.optionalText(REFERENCE_MAX).schema as z.ZodType<string | null>).optional(),
 });
 
-/** Z1: the reason the OWNER gives for cash over the limit, 10 to 500 characters (X1 and X2 take the same field). */
+/** Z1: the reason a holder of `cash_over_limit` gives for cash over the limit, 10 to 500 characters (X1 and X2 take the same field). */
 export const cashOverrideReason = z
   .string({ error: (issue) => (issue.input === undefined ? 'is required' : reasonMessage) })
   .trim()
@@ -109,7 +111,7 @@ export const createBillBody = wire.strictObject({
     .array(wire.uuid, { error: (issue) => (issue.input === undefined ? 'is required' : confirmMessage) })
     .max(limits.maxLines, confirmMessage)
     .optional(),
-  /** Z1: the owner's right (FIELD_RIGHTS), stored on the bill when the cash rule needed it; a biller who sends it is refused after the claim. */
+  /** Z1: the right of `cash_over_limit` (FIELD_RIGHTS), stored on the bill when the cash rule needed it; a caller without it who sends it is refused after the claim. */
   cash_override_reason: cashOverrideReason,
 });
 export type CreateBillBody = z.output<typeof createBillBody>;
@@ -207,6 +209,19 @@ export interface PaymentPlan {
   rows: PaymentRowPlan[];
   total: bigint;
   cash: bigint;
+}
+
+/**
+ * The two field-level checks of the body that come right after the role check, before the stored answer of a repeat (X0 item 2: a refusal rolls the claim back, so the key stays unused). X1 and
+ * X10 take the same body and ask both.
+ *   - DESIGN M8: a payment row of an amount above 0 is money received, so the caller must also be allowed fn:record_payment (payment_receive); rows of amount 0 are ignored, as they are written.
+ *   - Z1: `cash_override_reason` only from a caller who may use it (cash_over_limit), whether or not the cash rule would need it.
+ */
+export function assertMayUseBody(grants: Grants, input: Pick<CreateBillBody, 'payments' | 'cash_override_reason'>): void {
+  if ((input.payments ?? []).some((p) => toUnits(p.amount, MONEY) > 0n)) assertMayCall(grants, 'fn:record_payment');
+  if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
+    throw new JvError('JV_FORBIDDEN', 'Your role cannot give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
+  }
 }
 
 /**
@@ -417,7 +432,7 @@ function contextOf(app: FastifyInstance, request: FastifyRequest, auth: Auth) {
 
 /** X1. `key` is the Idempotency-Key as idempotencyKey() read it. Returns the answer and whether it is the stored answer of an earlier call with the same key. */
 export async function createBill(app: FastifyInstance, request: FastifyRequest, auth: Auth, key: string, input: CreateBillBody, options: CreateBillOptions = {}): Promise<{ value: CreateBillResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const versions = options.versions ?? PRICING_VERSIONS;
   const version = options.pricingVersion ?? CURRENT_PRICING_VERSION;
   if (!Object.hasOwn(versions, version)) throw new Error(`the bill is to be priced with version ${version}, which the version table does not hold`);
@@ -432,15 +447,13 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'create_bill', route: 'POST /v1/bills', body: input });
-    assertMayCall(role, 'fn:create_bill'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
-    if (input.cash_override_reason != null && !mayUseField(role, 'cash_override_reason')) {
-      throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
-    }
+    assertMayCall(grants, 'fn:create_bill'); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayUseBody(grants, input); // payment rows need payment_receive (M8), a cash reason needs cash_over_limit (Z1)
     if (!c.first) return { value: c.result as CreateBillResult, replayed: true };
 
     // 2. the customer row FOR UPDATE, then X1 (a) and (b)
     const customer = await lockCustomer(tx, input.customer_id);
-    const billDate = checkBillDate(input.bill_date, day.date, role); // Y8
+    const billDate = checkBillDate(input.bill_date, day.date, grants); // Y8
     assertEachPieceOnce(input.items); // X1 (a): a piece twice is JV_INVALID_INPUT, never the duplicate-key error of UNIQUE (bill_id, sku_id)
     const confirmed = confirmedPieces(input);
     if (!customer) throw invalid('customer_id', 'is not a customer');
@@ -457,7 +470,7 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
 
     // (e) the payment rows may not exceed the grand total (JV_OVERPAYMENT, Y5) and the cash rules of section 13 must pass (JV_CASH_LIMIT, Z1, Z2); the Cash rows are dated the bill date, so that is the day
     const payments = planPayments(input.payments ?? [], grand);
-    const cash = await applyCashRules(tx, { customerId: customer.id, walkin, day: billDate, cash: payments.cash, role, reason: input.cash_override_reason });
+    const cash = await applyCashRules(tx, { customerId: customer.id, walkin, day: billDate, cash: payments.cash, grants, reason: input.cash_override_reason });
 
     // 5. the number, last (X0 item 6)
     const issued = await nextBillNo(tx, series);
@@ -482,10 +495,10 @@ export async function createBill(app: FastifyInstance, request: FastifyRequest, 
     const adjusted = rebalanced.allocations.filter((a) => a.bill_id === billId).reduce((sum, a) => sum + toUnits(a.amount, 2), 0n);
 
     const value: CreateBillResult = {
-      bill: wireRow('bills', role, billRow),
-      items: lineRows.map((r) => wireRow('bill_items', role, r)),
-      receipts: written.receipts.map((r) => wireRow('receipts', role, r)),
-      allocations: [...written.allocations, ...rebalanced.allocations].map((a) => wireRow('receipt_allocations', role, { ...a })),
+      bill: wireRow('bills', grants, billRow),
+      items: lineRows.map((r) => wireRow('bill_items', grants, r)),
+      receipts: written.receipts.map((r) => wireRow('receipts', grants, r)),
+      allocations: [...written.allocations, ...rebalanced.allocations].map((a) => wireRow('receipt_allocations', grants, { ...a })),
       warnings: [...warnings].sort(),
       advance_applied: fromUnits(adjusted, 2),
     };

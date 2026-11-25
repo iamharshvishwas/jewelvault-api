@@ -85,6 +85,7 @@ export const UNIQUE_KEYS: readonly string[] = [
   'designs.uq_designs_no(design_no)',
   'orders.uq_orders_no(order_no)',
   'receipts.uq_receipts_id_customer(id,customer_id)',
+  'roles.uq_roles_name(name)', // the access plan, R1: two roles never share a name, ignoring case and accents
   'sessions.uq_sessions_token(token_hash)',
   'skus.uq_skus_barcode(barcode)',
   'skus.uq_skus_no(sku_no)',

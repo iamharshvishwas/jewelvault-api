@@ -1,4 +1,4 @@
-// X13 create_order (POST /v1/orders, the owner and a biller): FB-E1, FB-D8 (Siddhi #13), L3, L4, L5, P2, X0. The spec's own X13 was retired in draft 4, so the Order Book of the feedback plan takes
+// X13 create_order (POST /v1/orders, a caller who holds `order_edit`): FB-E1, FB-D8 (Siddhi #13), L3, L4, L5, P2, X0. The spec's own X13 was retired in draft 4, so the Order Book of the feedback plan takes
 // the number. An order holds NO MONEY: an advance is an ordinary payment in the customer's ledger (X2).
 //
 // The screen makes the order's id (a version-4 UUID) and one id for each photo before it uploads the photos (PUT /v1/orders/:order_id/photos/:photo_id, as for a design, P2); it then sends
@@ -8,7 +8,7 @@
 //   answer   201 { order }: the row in the wire format of the sync read (GET /v1/sync/orders), so the cache applies it as it applies a polled row. A repeat of the key answers the same body and status
 //            with `Idempotent-Replay: true`.
 //   refused  422 JV_INVALID_INPUT naming the field (a bad value, an unknown field, an order id that is taken, a customer that does not exist, a photo that is not this order's whole and live photo),
-//            409 JV_CUSTOMER_ARCHIVED (bring the customer back first), 403 JV_FORBIDDEN (staff), 401.
+//            409 JV_CUSTOMER_ARCHIVED (bring the customer back first), 403 JV_FORBIDDEN (a caller without `order_edit`), 401.
 //
 // ORDER OF WORK (X0). Before the transaction: the body is parsed (the route), ONE reading of the API clock gives the year of the series order:<YYYY> and the stamps (S5, S6), and the counter row is
 // made (ensureSeries: a series made inside a transaction can deadlock, spike F3). Then one withTx: the claim (L5); the role check, after the claim so a refusal rolls the claim back (X0 item 2); the
@@ -57,8 +57,8 @@ const orderIsUsed = async (tx: Tx, id: string): Promise<boolean> => (await tx.ro
 /** X13. `key` is the Idempotency-Key as idempotencyKey() read it. Returns the answer and whether it is the stored answer of an earlier call with the same key. */
 export async function createOrder(app: FastifyInstance, request: FastifyRequest, auth: Auth, key: string, body: CreateOrderBody): Promise<{ value: CreatedOrder; replayed: boolean }> {
   if (!app.db) throw unavailableError();
-  const { id: userId, role } = auth.user;
-  const ctx = txContextFor(app.db, request, { id: userId, role });
+  const { id: userId, role, grants } = auth.user;
+  const ctx = txContextFor(app.db, request, { id: userId, role }); // the audit actor: the person and the role KEY
   const at = app.clock.read(); // ONE reading: the year of the series and both stamps (S5, S6)
   const series = orderNumbers(at);
   await ensureSeries(ctx, series.key); // the counter row exists before the transaction (L3)
@@ -66,7 +66,7 @@ export async function createOrder(app: FastifyInstance, request: FastifyRequest,
 
   return withTx(ctx, (tx) =>
     idempotent<CreatedOrder>(tx, { key, fn: 'create_order', route: ROUTE_NAME, body }, async () => {
-      assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+      assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
 
       // the checks: plain reads, all before the counter
       if (await orderIsUsed(tx, body.order_id)) throw invalid('order_id', 'is already used by an order');
@@ -83,7 +83,7 @@ export async function createOrder(app: FastifyInstance, request: FastifyRequest,
       const after = await readRow(tx, 'orders', body.order_id, false);
       if (!after) throw new Error(`orders ${body.order_id}: the row is gone after its own insert`);
       await auditChange(tx, { table: 'orders', rowId: body.order_id, action: 'insert', before: null, after }); // L1 (b): only when JV_AUDIT_MODE=node; the triggers of (a) write their own row
-      return { order: wireRow('orders', role, after) };
+      return { order: wireRow('orders', grants, after) };
     }),
   );
 }

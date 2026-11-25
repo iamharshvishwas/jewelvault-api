@@ -1,19 +1,19 @@
 // X2 record_payment (POST /v1/customers/:id/payments, 201 {receipt, allocations, advance_remaining}), X2, Y1, Y3, Y4, Y5, Y8, Z1, Z2, K5, D13, D14, D23, L5, X0, T-B01, T-B04, T-B05, T-B06, T-B17, T-B22, T-B23, T-C09.
 //
 //   path     the customer (`p_customer_id`): a lower-case UUID, else 422 on `id`; no such customer is 404 JV_NOT_FOUND.
-//   body     amount (a text above 0, at most 2 decimals, at most 1,000,000,000), mode (Cash, UPI, Card, Bank Transfer, Other: there is no Credit, D13, Y2), paid_on (absent or null: today; Y8: a biller
-//            only today, the owner any day up to today, never the future), reference (at most 120), notes, bill_id (optional: the bill to pay first), cash_override_reason (the owner's right, Z1).
+//   body     amount (a text above 0, at most 2 decimals, at most 1,000,000,000), mode (Cash, UPI, Card, Bank Transfer, Other: there is no Credit, D13, Y2), paid_on (absent or null: today; Y8: a caller without `back_date`
+//            only today, one with it any day up to today, never the future), reference (at most 120), notes, bill_id (optional: the bill to pay first), cash_override_reason (the right of `cash_over_limit`, Z1).
 //   header   Idempotency-Key (a UUID the screen makes once for each payment and reuses for a retry).
-//   answer   201 {receipt, allocations, advance_remaining}: `receipt` and `allocations` are the rows in the wire format of the sync read of the caller's role (so the cache applies them as it applies a
+//   answer   201 {receipt, allocations, advance_remaining}: `receipt` and `allocations` are the rows in the wire format of the sync read, cut to the columns the caller's grants may read (so the cache applies them as it applies a
 //            polled row). `allocations` are all the rows the call made, in the order made: the payment's own (Y3: the named bill first, then the oldest) and then those of the rebalance (Y6), if any.
 //            `advance_remaining` is what is left of THIS payment after those allocations: money received that is neither allocated to a bill nor handed back (Y5), "0.00" when it all went to bills.
 //            A repeat of the key answers the same body and status with `Idempotent-Replay: true`.
 //
-// THE CASH RULES (section 13, Z1, Z2, API23): a `Cash` payment that would make the customer's cash of the day (`paid_on`) reach the limit raises JV_CASH_LIMIT unless the owner gives a
-// `cash_override_reason`, which is stored on the receipt; for the walk-in a single Cash payment at the limit raises it with 'Select or create the customer' (src/domain/cashRules.ts). A biller who
+// THE CASH RULES (section 13, Z1, Z2, API23): a `Cash` payment that would make the customer's cash of the day (`paid_on`) reach the limit raises JV_CASH_LIMIT unless a holder of `cash_over_limit` gives a
+// `cash_override_reason`, which is stored on the receipt; for the walk-in a single Cash payment at the limit raises it with 'Select or create the customer' (src/domain/cashRules.ts). A caller without that tick who
 // sends a reason is refused (JV_FORBIDDEN, T-D09). The rules run before the first write.
 //
-// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a role not on the row, an invalid body); then the key is read from the header (missing
+// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a caller who holds none of the row's ticks, an invalid body); then the key is read from the header (missing
 // or not a UUID: 422 naming the header, nothing claimed) and ONE transaction runs:
 //   1. the claim of the key (L5, the first statement), the role check again (X0 item 2), the stored answer if the key is a repeat (before any lock or date check, so a retry after midnight is not
 //      refused by Y8);
@@ -58,7 +58,7 @@ export const recordPaymentBody = wire.strictObject({
   notes: (f.optionalText(f.TEXT_MAX).schema as z.ZodType<string | null>).optional(),
   /** Y3: the bill to pay first. It must be an active bill of this customer with money pending, else JV_INVALID_INPUT. */
   bill_id: wire.uuid.nullish(),
-  /** Z1: the owner's right (FIELD_RIGHTS), stored on the receipt when a Cash payment needed it; a biller who sends it is refused after the claim. */
+  /** Z1: the right of `cash_over_limit` (FIELD_RIGHTS), stored on the receipt when a Cash payment needed it; a caller without it who sends it is refused after the claim. */
   cash_override_reason: cashOverrideReason,
 });
 export type RecordPaymentBody = z.output<typeof recordPaymentBody>;
@@ -110,16 +110,16 @@ export async function recordPayment(
   customerId: string,
   input: RecordPaymentBody,
 ): Promise<{ value: RecordPaymentResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
 
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'record_payment', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
-    if (input.cash_override_reason != null && !mayUseField(role, 'cash_override_reason')) {
-      throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
+      throw new JvError('JV_FORBIDDEN', 'Your role cannot give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
     }
     if (!c.first) return { value: c.result as RecordPaymentResult, replayed: true };
 
@@ -129,7 +129,7 @@ export async function recordPayment(
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before taking a payment.', { details: { customer_id: customer.id } });
     const now = app.clock.read();
     const at = now.timestamp;
-    const paidOn = checkBillDate(input.paid_on, now.date, role, 'paid_on'); // Y8
+    const paidOn = checkBillDate(input.paid_on, now.date, grants, 'paid_on'); // Y8
     const walkin = Number(customer.is_walkin) === 1;
     const amount = toUnits(input.amount, MONEY);
 
@@ -150,7 +150,7 @@ export async function recordPayment(
     }
 
     // The cash rules of section 13 (Z1, Z2), before the first write: only a Cash payment is judged; the day is the date of the payment; the reason comes back only when the override was needed.
-    const cashRules = await applyCashRules(tx, { customerId: customer.id, walkin, day: paidOn, cash: input.mode === 'Cash' ? amount : 0n, role, reason: input.cash_override_reason });
+    const cashRules = await applyCashRules(tx, { customerId: customer.id, walkin, day: paidOn, cash: input.mode === 'Cash' ? amount : 0n, grants, reason: input.cash_override_reason });
 
     // 4. the writes. The receipt (a money receipt: kind, no silver, not an opening advance), its audit row, then the payment's own allocation by Y3.
     const receiptId = newId();
@@ -199,8 +199,8 @@ export async function recordPayment(
     const all = [...own, ...rebalanced.allocations];
     const toThisReceipt = all.filter((a) => a.receipt_id === receiptId).reduce((n, a) => n + toUnits(a.amount, MONEY), 0n);
     const value: RecordPaymentResult = {
-      receipt: wireRow('receipts', role, receiptRow),
-      allocations: all.map((a) => wireRow('receipt_allocations', role, { ...a })),
+      receipt: wireRow('receipts', grants, receiptRow),
+      allocations: all.map((a) => wireRow('receipt_allocations', grants, { ...a })),
       advance_remaining: fromUnits(amount - toThisReceipt, MONEY),
     };
     await storeResult(tx, c.key, value);

@@ -18,6 +18,9 @@ import { type Designs, addCustomer, addDesigns, addRate, billBody, billRow, edit
 // The world is the scratch database of the other money tests (real routes, seeds, a clock fixed at 17 Oct 2026 10:00 UTC = 15:30 in Kolkata, so every bill and payment made through the routes is
 // dated 2026-10-17). The nightly run is told it is 2026-10-18, so the day under review is 2026-10-17. Rates for the day are typed in; bills, payments, settlements, cancels, voids and the biller's
 // rates go through the routes (the list prices are the server's own), refunds and re-issues (their functions come later) are typed in.
+//
+// "A biller entered" is a login whose role holds rate_enter and lacks rate_correct (RATE_REVIEW of the matrix), asked of the `roles` table as it stands when the check runs: the Biller of day one is such a role.
+// The custom roles with those ticks, the Owner, the Super Admin and a role that can correct are in tests/api/access-reads.test.ts.
 
 const TODAY = '2026-10-17';
 const RUN_DATE = '2026-10-18';

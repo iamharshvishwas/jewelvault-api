@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../src/app';
-import { type Action, MATRIX, PUBLIC_ROUTES, type PublicName, READ_COLUMNS, ROLES, WRITE_COLUMNS } from '../src/permissions/matrix';
-import { CALLERS, type World, checkCell, checkPublicCell, checkReadColumns, checkWriteColumns, makeWorld, registerStubs } from './api/cells';
+import { type Access, type Action, type EditAction, MATRIX, PUBLIC_ROUTES, type PublicName, READ_COLUMNS, WRITE_COLUMNS, writeColumnsFor } from '../src/permissions/matrix';
+import { BUILTIN_ROLES, builtinGrants } from './api/builtin-roles';
+import { CALLERS, type World, checkCell, checkPublicCell, checkReadColumns, checkWriteColumns, makeWorld, registerStubs, rowAllows } from './api/cells';
 import { testConfig } from './api/support';
 
 // T-D02 (A1, A4): THE GENERATED TEST. It walks every row of the permission matrix for every caller of A4 (no session, an ended session, an expired one, an idle one, a user who is not active,
@@ -30,7 +31,9 @@ const READ_QUERY: Partial<Record<Action, string>> = {
   'read:audit_log': '?limit=200',
   'read:health_checks': '?limit=200',
 };
-const cellRoute = (action: Action) => ({ action, method: MATRIX[action].method, path: MATRIX[action].path, roles: MATRIX[action].roles, mustChange: MATRIX[action].mustChange, query: READ_QUERY[action] });
+const cellRoute = (action: Action) => ({ action, method: MATRIX[action].method, path: MATRIX[action].path, access: MATRIX[action].access, mustChange: MATRIX[action].mustChange, query: READ_QUERY[action] });
+/** Who may call a row, for the name of its block. */
+const who = (a: Access) => ('open' in a ? 'open' : 'superAdmin' in a ? 'super' : a.anyOf.join('|'));
 
 describe('T-D02 the real routes: every registered route, every caller', () => {
   let world: World;
@@ -46,7 +49,7 @@ describe('T-D02 the real routes: every registered route, every caller', () => {
       it.todo(`${action}: ${row.method} ${row.path} has no route yet`);
       continue;
     }
-    describe(`${action} ${row.method} ${row.path} [${row.roles.join(',')}]`, () => {
+    describe(`${action} ${row.method} ${row.path} [${who(row.access)}]`, () => {
       for (const caller of CALLERS) {
         it(`${caller}`, async () => {
           expect(await checkCell(world, cellRoute(action), caller)).toBeNull();
@@ -54,22 +57,21 @@ describe('T-D02 the real routes: every registered route, every caller', () => {
       }
       if ('reads' in row && row.reads) {
         for (const resource of row.reads) {
-          for (const role of ROLES) {
-            const allowed = READ_COLUMNS[resource][role];
-            if (!row.roles.includes(role) || !allowed) continue;
+          for (const role of BUILTIN_ROLES) {
+            if (!rowAllows(row, role)) continue;
             it(`READ_COLUMNS ${resource} for ${role}: the rows hold no other column`, async () => {
-              expect(await checkReadColumns(world, cellRoute(action), role, allowed)).toBeNull();
+              expect(await checkReadColumns(world, cellRoute(action), role, READ_COLUMNS[resource])).toBeNull();
             });
           }
         }
       }
       if ('edit' in row && row.edit) {
         const edit = row.edit;
-        for (const role of ROLES) {
-          if (!row.roles.includes(role)) continue;
+        for (const role of BUILTIN_ROLES) {
+          if (!rowAllows(row, role)) continue;
           it(`WRITE_COLUMNS for ${role}: an allowed column works, a forbidden one is 403 JV_FORBIDDEN, an unknown one 422`, async () => {
-            const allowed = WRITE_COLUMNS[action as keyof typeof WRITE_COLUMNS][role] ?? [];
-            const everyone = new Set(ROLES.flatMap((r) => WRITE_COLUMNS[action as keyof typeof WRITE_COLUMNS][r] ?? []));
+            const allowed = writeColumnsFor(action as EditAction, builtinGrants(role));
+            const everyone = new Set(Object.values(WRITE_COLUMNS[action as EditAction]).flatMap((l) => l ?? []));
             const forbidden = [...everyone].filter((c) => !allowed.includes(c));
             expect(await checkWriteColumns(world, { ...cellRoute(action), shape: edit.shape }, role, { allowed, forbidden })).toEqual([]);
           });
@@ -109,7 +111,7 @@ describe('T-D02 the wrapper against every row of the matrix (an app of its own, 
   });
 
   for (const [action, row] of rows) {
-    describe(`${action} ${row.method} ${row.path} [${row.roles.join(',')}]`, () => {
+    describe(`${action} ${row.method} ${row.path} [${who(row.access)}]`, () => {
       for (const caller of CALLERS) {
         it(`${caller}`, async () => {
           expect(await checkCell(world, cellRoute(action), caller)).toBeNull();

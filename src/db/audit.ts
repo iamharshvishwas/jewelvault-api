@@ -12,7 +12,7 @@
 // An UPDATE that changes nothing but updated_at writes no row (D23: the touches of src/db/touch.ts add no audit noise), and neither does one that changes only an excluded column, nor one that changes
 // nothing at all. A column that is on the exclude list (password_hash) is never copied. Events (a login, an admin-door call, a job run) are not row changes: src/db/events.ts writes those in both modes.
 //
-// The 13 tables' shapes are static (auditShapes.ts, compared with the migrated database by a test). A function that audits a table that is not among them passes its own `shape` (a test does).
+// The 15 audited tables' shapes are static (auditShapes.ts, compared with the migrated database by a test). A function that audits a table that is not among them passes its own `shape` (a test does).
 import type { AuditMode } from '../config.js';
 import { AUDIT_SHAPES } from './auditShapes.js';
 import type { Reader, Tx } from './tx.js';

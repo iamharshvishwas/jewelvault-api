@@ -912,7 +912,7 @@ describe('T-D03 no result of create_bill or quote_bill holds the original weight
 
 describe('T-D09 the matrix row of X1 (POST /v1/bills: owner and biller) and its field rules', () => {
   it('the route is registered through route() with the action of the row', () => {
-    expect(w.world.app.routeTable.find((r) => r.action === 'fn:create_bill')).toMatchObject({ method: 'POST', url: '/v1/bills', kind: 'matrix', roles: ['owner', 'biller'], mustChange: false });
+    expect(w.world.app.routeTable.find((r) => r.action === 'fn:create_bill')).toMatchObject({ method: 'POST', url: '/v1/bills', kind: 'matrix', access: { anyOf: ['bill_make'] }, mustChange: false });
   });
 
   it('no session is 401, staff is 403 JV_FORBIDDEN, a user who must change the password is 403 JV_PASSWORD_CHANGE_REQUIRED, and none of them reads a piece, a customer or a counter', async () => {

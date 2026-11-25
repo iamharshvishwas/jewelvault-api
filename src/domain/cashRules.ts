@@ -3,8 +3,8 @@
 //
 // THE PER-DAY TOTAL (Z1). For a customer that is not the walk-in, `cash_today` is the sum of `amount` of their ACTIVE receipts with `paid_on` on one business date that are `money` receipts of mode Cash
 // or `fine_cash` receipts, leaving out `is_opening` rows and NOT reduced by refunds (a refund is a receipt of kind `refund`: it is neither counted nor subtracted). A call that would make `cash_today`
-// REACH the limit or more raises JV_CASH_LIMIT, unless the caller may use the owner's field right and gives a reason (the route has already refused a reason from anybody else with 403, Z1; this
-// module asks the matrix by name and never compares a role). The reason is returned to be stored on the bill or the receipt, and ONLY when the override was needed: the review line of I11 counts the
+// REACH the limit or more raises JV_CASH_LIMIT, unless the caller's grants hold the tick of the field right (cash_over_limit) and the caller gives a reason (the function has already refused a reason from anybody else with 403, Z1;
+// this module asks the matrix by name and never compares a role or a tick). The reason is returned to be stored on the bill or the receipt, and ONLY when the override was needed: the review line of I11 counts the
 // bills and receipts saved with a reason, so a reason that changed nothing must not appear there.
 //
 // THE WALK-IN (Z2). One row stands for many different people, so its cash is never added up over a day: a SINGLE cash payment (one record_payment, one fine_cash settlement, the Cash rows of one bill)
@@ -16,6 +16,7 @@
 import type { Reader } from '../db/tx.js';
 import { JvError } from '../errors.js';
 import { limits } from '../limits.js';
+import type { Grants } from '../permissions/grants.js';
 import { mayUseField } from '../permissions/matrix.js';
 import { fromUnits, toUnits } from './rebalance.js';
 
@@ -43,7 +44,7 @@ export interface JudgeInput {
   cash: bigint;
   /** the customer's `cash_today` before this call, paise (not used for the walk-in) */
   before: bigint;
-  /** the caller may give a reason for cash over the limit (the owner's field right) */
+  /** the caller may give a reason for cash over the limit (the field right of the cash_over_limit tick) */
   mayOverride: boolean;
   /** `cash_override_reason` as sent (already 10 to 500 characters and trimmed by the body schema) */
   reason: string | null | undefined;
@@ -69,7 +70,7 @@ export function judgeCash(o: JudgeInput, limit: bigint = CASH_LIMIT_PAISE): Cash
   if (o.mayOverride && reason.length > 0) return { reason };
   const who = o.mayOverride
     ? 'Give the reason in cash_override_reason (at least 10 characters) to save it.'
-    : 'Only the owner can enter this payment, with a reason.';
+    : 'Your role cannot take cash over the limit.';
   throw new JvError('JV_CASH_LIMIT', `Cash from this customer on one day would reach the limit of ₹${inRupees(limit)}. ${who}`, {
     details: { limit: fromUnits(limit, MONEY), cash_today: fromUnits(o.before, MONEY), this_call: fromUnits(o.cash, MONEY), date: o.day },
   });
@@ -108,8 +109,8 @@ export interface CashRulesInput {
   day: string;
   /** the Cash (X1, X2) or fine_cash (X3) this call adds, paise; 0 when there is none */
   cash: bigint;
-  /** the caller's role, to ask the matrix for the owner's field right */
-  role: string;
+  /** the caller's grants (the ticks of their role and the Super Admin flag), to ask the matrix for the field right of cash_over_limit */
+  grants: Grants;
   reason: string | null | undefined;
 }
 
@@ -119,5 +120,5 @@ export interface CashRulesInput {
  */
 export async function applyCashRules(db: Reader, o: CashRulesInput, limit: bigint = CASH_LIMIT_PAISE): Promise<CashVerdict> {
   const before = o.walkin || o.cash <= 0n ? 0n : await cashToday(db, o.customerId, o.day);
-  return judgeCash({ walkin: o.walkin, day: o.day, cash: o.cash, before, mayOverride: mayUseField(o.role, 'cash_override_reason'), reason: o.reason }, limit);
+  return judgeCash({ walkin: o.walkin, day: o.day, cash: o.cash, before, mayOverride: mayUseField(o.grants, 'cash_override_reason'), reason: o.reason }, limit);
 }

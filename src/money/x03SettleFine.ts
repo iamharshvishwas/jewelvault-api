@@ -7,9 +7,9 @@
 //
 //   path     the customer (`p_customer_id`): a lower-case UUID, else 422 on `id`; no such customer is 404 JV_NOT_FOUND.
 //   body     grams (a weight above 0, at most 3 decimals), mode (Silver or Cash), silver_rate (Cash: required and above 0; Silver: none, a rate there is 422 so that nothing sent is dropped silently),
-//            bill_id (optional: the bill to settle first), paid_on (absent or null: today; Y8), reference (at most 120), notes, cash_override_reason (the owner's right, Z1).
+//            bill_id (optional: the bill to settle first), paid_on (absent or null: today; Y8), reference (at most 120), notes, cash_override_reason (the right of `cash_over_limit`, Z1).
 //   header   Idempotency-Key.
-//   answer   201 {receipt, allocations, fine_remaining}: `receipt` and `allocations` are the rows in the wire format of the sync read of the caller's role. `allocations` are all the rows the call made,
+//   answer   201 {receipt, allocations, fine_remaining}: `receipt` and `allocations` are the rows in the wire format of the sync read, cut to the columns the caller's grants may read. `allocations` are all the rows the call made,
 //            in the order made: the settlement's own (Y3: the named bill first, then the oldest) and then those of the rebalance (Y6), if any. `fine_remaining` is the customer's fine outstanding (V2)
 //            AFTER the call, in grams: what is still owed in silver. (Not "what is left of this receipt": SF2 lets nobody settle more than is owed, so every gram of the receipt is allocated.)
 //
@@ -17,9 +17,9 @@
 // K5, O52: for the walk-in the bill must be named and the grams are not more than THAT bill's fine pending (JV_FINE_EXCEEDS with that maximum; one row stands for strangers whose silver must not
 // settle each other's bills). Y3: the named bill must be one of the customer's active bills with SILVER pending, else JV_INVALID_INPUT on `bill_id`. A cash settlement whose amount rounds to 0.00 is
 // JV_INVALID_INPUT, and so is one over the amount cap of S4 (grams x rate, at most 1,000,000,000). The amount is worked out in whole paise (BigInt), half up, never in floating point.
-// Z1, Z2: the cash rules of section 13 judge a `fine_cash` amount like a Cash payment (src/domain/cashRules.ts); a Silver settlement adds no cash. A biller who sends a reason is refused (403).
+// Z1, Z2: the cash rules of section 13 judge a `fine_cash` amount like a Cash payment (src/domain/cashRules.ts); a Silver settlement adds no cash. A caller without `cash_over_limit` who sends a reason is refused (403).
 //
-// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a role not on the row, an invalid body). Before the transaction, and so before the
+// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a caller who holds none of the row's ticks, an invalid body). Before the transaction, and so before the
 // key is claimed, the rules that need only the body are decided (the rate, the amount): a refusal there does not use the key up. Then ONE transaction:
 //   1. the claim of the key (L5, the first statement), the role check again (X0 item 2), the stored answer if the key is a repeat (before any lock or date check);
 //   2. the customer row FOR UPDATE (X0 item 3), "exists, not archived", then ONE reading of the API clock: its date is the business day for Y8, its stamp is every stamp of the call (C4);
@@ -71,7 +71,7 @@ export const settleFineBody = wire.strictObject({
   paid_on: wire.businessDate.nullish(),
   reference: (f.optionalText(REFERENCE_MAX).schema as z.ZodType<string | null>).optional(),
   notes: (f.optionalText(f.TEXT_MAX).schema as z.ZodType<string | null>).optional(),
-  /** Z1: the owner's right (FIELD_RIGHTS), stored on the receipt when a Cash settlement needed it; a biller who sends it is refused after the claim. */
+  /** Z1: the right of `cash_over_limit` (FIELD_RIGHTS), stored on the receipt when a Cash settlement needed it; a caller without it who sends it is refused after the claim. */
   cash_override_reason: cashOverrideReason,
 });
 export type SettleFineBody = z.output<typeof settleFineBody>;
@@ -157,7 +157,7 @@ export async function settleFine(
   customerId: string,
   input: SettleFineBody,
 ): Promise<{ value: SettleFineResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
   const settlement = judgeSettlement(input); // before the claim: a refusal that needs only the body does not use the key up
@@ -165,9 +165,9 @@ export async function settleFine(
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'settle_fine', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
-    if (input.cash_override_reason != null && !mayUseField(role, 'cash_override_reason')) {
-      throw new JvError('JV_FORBIDDEN', 'Only the owner can give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    if (input.cash_override_reason != null && !mayUseField(grants, 'cash_override_reason')) {
+      throw new JvError('JV_FORBIDDEN', 'Your role cannot give a reason for cash over the limit.', { details: { field: 'cash_override_reason' } });
     }
     if (!c.first) return { value: c.result as SettleFineResult, replayed: true };
 
@@ -177,7 +177,7 @@ export async function settleFine(
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before settling silver.', { details: { customer_id: customer.id } });
     const now = app.clock.read();
     const at = now.timestamp;
-    const paidOn = checkBillDate(input.paid_on, now.date, role, 'paid_on'); // Y8
+    const paidOn = checkBillDate(input.paid_on, now.date, grants, 'paid_on'); // Y8
     const walkin = Number(customer.is_walkin) === 1;
 
     // 3. the state of the customer, read ONCE (X0 item 8); the hook of the test build is the return of this call. The bills with SILVER pending are the ones a fine settlement can settle (Y3).
@@ -206,7 +206,7 @@ export async function settleFine(
     }
 
     // The cash rules of section 13 (Z1, Z2), before the first write: only a fine settled in cash is cash; the day is the date of the settlement; the reason comes back only when the override was needed.
-    const cashRules = await applyCashRules(tx, { customerId: customer.id, walkin, day: paidOn, cash: settlement.amount, role, reason: input.cash_override_reason });
+    const cashRules = await applyCashRules(tx, { customerId: customer.id, walkin, day: paidOn, cash: settlement.amount, grants, reason: input.cash_override_reason });
 
     // 4. the writes. The receipt (fine_silver: no mode, amount 0; fine_cash: mode Cash, the rate and the amount), its audit row, then the settlement's own allocation by Y3.
     const receiptId = newId();
@@ -256,8 +256,8 @@ export async function settleFine(
     const all = [...own, ...rebalanced.allocations];
     const settledNow = all.reduce((n, a) => n + toUnits(a.fine_grams, FINE), 0n);
     const value: SettleFineResult = {
-      receipt: wireRow('receipts', role, receiptRow),
-      allocations: all.map((a) => wireRow('receipt_allocations', role, { ...a })),
+      receipt: wireRow('receipts', grants, receiptRow),
+      allocations: all.map((a) => wireRow('receipt_allocations', grants, { ...a })),
       fine_remaining: fromUnits(outstanding - settledNow, FINE),
     };
     await storeResult(tx, c.key, value);

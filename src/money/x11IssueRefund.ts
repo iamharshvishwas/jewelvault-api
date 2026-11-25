@@ -7,10 +7,10 @@
 //
 //   path     the customer (`p_customer_id`): a lower-case UUID, else 422 on `id`; no such customer is 404 JV_NOT_FOUND; an archived one is 409 JV_CUSTOMER_ARCHIVED (as X1 to X5 say).
 //   body     amount (a text above 0, at most 2 decimals, at most 1,000,000,000), mode (Cash, UPI, Card, Bank Transfer, Other: D13 gives a refund the five modes of a payment), paid_on (absent or null:
-//            today; Y8: the owner, who is the only caller, any day up to and including today, never the future), reference (at most 120), notes. Nothing else: the customer is the path, a refund
+//            today; Y8: any day up to and including today for a caller who holds `back_date`, only today for one who does not, never the future), reference (at most 120), notes. Nothing else: the customer is the path, a refund
 //            names no bill, hands back no silver (O24: silver cannot be handed back in M1) and needs no cash-limit reason (money going out has no limit).
 //   header   Idempotency-Key.
-//   answer   201 {receipt, advance}: `receipt` is the row in the wire format of the sync read of the caller's role (so the cache applies it as it applies a polled row), `advance` the customer's
+//   answer   201 {receipt, advance}: `receipt` is the row in the wire format of the sync read, cut to the columns the caller's grants may read (so the cache applies it as it applies a polled row), `advance` the customer's
 //            advance AFTER the call, money text (V2). A repeat of the key answers the same body and status with `Idempotent-Replay: true`.
 //
 // THE RULE OF Y10. The amount may not be more than the customer's advance as the books stand AFTER the customer lock: 409 JV_NOT_ALLOWED naming `amount`, with `details {field, reason:
@@ -22,7 +22,7 @@
 // spent a second time. With the books in the state I10 leaves them (an advance only when nothing is pending) it applies nothing and sends nothing; a customer who holds an advance BESIDE a pending
 // bill (an import can leave one, the way the rebalance of X2 can meet one) has the part of the advance that is left after the refund applied to that bill.
 //
-// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a role that is not the owner, an invalid body); then the key is read from the header
+// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a caller without `refund_give`, an invalid body); then the key is read from the header
 // (missing or not a UUID: 422 naming the header, nothing claimed) and ONE transaction runs:
 //   1. the claim of the key (L5, the first statement), the role check again (X0 item 2), the stored answer if the key is a repeat (before any lock or date check, so a retry after midnight is not
 //      refused by Y8);
@@ -100,14 +100,14 @@ export async function issueRefund(
   customerId: string,
   input: IssueRefundBody,
 ): Promise<{ value: IssueRefundResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
 
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'issue_refund', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as IssueRefundResult, replayed: true };
 
     // 2. the customer row FOR UPDATE, then "exists and is not archived"; one reading of the clock after the lock
@@ -116,7 +116,7 @@ export async function issueRefund(
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before handing money back.', { details: { customer_id: customer.id } });
     const now = app.clock.read();
     const at = now.timestamp;
-    const paidOn = checkBillDate(input.paid_on, now.date, role, 'paid_on'); // Y8
+    const paidOn = checkBillDate(input.paid_on, now.date, grants, 'paid_on'); // Y8
     const walkin = Number(customer.is_walkin) === 1;
     const amount = toUnits(input.amount, MONEY);
 
@@ -152,7 +152,7 @@ export async function issueRefund(
     const rebalanced = await rebalance(tx, { customerId: customer.id, walkin, state: stateAfterRefund(state, amount), at });
 
     const value: IssueRefundResult = {
-      receipt: wireRow('receipts', role, receiptRow),
+      receipt: wireRow('receipts', grants, receiptRow),
       advance: fromUnits(advance - amount - toUnits(rebalanced.applied, MONEY), MONEY),
     };
     await storeResult(tx, c.key, value);

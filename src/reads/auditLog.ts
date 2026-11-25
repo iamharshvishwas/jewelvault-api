@@ -1,4 +1,4 @@
-// C3, A4: GET /v1/audit-log?before_id=&table=&row_id=&limit=. The audit log, newest first, at most limits.ownerPageRows (200) a page; the owner alone reads it.
+// C3, A4: GET /v1/audit-log?before_id=&table=&row_id=&limit=. The audit log, newest first, at most limits.ownerPageRows (200) a page; a person holding activity_log reads it (the Owner among the built-in roles).
 //
 //   - newest first is `ORDER BY id DESC`: the id is the insertion order and the cursor (`before_id`: the rows with a smaller id), so a page never repeats or skips a row. The primary key serves the
 //     plain page and the range; (table_name, row_id) serves a filter by table and row (D19). `table` and `row_id` are values, bound as parameters; a row id needs its table.
@@ -7,6 +7,7 @@
 import type { Param } from '../db/stmt.js';
 import type { Reader } from '../db/tx.js';
 import { limits } from '../limits.js';
+import type { Grants } from '../permissions/grants.js';
 import { formatRow } from '../wire/format.js';
 import * as wire from '../wire/zod.js';
 import { z } from 'zod';
@@ -41,11 +42,11 @@ export interface AuditPage {
 
 const parseJson = (value: unknown): unknown => (typeof value === 'string' ? JSON.parse(value) : (value ?? null));
 
-export async function readAuditLog(db: Reader, role: string, q: z.output<typeof auditQuery>): Promise<AuditPage> {
+export async function readAuditLog(db: Reader, grants: Grants, q: z.output<typeof auditQuery>): Promise<AuditPage> {
   if (q.row_id !== undefined && q.table === undefined) throw new wire.InvalidInputError('row_id', 'needs table');
   const asked = q.limit === undefined ? limits.ownerPageRows : Number(q.limit);
   if (asked > limits.ownerPageRows) throw new wire.InvalidInputError('limit', limitMessage); // the cap is the contract: asking for more is refused, not cut
-  const columns = readColumns('audit_log', role);
+  const columns = readColumns('audit_log', grants);
   const params: Param[] = [];
   if (q.before_id !== undefined) params.push(Number(q.before_id));
   if (q.table !== undefined) params.push(q.table);

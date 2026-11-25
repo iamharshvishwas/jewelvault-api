@@ -1,8 +1,8 @@
-// A5, D6, P2, P3: the ordinary edit of a design (PATCH /v1/designs/:id). The columns are the matrix's (WRITE_COLUMNS: staff the content columns and archived_at, the owner also material, purity and
+// A5, D6, P2, P3: the ordinary edit of a design (PATCH /v1/designs/:id). The columns are the matrix's (WRITE_COLUMNS: `stock_edit` the content columns and archived_at, `design_material` material, purity and
 // selling method); the rules that are code and not columns are here:
 //   - `selling_method` cannot change while the design has a piece that is not archived (D6): the piece rates mean rupees per gram for By Weight and a piece price for Per Piece (D7).
 //   - a design with a piece that is not archived cannot be archived (A5). Bringing it back is always allowed.
-//   - the photo ids (P2 (a) to (e), A5): at most 3, each new id has BOTH kinds stored for THIS design and not removed, only the owner may remove, reorder or replace (the others add ids at the end),
+//   - the photo ids (P2 (a) to (e), A5): at most 3, each new id has BOTH kinds stored for THIS design and not removed, only a caller who holds `photo_rewrite` may remove, reorder or replace (the others add ids at the end),
 //     and `primary_photo_id` must stay one of the ids.
 //   - the category and the subcategory must exist (a made-up id is a refusal of the field, not the foreign key's error).
 // "A piece that is not archived" is a piece whose status is not Archived: Sold, Reserved, Missing and the rest all count.
@@ -55,7 +55,7 @@ export async function assertAttachable(tx: Tx, ownerId: string, ids: readonly st
   }
 }
 
-const designRules: UpdateRule = async ({ tx, role, id, current, diff }) => {
+const designRules: UpdateRule = async ({ tx, grants, id, current, diff }) => {
   let live: boolean | undefined;
   const hasLivePieces = async (): Promise<boolean> => (live ??= (await tx.rows('SELECT id FROM skus WHERE design_id = ? AND status <> ? LIMIT 1', [id, 'Archived'])).length > 0);
 
@@ -74,7 +74,7 @@ const designRules: UpdateRule = async ({ tx, role, id, current, diff }) => {
   const ids = idsChange ? (diff.photo_ids as string[]) : before;
   if (idsChange) {
     const addsOnly = ids.length >= before.length && before.every((x, i) => ids[i] === x);
-    if (!addsOnly && !mayUseField(role, 'rewrite_photo_ids')) throw invalid('changes.photo_ids', 'can only get new photo ids added at the end');
+    if (!addsOnly && !mayUseField(grants, 'rewrite_photo_ids')) throw invalid('changes.photo_ids', 'can only get new photo ids added at the end');
   }
   const primary = 'primary_photo_id' in diff ? (diff.primary_photo_id as string | null) : (current.primary_photo_id as string | null);
   if (primary !== null && !ids.includes(primary)) throw invalid('changes.primary_photo_id', 'must be one of the design\'s photo ids');

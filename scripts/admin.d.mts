@@ -1,5 +1,5 @@
 export const COMMANDS: string[];
-/** Everything the command talks to; the keys of the questions are token, api, email, name, role, file and sha256. */
+/** Everything the command talks to; the keys of the questions are token, api, email, name, role, file, sha256 and confirm. */
 export interface AdminIo {
   env: Record<string, string | undefined>;
   ask(key: string): Promise<string>;

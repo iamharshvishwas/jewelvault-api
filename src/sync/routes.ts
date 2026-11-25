@@ -1,19 +1,21 @@
 // C3, C4: the read side of the screens. GET /v1/sync/<resource>?updated_after=&after_key=&limit= (hydrate, and one resource of a poll) and POST /v1/sync/poll (all the resources of a screen in one call).
 //
 //   GET  → 200 { rows, next, server_time }          next: { updated_at, key } when the page was full, else null (the load ends)
-//   POST → 200 { results: { <resource>: { rows, next } }, server_time, role }
+//   POST → 200 { results: { <resource>: { rows, next } }, server_time, role, access }      access: the fingerprint of R5, the same text `me` carries
 //   POST body: { limit?: 1 to 1,000, cursors: { <resource>: null | { updated_at, key? } } }
 //
 // What each answer promises, in the order the spec gives it:
 //   - the pages of a poll are read inside ONE read-only snapshot (REPEATABLE READ, WITH CONSISTENT SNAPSHOT), so a poll never shows a bill without its lines or a payment without its allocation (C4);
 //     a GET is read in a snapshot too, so the two statements of a derived read see one moment;
 //   - `server_time` is the API's clock read BEFORE the first page is read: the first poll after a hydrate starts from the server_time of the hydrate's FIRST page minus 30 seconds (C3, RF4-5);
-//   - the call is 403 JV_FORBIDDEN as a whole when the role may not read one of the resources it names, with nothing read and no partial answer (C4), and it reports the caller's CURRENT role;
+//   - the call is 403 JV_FORBIDDEN as a whole when the person may not read one of the resources it names, with nothing read and no partial answer (C4): each resource is asked of the person's own grants
+//     (`auth.user.grants`, the ticks read on this very call, R4), so a person polls exactly what `me.reads` names and never more; it reports the caller's CURRENT role and access;
 //   - the page size is the constant `limits.syncPageRows` (1,000); asking for more is refused, not cut. A server that is made to cap pages lower (the test of T-F03) answers fewer rows with `next`
 //     set, and the screen advances by the rows it received;
 //   - a path that is not a resource is not a route (404, A11), and nothing the client sends is a table or column name: an unknown key in the query or the body is refused (422);
 //   - the paths under /v1/sync/ never move the session's `last_seen_at` (U4, session.ts).
-// The session, the matrix row and the body schema are the wrapper's (route.ts); the handlers hold no role string (S10).
+// The session, the matrix row and the body schema are the wrapper's (route.ts); the handlers hold no role string (S10): the pages are cut by the person's grants, and the role KEY only goes to the audit actor
+// of the read's context and to the poll's answer.
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { txContextFor, withRead } from '../db/tx.js';
@@ -69,7 +71,7 @@ export function registerSyncRoutes(app: FastifyInstance, options: SyncRoutesOpti
 
   const contextOf = (a: FastifyInstance, request: Parameters<typeof txContextFor>[1], user: { id: string; role: string }) => {
     if (!a.db) throw new JvError('JV_UNAVAILABLE', 'The service is not available. Try again in a moment.');
-    return txContextFor(a.db, request, { id: user.id, role: user.role });
+    return txContextFor(a.db, request, { id: user.id, role: user.role }); // the audit actor: the person and the role KEY, whatever the ticks are
   };
 
   for (const resource of SYNC_RESOURCES) {
@@ -87,7 +89,7 @@ export function registerSyncRoutes(app: FastifyInstance, options: SyncRoutesOpti
         if (asked !== undefined && asked > limits.syncPageRows) throw new wire.InvalidInputError('limit', limitMessage); // the constant is the contract: asking for more is refused, not cut
         const limit = clamp(asked, cap);
         const after = q.updated_after === undefined ? undefined : { updatedAt: timestampFromWire(q.updated_after), key: q.after_key ?? null };
-        const page = await withRead(contextOf(a, request, auth.user), (db) => readPage(db, resource, auth.user.role, { after, limit }), { snapshot: true });
+        const page = await withRead(contextOf(a, request, auth.user), (db) => readPage(db, resource, auth.user.grants, { after, limit }), { snapshot: true });
         return { rows: page.rows, next: page.next, server_time: serverTime };
       },
     });
@@ -104,8 +106,8 @@ export function registerSyncRoutes(app: FastifyInstance, options: SyncRoutesOpti
         if (!resource) throw new wire.InvalidInputError(`cursors.${name.slice(0, 64)}`, 'is not a resource this call reads');
         asked.push({ resource, cursor: c });
       }
-      // C4: if the role may not read one of them the whole call is 403, with no partial answer and nothing read
-      if (asked.some((x) => !mayCall(auth.user.role, x.resource.action))) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
+      // C4: if the person may not read one of them the whole call is 403, with no partial answer and nothing read
+      if (asked.some((x) => !mayCall(auth.user.grants, x.resource.action))) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
       for (const { resource, cursor: c } of asked) {
         if (c?.key != null) {
           const problem = keyProblem(resource, c.key);
@@ -119,13 +121,13 @@ export function registerSyncRoutes(app: FastifyInstance, options: SyncRoutesOpti
           const out: Record<string, WirePage> = {};
           for (const { resource, cursor: c } of asked) {
             const after = c === null ? undefined : { updatedAt: timestampFromWire(c.updated_at), key: c.key ?? null };
-            out[resource.name] = await readPage(db, resource, auth.user.role, { after, limit });
+            out[resource.name] = await readPage(db, resource, auth.user.grants, { after, limit });
           }
           return out;
         },
         { snapshot: true },
       );
-      return { results, server_time: serverTime, role: auth.user.role };
+      return { results, server_time: serverTime, role: auth.user.role, access: auth.user.access };
     },
   });
 }

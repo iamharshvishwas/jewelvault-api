@@ -78,7 +78,7 @@ describe('PT-H1 harness smoke', () => {
       expect(third.applied).toEqual([]);
       expect(second.skipped.length).toBe(before.mig.length);
       expect(await snapshot(u)).toEqual(before); // schema, triggers, schema_migrations (applied_at included) and seed row counts are identical
-      expect((await auditTriggersInstalled(u)).length).toBe(28); // the audit triggers of db/optional are in: the lane is production-like
+      expect((await auditTriggersInstalled(u)).length).toBe(30); // the audit triggers of db/optional are in: the lane is production-like
       await u.end();
     }, 120_000);
 

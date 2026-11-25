@@ -47,6 +47,7 @@ import {
   priceBill,
 } from '../domain/pricing.js';
 import { unavailableError } from '../errors.js';
+import type { Grants } from '../permissions/grants.js';
 import { mayUseField } from '../permissions/matrix.js';
 import { assertMayCall, route } from '../permissions/route.js';
 import { formatMoneyFromPaise, formatWeightFromMilligrams } from '../wire/format.js';
@@ -315,11 +316,11 @@ export function assertEachPieceOnce(items: readonly { sku_id: string }[]): void 
   });
 }
 
-/** Y8: a future date is refused; a past date only for a caller who may back-date. Returns the date (today when none was sent). `field` names the input in the refusal: `bill_date` (X1, X7) or `paid_on` (X2, X3). */
-export function checkBillDate(sent: string | null | undefined, today: string, role: string, field = 'bill_date'): string {
+/** Y8: a future date is refused; a past date only for a caller whose grants hold back_date. Returns the date (today when none was sent). `field` names the input in the refusal: `bill_date` (X1, X7), `paid_on` (X2, X3, X11) or `as_of` (X12). */
+export function checkBillDate(sent: string | null | undefined, today: string, grants: Grants, field = 'bill_date'): string {
   const date = sent ?? today;
   if (date > today) throw new wire.InvalidInputError(field, 'must not be in the future');
-  if (date < today && !mayUseField(role, 'back_dates')) throw new wire.InvalidInputError(field, 'must be today');
+  if (date < today && !mayUseField(grants, 'back_dates')) throw new wire.InvalidInputError(field, 'must be today');
   return date;
 }
 
@@ -394,9 +395,10 @@ export function registerQuoteBill(app: FastifyInstance, options: QuoteRouteOptio
     action: 'fn:quote_bill',
     body: quoteBody,
     handler: async ({ app: a, request, auth, body }) => {
-      assertMayCall(auth.user.role, 'fn:quote_bill'); // X0 item 2: the service function checks again
+      const grants = auth.user.grants;
+      assertMayCall(grants, 'fn:quote_bill'); // X0 item 2: the service function checks again
       // everything that can be refused without a database is refused first
-      const billDate = checkBillDate(body.bill_date, a.clock.read().date, auth.user.role);
+      const billDate = checkBillDate(body.bill_date, a.clock.read().date, grants);
       assertEachPieceOnce(body.items);
       const version = body.pricing_version ?? CURRENT_PRICING_VERSION;
       if (!Object.hasOwn(versions, version)) throw new wire.InvalidInputError('pricing_version', 'is not a version this API prices');

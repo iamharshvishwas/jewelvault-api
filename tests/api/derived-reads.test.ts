@@ -19,6 +19,9 @@ import { type Fixture, bodyOf, pageAll, query, syncWorld } from './sync-support'
 // tests/schema/s9-views.test.ts). The dashboard line is tests/api/health-route.test.ts, the twin of readHealth tests/api/health-twin.test.ts.
 //
 // The fixture clock is 17 Oct 2026 10:00 UTC = 15:30 in India: today is 2026-10-17 and yesterday 2026-10-16.
+//
+// Every reader asks the grants of the person who calls (the ticks the session read, R4), not the role's name. The callers here are the three built-in roles, whose grants are their day-one tick sets;
+// a custom role holding the right ticks (the cash book windows, the audit log, the health lines, the ledger) is tested in tests/api/access-reads.test.ts.
 
 const Q = loadQueries();
 const time = { micros: T0 };
@@ -194,13 +197,14 @@ describe('T-D18 the four derived reads are readable by the owner and a biller an
     for (const url of ['/v1/sync/customers', ledgerUrl(data.c1.id)]) expect((await get('staff', url)).statusCode, `staff read ${url}`).toBe(403);
   });
 
-  it('every other caller of A4 is refused too: an ended, an expired and an idle session and a deactivated user are 401, a user who must change the password is 403', async () => {
+  it('every other caller of A4 is refused too, except the Super Admin (role owner with the flag), who reads them like the owner: an ended, an expired and an idle session and a deactivated user are 401, a user who must change the password is 403', async () => {
     for (const { name, url } of four()) {
       for (const caller of CALLERS) {
         if (caller === 'owner' || caller === 'biller' || caller === 'staff' || caller === 'anon') continue;
         const res = await get(caller, url);
         await world.restore(caller);
-        expect(res.statusCode, `${caller} reads ${name}`).toBe(caller === 'must_change' ? 403 : 401);
+        // the Super Admin (role owner with the flag, access plan R3) reads them like the owner
+        expect(res.statusCode, `${caller} reads ${name}`).toBe(caller === 'super' ? 200 : caller === 'must_change' ? 403 : 401);
       }
     }
   });
@@ -556,7 +560,7 @@ describe('T-D18 GET /v1/audit-log: the owner reads the audit log, newest first, 
     expect([event.actor, event.actor_role, event.request_id, event.new_row]).toEqual([null, 'job', null, { event: 'login' }]);
     const settings = p.rows.find((r) => r.table_name === 'settings')!;
     expect([settings.old_row, settings.new_row]).toEqual([{ value: { a: 1 } }, { value: { a: 2 } }]);
-    for (const r of p.rows) expect(Object.keys(r).sort()).toEqual([...READ_COLUMNS.audit_log.owner!].sort());
+    for (const r of p.rows) expect(Object.keys(r).sort()).toEqual([...READ_COLUMNS.audit_log].sort());
   });
 
   it('pages of three: the next page starts before the last id, and the pages put together are the whole log once', async () => {
@@ -646,8 +650,8 @@ describe('T-D18 GET /v1/health/checks: the latest check_runs and backup_runs row
     expect(l.check_runs[1].details).toEqual({ invariants: [{ invariant: 'I4', row_ref: 'x' }] });
     expect(l.backup_runs.map((r) => [r.kind, r.ok, r.bytes])).toEqual([['db_dump', false, 0], ['photo_copy', true, 99], ['db_dump', true, 1234567]]);
     expect(l.backup_runs[0].detail).toEqual({ error: 'no space' });
-    for (const r of l.check_runs) expect(Object.keys(r).sort()).toEqual([...READ_COLUMNS.check_runs.owner!].sort());
-    for (const r of l.backup_runs) expect(Object.keys(r).sort()).toEqual([...READ_COLUMNS.backup_runs.owner!].sort());
+    for (const r of l.check_runs) expect(Object.keys(r).sort()).toEqual([...READ_COLUMNS.check_runs].sort());
+    for (const r of l.backup_runs) expect(Object.keys(r).sort()).toEqual([...READ_COLUMNS.backup_runs].sort());
   });
 
   it('`limit` cuts each list (default 30, at most 200); more is refused, not cut; an unknown key is 422', async () => {
@@ -671,7 +675,7 @@ describe('T-D18 GET /v1/health/checks: the latest check_runs and backup_runs row
 describe('T-D02 (API12 clause) the rows of the derived reads, the audit log and the health lists hold the columns of READ_COLUMNS and no others, for every role that reads them', () => {
   const keysOf = (rows: Record<string, unknown>[]) => new Set(rows.flatMap((r) => Object.keys(r)));
   const check = (resource: ReadResource, caller: 'owner' | 'biller', rows: Record<string, unknown>[]) => {
-    const allowed = READ_COLUMNS[resource][caller]!;
+    const allowed = READ_COLUMNS[resource];
     expect(rows.length, `${caller} ${resource}: there are rows to check`).toBeGreaterThan(0);
     expect([...keysOf(rows)].filter((k) => !allowed.includes(k)), `${caller} ${resource}`).toEqual([]);
     expect(allowed.filter((c) => !keysOf(rows).has(c)), `${caller} ${resource}: every column of the list is sent`).toEqual([]);
@@ -717,7 +721,7 @@ describe('T-D18 EXPLAIN shows the indexes used by the statements of the derived 
     const [rows] = await world.sql.query<any[]>(`EXPLAIN ${sql}`, params as any[]);
     return rows as Plan[];
   };
-  const L = READ_COLUMNS.customer_ledger.owner!;
+  const L = READ_COLUMNS.customer_ledger;
 
   it('the ledger of one customer: the customer\'s bills and receipts are read by (customer_id, ...) in all four branches of V3, the first page and every later one', async () => {
     const first = ledgerStatement(L, false);
@@ -737,7 +741,7 @@ describe('T-D18 EXPLAIN shows the indexes used by the statements of the derived 
   });
 
   it('a page of the audit log: the primary key (newest first, a range before the last id), and (table_name, row_id) for a table or a row', async () => {
-    const A = READ_COLUMNS.audit_log.owner!;
+    const A = READ_COLUMNS.audit_log;
     const keyOf = async (f: { beforeId: boolean; table: boolean; rowId: boolean }, params: unknown[]) => (await plan(auditStatement(A, f), params))[0];
     const everything = await keyOf({ beforeId: false, table: false, rowId: false }, [200]);
     expect([everything.type, everything.key]).toEqual(['index', 'PRIMARY']); // the key read backwards, stopping at the limit
@@ -751,14 +755,14 @@ describe('T-D18 EXPLAIN shows the indexes used by the statements of the derived 
   });
 
   it('the health lists read the newest runs by (ran_at) backwards, 30 rows at a time by default', async () => {
-    const c = (await plan(checkRunsStatement(READ_COLUMNS.check_runs.owner!), [30]))[0];
-    const b = (await plan(backupRunsStatement(READ_COLUMNS.backup_runs.owner!), [30]))[0];
+    const c = (await plan(checkRunsStatement(READ_COLUMNS.check_runs), [30]))[0];
+    const b = (await plan(backupRunsStatement(READ_COLUMNS.backup_runs), [30]))[0];
     expect([c.table, c.key]).toEqual(['c', 'ix_check_runs_at']); // the plan names the table by its alias
     expect([b.table, b.key]).toEqual(['b', 'ix_backup_runs_at']);
   });
 
   it('the cash book reads receipts and nothing else, with the range pushed down into both branches of V4; receipts has no index on paid_on or voided_on (D19), so each branch reads the table', async () => {
-    const p = await plan(dailyTotalsStatement(READ_COLUMNS.daily_totals.owner!), ['2026-10-01', '2026-10-31']);
+    const p = await plan(dailyTotalsStatement(READ_COLUMNS.daily_totals), ['2026-10-01', '2026-10-31']);
     const tables = p.filter((r) => r.table !== null && !r.table.startsWith('<'));
     expect(tables.map((r) => r.table)).toEqual(['receipts', 'receipts']);
     for (const r of tables) expect(r.Extra, 'the range is applied inside the branch').toMatch(/Using where/);
@@ -774,11 +778,11 @@ describe('T-D18 the query texts of the API are the files of db/queries, characte
   });
 
   it('the statements name their columns and take every value as a ?', () => {
-    const sql = ledgerStatement(READ_COLUMNS.customer_ledger.biller!, true);
+    const sql = ledgerStatement(READ_COLUMNS.customer_ledger, true);
     expect(sql).not.toMatch(/SELECT\s+\*/i);
     expect(sql.match(/\?/g)).toHaveLength(1 + 7 + 1); // the customer, the seven values of the order key, the limit
-    expect(dailyTotalsStatement(READ_COLUMNS.daily_totals.biller!).match(/\?/g)).toHaveLength(2);
-    expect(ledgerStatement(READ_COLUMNS.customer_ledger.biller!, false).match(/\?/g)).toHaveLength(2);
+    expect(dailyTotalsStatement(READ_COLUMNS.daily_totals).match(/\?/g)).toHaveLength(2);
+    expect(ledgerStatement(READ_COLUMNS.customer_ledger, false).match(/\?/g)).toHaveLength(2);
   });
 });
 

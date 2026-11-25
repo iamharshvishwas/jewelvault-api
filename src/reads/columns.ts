@@ -1,7 +1,9 @@
-// The columns a role reads of a resource (READ_COLUMNS of the permission matrix, A4), for the reads of this folder: a read names its columns and never uses SELECT *. A role that is not on the
-// resource's list reads nothing, whatever asked (the route's matrix row has refused it already; this is the second check, X0 item 2). Nothing the client sends is ever a column or table name (A11).
+// The columns a person reads of a resource (READ_COLUMNS of the permission matrix, A4), for the reads of this folder: a read names its columns and never uses SELECT *. A person whose grants do not
+// pass the resource's read row reads nothing, whatever asked (the route's matrix row has refused it already; this is the second check, X0 item 2). The grants are the ticks the session read for the
+// call (`auth.user.grants`, R4), never the role's name. Nothing the client sends is ever a column or table name (A11).
 import { JvError } from '../errors.js';
-import { READ_COLUMNS, type ReadResource } from '../permissions/matrix.js';
+import type { Grants } from '../permissions/grants.js';
+import { type ReadResource, readColumnsFor } from '../permissions/matrix.js';
 
 const IDENT = /^[a-z][a-z0-9_]*$/;
 
@@ -11,9 +13,8 @@ export function ident(name: string): string {
   return name;
 }
 
-export function readColumns(resource: ReadResource, role: string): readonly string[] {
-  const byRole = READ_COLUMNS[resource] as Partial<Record<string, readonly string[]>>;
-  const columns = Object.hasOwn(byRole, role) ? byRole[role] : undefined;
+export function readColumns(resource: ReadResource, grants: Grants): readonly string[] {
+  const columns = readColumnsFor(grants, resource);
   if (!columns) throw new JvError('JV_FORBIDDEN', 'You are not allowed to do this.');
   return columns;
 }

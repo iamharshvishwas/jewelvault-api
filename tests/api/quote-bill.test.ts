@@ -710,7 +710,7 @@ describe('T-D09 the matrix row of X7 (POST /v1/bills/quote: owner and biller)', 
 
   it('the route is registered through route() with the action of the row', () => {
     const r = world.app.routeTable.find((x) => x.action === 'fn:quote_bill');
-    expect(r).toMatchObject({ method: 'POST', url: '/v1/bills/quote', kind: 'matrix', roles: ['owner', 'biller'], mustChange: false });
+    expect(r).toMatchObject({ method: 'POST', url: '/v1/bills/quote', kind: 'matrix', access: { anyOf: ['bill_make'] }, mustChange: false });
   });
 
   it('no session is 401 JV_UNAUTHENTICATED, staff is 403 JV_FORBIDDEN, a user who must change the password is 403 JV_PASSWORD_CHANGE_REQUIRED, and none of them reads a piece', async () => {

@@ -14,6 +14,7 @@ import { limits } from '../../src/limits';
 import { MATRIX } from '../../src/permissions/matrix';
 import { route } from '../../src/permissions/route';
 import { SESSION_COOKIE, microsOfDbTimestamp, newTicket } from '../../src/permissions/session';
+import { TICK_KEYS } from '../../src/permissions/ticks';
 import { registerSyncRoutes } from '../../src/sync/routes';
 import { T0, type World, concreteUrl, makeWorld, registerStubs } from './cells';
 import { csrfHeaders, secret, testConfig } from './support';
@@ -517,8 +518,21 @@ describe('T-D25 me, logout and activity', () => {
     const u = await signIn('owner');
     const res = await inject('GET', '/v1/auth/me', { cookie: u.cookie });
     expect(res.statusCode).toBe(200);
+    // the access plan, R6: me also says what the person may do (tests/api/access-session.test.ts checks each field for every role); the owner holds every tick and reads every sync resource
+    const everySyncResource = Object.values(MATRIX).filter((r) => r.kind === 'read' && r.method === 'GET' && r.path.startsWith('/v1/sync/')).map((r) => r.path.slice('/v1/sync/'.length));
     expect(res.json()).toEqual({
-      user: { id: u.userId, email: u.email, full_name: expect.any(String), role: 'owner', must_change_password: false },
+      user: {
+        id: u.userId,
+        email: u.email,
+        full_name: expect.any(String),
+        role: 'owner',
+        must_change_password: false,
+        role_name: 'Owner',
+        permissions: [...TICK_KEYS],
+        is_super_admin: false,
+        access: createHash('sha256').update(JSON.stringify(['owner', TICK_KEYS, false])).digest('hex').slice(0, 16),
+        reads: everySyncResource,
+      },
       pricing_sha256: createHash('sha256').update(readFileSync(new URL('../../src/domain/pricing.ts', import.meta.url))).digest('hex'),
       idle_timeout_s: limits.sessionIdleMs / 1000,
       absolute_expires_at: u.res.json().absolute_expires_at,
@@ -720,9 +734,12 @@ describe('T-D14 clause: a login, a logout and a change-password each write exact
 // ------------------------------------------------------------------------------------------------ T-D06 and T-D15
 
 describe('T-D06 (HTTP half) a user cannot change their own role or active; no route could', () => {
-  it('no route updates users: none in the route table, and no row of the matrix is an edit of users', () => {
-    const writing = world.app.routeTable.filter((r) => r.kind !== 'token' && r.method !== 'GET' && /\/users\b/.test(r.url)); // the admin door (a token route) is the only way (A8)
-    expect(writing).toEqual([]);
+  // A8 CHANGED ON PURPOSE (access plan Task 14): this test said that no route updates users and that the admin door (a token route) is the only way. The way is the admin door, login and change-password for the
+  // person's own password, and now the Super Admin's five calls under /v1/super/people (never her own role or switch: tests/api/super-people.test.ts). Under /users there is still no route at all.
+  it('A8 now reads: the routes that write users are the admin door, login and change-password, and /v1/super/people: none is under /users, and no row of the matrix is an edit of users', () => {
+    const writing = world.app.routeTable.filter((r) => r.kind !== 'token' && r.method !== 'GET' && /\/(users|people)\b/.test(r.url));
+    expect(writing.map((r) => r.action).sort()).toEqual(['super:people.active', 'super:people.add', 'super:people.edit', 'super:people.reset', 'super:people.role']);
+    for (const r of writing) expect(r.url, `${r.method} ${r.url}`).toMatch(/^\/v1\/super\/people\b/);
     for (const [action, row] of Object.entries(MATRIX)) {
       if ('edit' in row && row.edit) expect(row.edit.table, action).not.toBe('users');
     }

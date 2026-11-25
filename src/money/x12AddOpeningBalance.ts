@@ -9,16 +9,16 @@
 //
 //   path     the customer (`p_customer_id`): a lower-case UUID, else 422 on `id`; no such customer is 404 JV_NOT_FOUND; an archived one is 409 JV_CUSTOMER_ARCHIVED (as X1 to X3 say).
 //   body     dues, fine_due, advance, fine_advance (each absent, null or a text at least 0: money with at most 2 decimals, silver in grams with at most 3; not all of them 0), as_of (required: the
-//            day the bill and the receipts are dated; Y8 as for every business date, so the owner may use any day up to and including today and never a future one). Nothing else.
+//            day the bill and the receipts are dated; Y8 as for every business date, so a caller who holds `back_date` may use any day up to and including today, one who does not only today, and nobody a future one). Nothing else.
 //   header   Idempotency-Key.
 //   answer   201 {bill, receipts, allocations}: `bill` is the opening bill (null when the call had neither dues nor fine due), `receipts` the opening advances in the order money, silver, and
-//            `allocations` the rows the rebalance made (an advance and dues of one customer net off), all in the wire format of the sync read of the caller's role.
+//            `allocations` the rows the rebalance made (an advance and dues of one customer net off), all in the wire format of the sync read, cut to the columns the caller's grants may read.
 //
 // THE RULES. Dues or fine due above 0 make the bill (one for both); an advance above 0 makes a `money` receipt, a fine advance above 0 a `fine_silver` receipt (so one call can save two). The walk-in
 // customer never holds an advance (K5, I10): an advance or a fine advance for it is 409 JV_NOT_ALLOWED naming the field and nothing is saved (not the bill either); opening DUES for the walk-in are
 // allowed, like any dues (the import loads them), and the walk-in is never rebalanced. A figure above the caps of S4 is refused by the parser, never by the CHECK.
 //
-// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a role other than the owner, an invalid body). Before the transaction, and so before the
+// ORDER OF WORK (X0). The route wrapper has already refused everything it can without a database (no session, a caller without `opening_balance`, an invalid body). Before the transaction, and so before the
 // key is claimed, the counter row of the `opening` series is made when the call will take a number (L3: ensureSeries). Then ONE transaction:
 //   1. the claim of the key (L5, the first statement), the role check again (X0 item 2), the stored answer if the key is a repeat (before any lock or date check);
 //   2. the customer row FOR UPDATE (X0 item 3), "exists, not archived", then ONE reading of the API clock: its date is the business day for Y8, its stamp is every stamp of the call (C4); the walk-in
@@ -63,7 +63,7 @@ export const addOpeningBalanceBody = wire
     advance: wire.amount.nullish(),
     /** the silver the customer had paid in advance, in grams (a `fine_silver` receipt) */
     fine_advance: wire.weight.nullish(),
-    /** the day the rows are dated: the cut-over day (Y8: any day up to today for the owner) */
+    /** the day the rows are dated: the cut-over day (Y8: any day up to today with `back_date`, today only without it) */
     as_of: wire.businessDate,
   })
   .check((ctx) => {
@@ -113,7 +113,7 @@ export async function addOpeningBalance(
   customerId: string,
   input: AddOpeningBalanceBody,
 ): Promise<{ value: AddOpeningBalanceResult; replayed: boolean }> {
-  const role = auth.user.role;
+  const grants = auth.user.grants;
   const by = auth.user.id;
   const ctx = contextOf(app, request, auth);
   const dues = toUnits(input.dues ?? '0.00', MONEY);
@@ -128,7 +128,7 @@ export async function addOpeningBalance(
   return withTx(ctx, async (tx) => {
     // 1. the claim, the role check, a repeat of the key
     const c = await claim(tx, { key, fn: 'add_opening_balance', route: ROUTE_NAME, pathIds: { id: customerId }, body: input });
-    assertMayCall(role, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
+    assertMayCall(grants, ACTION); // X0 item 2: after the claim, whose row the rollback removes when this refuses
     if (!c.first) return { value: c.result as AddOpeningBalanceResult, replayed: true };
 
     // 2. the customer row FOR UPDATE, then "exists and is not archived"; one reading of the clock after the lock
@@ -137,7 +137,7 @@ export async function addOpeningBalance(
     if (customer.archived_at !== null) throw new JvError('JV_CUSTOMER_ARCHIVED', 'This customer is archived. Bring the customer back before adding an opening balance.', { details: { customer_id: customer.id } });
     const now = app.clock.read();
     const at = now.timestamp;
-    const asOf = checkBillDate(input.as_of, now.date, role, 'as_of'); // Y8
+    const asOf = checkBillDate(input.as_of, now.date, grants, 'as_of'); // Y8
     const walkin = Number(customer.is_walkin) === 1;
     // K5: one row stands for strangers whose money must not pay each other's bills, so the walk-in never holds an advance (I10); its opening dues are fine
     if (walkin && (advance > 0n || fineAdvance > 0n)) {
@@ -191,9 +191,9 @@ export async function addOpeningBalance(
     });
 
     const value: AddOpeningBalanceResult = {
-      bill: billRow ? wireRow('bills', role, billRow) : null,
-      receipts: receipts.map((r) => wireRow('receipts', role, r)),
-      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', role, { ...a })),
+      bill: billRow ? wireRow('bills', grants, billRow) : null,
+      receipts: receipts.map((r) => wireRow('receipts', grants, r)),
+      allocations: rebalanced.allocations.map((a) => wireRow('receipt_allocations', grants, { ...a })),
     };
     await storeResult(tx, c.key, value);
     return { value, replayed: false };

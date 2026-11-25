@@ -3,8 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CATEGORIES, SUBCATEGORIES } from '../../src/edit/catalogue';
 import { DESIGNS } from '../../src/edit/designs';
 import { SKUS } from '../../src/edit/skus';
-import { MATRIX, READ_COLUMNS, WRITE_COLUMNS, writeFieldVerdict } from '../../src/permissions/matrix';
+import { NO_GRANTS } from '../../src/permissions/grants';
+import { READ_COLUMNS, WRITE_COLUMNS, mayCall, writeColumnsFor, writeFieldVerdict, type EditAction } from '../../src/permissions/matrix';
 import { timestampToWire } from '../../src/wire/format';
+import { BUILTIN_ROLES, builtinGrants } from './builtin-roles';
 import { type EditWorld, STAMP_WIRE, addDesign, addPiece, body, codeOf, dbRow, detailsOf, editWorld, patch, snapshot } from './edit-support';
 import { getPage } from './sync-support';
 
@@ -204,22 +206,24 @@ describe('T-D02 (API13 clause) WRITE_COLUMNS of categories and subcategories: D5
   // D5 (spec line 121): categories hold `name` (unique ignoring case), `prefix` (2 to 6 capitals or digits) and `active`; subcategories hold `category_id`, `name` (unique per category) and `active`.
   // A4 (spec line 165, row `categories`, `subcategories`): owner S, I, U; biller S; staff S, I. The prototype's catalogStore.ts adds a category with its prefix, adds a subcategory under a category,
   // renames a subcategory and removes one (in this design a removal is `active` = false: nothing is deleted, S7); it never renames a category's prefix or moves a subcategory.
-  const list = (action: keyof typeof WRITE_COLUMNS, role: 'owner' | 'staff') => [...((WRITE_COLUMNS[action] as Record<string, readonly string[]>)[role] ?? [])].sort();
+  const list = (action: EditAction, role: 'owner' | 'staff') => [...writeColumnsFor(action, builtinGrants(role))].sort();
+  /** The built-in roles that may call a row. */
+  const rolesOf = (action: EditAction) => BUILTIN_ROLES.filter((role) => mayCall(builtinGrants(role), action));
 
   it('an insert carries the columns a person types: the name and prefix of a category, the category and name of a subcategory; the owner and staff may insert (A4 `I`)', () => {
     expect(list('edit:categories.insert', 'owner')).toEqual(['name', 'prefix']);
     expect(list('edit:categories.insert', 'staff')).toEqual(['name', 'prefix']);
     expect(list('edit:subcategories.insert', 'owner')).toEqual(['category_id', 'name']);
     expect(list('edit:subcategories.insert', 'staff')).toEqual(['category_id', 'name']);
-    expect(MATRIX['edit:categories.insert'].roles).toEqual(['owner', 'staff']);
-    expect(MATRIX['edit:subcategories.insert'].roles).toEqual(['owner', 'staff']);
+    expect(rolesOf('edit:categories.insert')).toEqual(['owner', 'staff']);
+    expect(rolesOf('edit:subcategories.insert')).toEqual(['owner', 'staff']);
   });
 
   it('an update (A4 `U`, the owner only) renames and switches `active`; the prefix (the series of the design numbers, L3) and the category of a subcategory (the designs refer to the pair) never change', () => {
     expect(list('edit:categories.update', 'owner')).toEqual(['active', 'name']);
     expect(list('edit:subcategories.update', 'owner')).toEqual(['active', 'name']);
-    expect(MATRIX['edit:categories.update'].roles).toEqual(['owner']);
-    expect(MATRIX['edit:subcategories.update'].roles).toEqual(['owner']);
+    expect(rolesOf('edit:categories.update')).toEqual(['owner']);
+    expect(rolesOf('edit:subcategories.update')).toEqual(['owner']);
   });
 
   it('every column named is a column of D5 (read from READ_COLUMNS, which lists the table), and the lists are what the classification of an edit uses', () => {
@@ -229,28 +233,28 @@ describe('T-D02 (API13 clause) WRITE_COLUMNS of categories and subcategories: D5
       ['edit:subcategories.insert', 'subcategories'],
       ['edit:subcategories.update', 'subcategories'],
     ] as const) {
-      for (const role of ['owner', 'staff'] as const) for (const c of list(action, role)) expect(READ_COLUMNS[table].owner, `${action}.${c}`).toContain(c);
+      for (const role of ['owner', 'staff'] as const) for (const c of list(action, role)) expect(READ_COLUMNS[table], `${action}.${c}`).toContain(c);
     }
-    expect(writeFieldVerdict('edit:categories.update', 'owner', 'name')).toBe('allowed');
-    expect(writeFieldVerdict('edit:categories.update', 'owner', 'prefix')).toBe('forbidden');
-    expect(writeFieldVerdict('edit:categories.update', 'staff', 'name')).toBe('forbidden');
-    expect(writeFieldVerdict('edit:categories.update', 'owner', 'created_by')).toBe('unknown');
-    expect(writeFieldVerdict('edit:categories.update', 'owner', 'whatever')).toBe('unknown');
+    expect(writeFieldVerdict('edit:categories.update', builtinGrants('owner'), 'name')).toBe('allowed');
+    expect(writeFieldVerdict('edit:categories.update', builtinGrants('owner'), 'prefix')).toBe('forbidden');
+    expect(writeFieldVerdict('edit:categories.update', builtinGrants('staff'), 'name')).toBe('forbidden');
+    expect(writeFieldVerdict('edit:categories.update', builtinGrants('owner'), 'created_by')).toBe('unknown');
+    expect(writeFieldVerdict('edit:categories.update', builtinGrants('owner'), 'whatever')).toBe('unknown');
   });
 
   it('writeFieldVerdict: a real column that is not on the role\'s list is forbidden, a stamp or person column and a name that is no column are unknown (A5, S6, D22)', () => {
-    expect(writeFieldVerdict('edit:designs.update', 'staff', 'name')).toBe('allowed');
-    expect(writeFieldVerdict('edit:designs.update', 'staff', 'material')).toBe('forbidden');
-    expect(writeFieldVerdict('edit:designs.update', 'owner', 'material')).toBe('allowed');
-    expect(writeFieldVerdict('edit:designs.update', 'owner', 'design_no')).toBe('forbidden');
-    expect(writeFieldVerdict('edit:designs.update', 'owner', 'import_batch_id')).toBe('forbidden');
-    expect(writeFieldVerdict('edit:skus.update', 'owner', 'status')).toBe('forbidden');
-    expect(writeFieldVerdict('edit:skus.update', 'staff', 'archived_at')).toBe('forbidden');
-    for (const stamp of ['created_at', 'updated_at', 'created_by', 'updated_by', 'set_by', 'confirmed_by']) expect(writeFieldVerdict('edit:skus.update', 'owner', stamp), stamp).toBe('unknown');
-    expect(writeFieldVerdict('edit:skus.update', 'owner', 'colour')).toBe('unknown');
-    expect(writeFieldVerdict('edit:skus.update', 'owner', '__proto__')).toBe('unknown');
-    expect(writeFieldVerdict('edit:skus.update', 'owner', 'constructor')).toBe('unknown');
-    expect(writeFieldVerdict('edit:skus.update', 'nobody', 'notes')).toBe('forbidden');
+    expect(writeFieldVerdict('edit:designs.update', builtinGrants('staff'), 'name')).toBe('allowed');
+    expect(writeFieldVerdict('edit:designs.update', builtinGrants('staff'), 'material')).toBe('forbidden');
+    expect(writeFieldVerdict('edit:designs.update', builtinGrants('owner'), 'material')).toBe('allowed');
+    expect(writeFieldVerdict('edit:designs.update', builtinGrants('owner'), 'design_no')).toBe('forbidden');
+    expect(writeFieldVerdict('edit:designs.update', builtinGrants('owner'), 'import_batch_id')).toBe('forbidden');
+    expect(writeFieldVerdict('edit:skus.update', builtinGrants('owner'), 'status')).toBe('forbidden');
+    expect(writeFieldVerdict('edit:skus.update', builtinGrants('staff'), 'archived_at')).toBe('forbidden');
+    for (const stamp of ['created_at', 'updated_at', 'created_by', 'updated_by', 'set_by', 'confirmed_by']) expect(writeFieldVerdict('edit:skus.update', builtinGrants('owner'), stamp), stamp).toBe('unknown');
+    expect(writeFieldVerdict('edit:skus.update', builtinGrants('owner'), 'colour')).toBe('unknown');
+    expect(writeFieldVerdict('edit:skus.update', builtinGrants('owner'), '__proto__')).toBe('unknown');
+    expect(writeFieldVerdict('edit:skus.update', builtinGrants('owner'), 'constructor')).toBe('unknown');
+    expect(writeFieldVerdict('edit:skus.update', NO_GRANTS, 'notes')).toBe('forbidden');
   });
 });
 

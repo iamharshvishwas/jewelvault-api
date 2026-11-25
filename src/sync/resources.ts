@@ -5,7 +5,8 @@
 // columns a role may read are READ_COLUMNS of the matrix, never listed again here.
 //
 // The key is `id` except for settings (`setting_key`) and sku_private (`sku_id`) (C3); customer_balances is keyed by the customer's id. A UUID key is compared as a UUID, never as text (C3).
-import { MATRIX, type Action, type ReadResource } from '../permissions/matrix.js';
+import type { Grants } from '../permissions/grants.js';
+import { MATRIX, type Action, type ReadResource, mayCall } from '../permissions/matrix.js';
 import type { ColumnKind } from '../wire/format.js';
 
 /** The address of a resource: /v1/sync/<name>. The poll is /v1/sync/poll and is not a resource. */
@@ -35,7 +36,7 @@ export interface SyncResource {
   readonly counts: readonly string[];
   /** The figures of this resource are worked out by a second statement for the rows of the page (V1, V2). */
   readonly derived: Derived | null;
-  /** The resource is `settings`: a role that may not read every key reads the keys the matrix names for it. */
+  /** The resource is `settings`: a person who may not read every key reads the keys the matrix names for everyone (STAFF_SETTING_KEYS). */
   readonly keyList: boolean;
 }
 
@@ -126,3 +127,6 @@ const BY_NAME = new Map(SYNC_RESOURCES.map((r) => [r.name, r]));
 
 /** The resource of an address segment or a poll's name; undefined for anything else (a table name, a column, `poll`, a made-up word). Own names only: `constructor` is nothing. */
 export const resourceByName = (name: string): SyncResource | undefined => BY_NAME.get(name);
+
+/** R6: the names of the resources (as the poll names them, `daily-rates`) whose read row the grants pass, in the order of the matrix. `me` carries them as `reads`. */
+export const readableResourceNames = (g: Grants): string[] => SYNC_RESOURCES.filter((r) => mayCall(g, r.action)).map((r) => r.name);
