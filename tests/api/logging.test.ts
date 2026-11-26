@@ -103,6 +103,26 @@ describe('logging: cookies, authorization and password fields never reach the lo
     });
   });
 
+  it('redacts the mailbox password of the mail settings (JV_SMTP_PASSWORD, as DB_PASSWORD is) at the top, one, two and three levels down (defence in depth: a config or an environment is never logged)', async () => {
+    await withApp(async (app, sink) => {
+      const values = Array.from({ length: 4 }, (_, i) => secret(`smtp${i}`));
+      const [a, b, c, d] = values;
+      toyRoutes(app).post('/echo', async (req) => {
+        req.log.info({ JV_SMTP_PASSWORD: a, env: { JV_SMTP_PASSWORD: b, JV_SMTP_HOST: 'smtp.example.test' }, deep: { one: { JV_SMTP_PASSWORD: c } }, deeper: { two: { three: { JV_SMTP_PASSWORD: d } } } }, 'echo');
+        return { ok: true };
+      });
+      await app.inject({ method: 'POST', url: '/echo', headers: csrfHeaders(), payload: { email: 'owner@example.test' } });
+      const text = sink.text();
+      for (const v of values) expect(text, v).not.toContain(v);
+      const line = sink.lines().find((x) => x.msg === 'echo')!;
+      expect(line.JV_SMTP_PASSWORD).toBe('[Redacted]');
+      expect(line.env.JV_SMTP_PASSWORD).toBe('[Redacted]');
+      expect(line.deep.one.JV_SMTP_PASSWORD).toBe('[Redacted]');
+      expect(line.deeper.two.three.JV_SMTP_PASSWORD).toBe('[Redacted]');
+      expect(line.env.JV_SMTP_HOST).toBe('smtp.example.test'); // control: only the secret goes
+    });
+  });
+
   it('control: without the redact list the same line would carry the secret (the test can fail)', async () => {
     const { default: pino } = await import('pino');
     const sink = logSink();

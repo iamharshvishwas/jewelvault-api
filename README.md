@@ -32,3 +32,5 @@ The first accounts, and the Super Admin, are made in the terminal: `npm run admi
 
 The API itself: `src/server.ts` (the only place that reads the environment; the variable names are in `.env.example`, `.env` is ignored), `src/app.ts` (`buildApp({ config })` for `inject()` tests), `src/config.ts`, `src/logging.ts`, `src/clock.ts`. `npm run build` writes `dist/server.js`.
 
+Forgot password by e-mail (`POST /v1/auth/forgot-password`, `POST /v1/auth/reset-password`) needs the optional mail variables, all or none: `JV_SMTP_HOST`, `JV_SMTP_PORT`, `JV_SMTP_USER`, `JV_SMTP_PASSWORD`, `JV_MAIL_FROM` and `JV_RESET_LINK_BASE` (the website's reset page, https, no `#`); `JV_MAIL_OUTBOX_DIR` replaces the four `JV_SMTP_` ones for tests and the website's e2e lane only (each mail is written as a JSON file). Without them the API starts as before and the forgot route answers 503 `mail_not_set_up`. The routes, the limits, the error row of a failed send and the known limits are in the last entry of `docs/handoffs.md`.
+

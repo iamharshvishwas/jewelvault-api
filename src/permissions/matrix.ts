@@ -14,7 +14,8 @@
 //                   unknown field JV_INVALID_INPUT, nothing is silently ignored.
 //   HIDDEN_COLUMNS  the columns of a read table that no role reads, with the reason: tests/api/permissions-matrix.test.ts requires every column of every read table to be listed or hidden,
 //                   so a column added by a migration is decided and never exposed or hidden by chance.
-//   PUBLIC_ROUTES   the short list of routes that need no session (A1): /healthz, /readyz, the login and the photo read. TOKEN_DOORS: /admin/v1/* and /internal/jobs/*, each with its own token check.
+//   PUBLIC_ROUTES   the short list of routes that need no session (A1): /healthz, /readyz, the login, the two calls of a forgotten password (ask for a link by e-mail, set a new password with it) and the photo
+//                   read. TOKEN_DOORS: /admin/v1/* and /internal/jobs/*, each with its own token check.
 //   FIELD_RIGHTS    the field-level rules of section 10 (Z1, X8, Y8), each opened by one tick, asked by name, so that a service function never holds a role or a tick itself.
 //
 // There is no row for users, bills, bill_items, receipts or receipt_allocations as a direct edit: nobody writes them except through the service functions (A4, A8, D11, D13, K1). A path that
@@ -69,6 +70,7 @@ export const INTERNAL_TABLES: readonly string[] = [
   'sys_import_batches',
   'sys_job_runs',
   'sys_login_attempts',
+  'sys_password_resets',
   'sys_photo_copies',
   'design_photos',
   'roles',
@@ -213,18 +215,23 @@ export type EditAction = { [K in Action]: (typeof ROWS)[K] extends { edit: EditS
 
 // ------------------------------------------------------------------ the public routes and the token doors (A1)
 
-export type PublicName = 'health' | 'ready' | 'login' | 'photo-full' | 'photo-thumb';
+export type PublicName = 'health' | 'ready' | 'login' | 'forgot-password' | 'reset-password' | 'photo-full' | 'photo-thumb';
 
 export interface PublicRoute {
   readonly method: HttpMethod;
   readonly path: string;
 }
 
-/** No session is looked up for these (A1). The login is public because it is how a session starts; the photo read is public because the website's <img> carries no cookie (P3, O11). */
+/**
+ * No session is looked up for these (A1). The login is public because it is how a session starts; forgot-password and reset-password because they are for a person who cannot sign in (the mailed link
+ * is the proof, src/auth/resetRoutes.ts); the photo read is public because the website's <img> carries no cookie (P3, O11).
+ */
 export const PUBLIC_ROUTES: Readonly<Record<PublicName, PublicRoute>> = {
   health: { method: 'GET', path: '/healthz' },
   ready: { method: 'GET', path: '/readyz' },
   login: { method: 'POST', path: '/v1/auth/login' },
+  'forgot-password': { method: 'POST', path: '/v1/auth/forgot-password' },
+  'reset-password': { method: 'POST', path: '/v1/auth/reset-password' },
   'photo-full': { method: 'GET', path: '/v1/photos/:photo_id/full' },
   'photo-thumb': { method: 'GET', path: '/v1/photos/:photo_id/thumb' },
 };

@@ -152,9 +152,17 @@ describe('T-D02 the matrix file says what A4 and section 10 say', () => {
     for (const [a, r] of Object.entries(MATRIX)) if (/\/(bills|receipts)\b/.test(r.path)) expect(r.method === 'GET' || r.method === 'POST', a).toBe(true);
   });
 
-  it('the public routes are /healthz, /readyz, the login and the photo read (A1); the token doors are /admin/v1/ and /internal/jobs/', () => {
+  it('the public routes are /healthz, /readyz, the login, the two calls of a forgotten password and the photo read (A1); the token doors are /admin/v1/ and /internal/jobs/', () => {
     expect(Object.values(PUBLIC_ROUTES).map((p) => `${p.method} ${p.path}`).sort()).toEqual(
-      ['GET /healthz', 'GET /readyz', 'POST /v1/auth/login', 'GET /v1/photos/:photo_id/full', 'GET /v1/photos/:photo_id/thumb'].sort(),
+      [
+        'GET /healthz',
+        'GET /readyz',
+        'POST /v1/auth/login',
+        'POST /v1/auth/forgot-password',
+        'POST /v1/auth/reset-password',
+        'GET /v1/photos/:photo_id/full',
+        'GET /v1/photos/:photo_id/thumb',
+      ].sort(),
     );
     expect(Object.values(TOKEN_DOORS).map((d) => d.prefix).sort()).toEqual(['/admin/v1/', '/internal/jobs/']);
   });
@@ -412,9 +420,9 @@ async function catalogueProblems(c: Connection, database: string): Promise<strin
 }
 
 describe('T-D01 every table has a primary key and InnoDB', () => {
-  it('the migrated schema: all 28 tables (the 26 of the code, with the orders of FB-E1, the roles of 0012, and schema_migrations)', async () => {
+  it('the migrated schema: all 29 tables (the 28 of the code, with the orders of FB-E1, the roles of 0012, the reset links of 0013, and schema_migrations)', async () => {
     const [tables] = await conn.query<any[]>("SELECT COUNT(*) AS n FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", [scratch.database]);
-    expect(Number(tables[0].n)).toBe(28);
+    expect(Number(tables[0].n)).toBe(29);
     expect(await catalogueProblems(conn, scratch.database)).toEqual([]);
   });
 

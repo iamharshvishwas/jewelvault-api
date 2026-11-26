@@ -41,7 +41,7 @@ Date: Friday 16 October 2026 (aligned with spec **draft 5.2**; first written on 
 | Stock | `designs`, `design_photos`, `skus`, `sku_private` |
 | Customers and money | `customers`, `bills`, `bill_items`, `receipts`, `receipt_allocations` |
 | Records | `audit_log`, `check_runs`, `backup_runs` |
-| System (only the API touches them) | `sys_counters`, `sys_idempotency`, `sys_import_batches`, `sys_job_runs`, `sys_error_log`, `sys_login_attempts`, `sys_photo_copies`, and the runner's `schema_migrations` |
+| System (only the API touches them) | `sys_counters`, `sys_idempotency`, `sys_import_batches`, `sys_job_runs`, `sys_error_log`, `sys_login_attempts`, `sys_password_resets` (0013, the hashes of mailed reset links), `sys_photo_copies`, and the runner's `schema_migrations` |
 
 Reads and invariants (done 15 Oct, evening; the reads became queries with draft 5): V1 to V4 are query files; the figures in `s9-views.test.ts` were worked out by hand and the queries reproduce them; the one-customer form of V2 gives the same row as the form for everyone, for every customer. `runInvariants()` finds nothing in consistent data (also after the 8-client workload of s8, three seeds) and names the damaged row in each mutation test of `s10` (I1 to I7, I10, I13; damage that needs a dropped CHECK runs on its own throw-away database, as spec 12 says; a wrong V2, V3 or V4 is injected as the query text, `runInvariants(conn, { queries })`). On 30,000 bills the whole run took 1.8 seconds (`s11`).
 

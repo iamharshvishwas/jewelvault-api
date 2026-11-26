@@ -1313,7 +1313,8 @@ describe('A8', () => {
     return found;
   }
 
-  it('A8 now reads: the routes that write users are the admin door, login and change-password, and /v1/super/people (the test that pinned "no route updates users" is changed on purpose; the commit says why)', () => {
+  // changed on purpose again (forgot password by e-mail, Task 3): POST /v1/auth/reset-password writes the person's own password through a mailed link, with the statement of change-password (src/auth/resetRoutes.ts)
+  it('A8 now reads: the routes that write users are the admin door, login and change-password, the reset through a mailed link, and /v1/super/people (the test that pinned "no route updates users" is changed on purpose; the commit says why)', () => {
     // the route table: of everything that can write a login by its address, the session routes are the five of the Super Admin and nothing else; the rest is the admin door's
     const writes = w.world.app.routeTable.filter((r) => r.method !== 'GET' && /\/(users|people)\b/.test(r.url));
     const doorRoutes = writes.filter((r) => r.kind === 'token');
@@ -1326,12 +1327,13 @@ describe('A8', () => {
     for (const [action, row] of Object.entries(MATRIX)) if ('edit' in row && row.edit) expect(row.edit.table, action).not.toBe('users');
     for (const action of FIVE.map((f) => f.split(' ')[2])) expect(MATRIX[action as keyof typeof MATRIX], action).toMatchObject({ kind: 'super', access: { superAdmin: true } });
 
-    // the source: a statement that writes users is in the admin door, in change-password (the person's own password, nothing else) and in the five people calls of the Super Admin: nowhere else
+    // the source: a statement that writes users is in the admin door, in change-password and the reset through a mailed link (the person's own password, nothing else) and in the five people calls of the
+    // Super Admin: nowhere else
     const found = usersWriters();
     const door = Object.keys(found).filter((f) => f.startsWith(`src${'/'}admin${'/'}`));
     expect(door.length, 'the door has its statements').toBeGreaterThan(0);
-    expect(Object.keys(found).filter((f) => !door.includes(f)).sort()).toEqual(['src/auth/loginRoutes.ts', 'src/super/people.ts']);
-    for (const h of found['src/auth/loginRoutes.ts']) {
+    expect(Object.keys(found).filter((f) => !door.includes(f)).sort()).toEqual(['src/auth/loginRoutes.ts', 'src/auth/resetRoutes.ts', 'src/super/people.ts']);
+    for (const h of [...found['src/auth/loginRoutes.ts'], ...found['src/auth/resetRoutes.ts']]) {
       expect(h).toMatch(/SET\s+password_hash\s*=\s*\?,\s*must_change_password\s*=\s*0\s+WHERE\s+id\s*=\s*\?/i);
       expect(h).not.toMatch(/\b(role|active|email)\s*=/i);
     }

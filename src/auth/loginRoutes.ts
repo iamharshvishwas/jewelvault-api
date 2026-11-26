@@ -93,7 +93,7 @@ const actorOf = (auth: Auth) => ({ id: auth.user.id, role: auth.user.role });
 /** The characters of a password as U9 counts them (not bytes, not UTF-16 units). */
 const lengthOf = (password: string): number => [...password].length;
 
-interface LoginRow {
+export interface LoginRow {
   id: string;
   email: string;
   full_name: string;
@@ -107,7 +107,8 @@ interface LoginRow {
 // condition is the unique index (uq_users_email); the second, in the binary collation, drops every row that is not the same text.
 // RV1-11: the second condition compares the STORED e-mail in lower case too, so a user typed in by hand with capitals (phpMyAdmin, a repair; D1) can log in with its own spelling and with lower case,
 // while an accent or an invisible character is still another text. The admin door stores lower case, and so should any hand-made row (that line is in the handoff).
-const LOGIN_SQL = 'SELECT id, email, full_name, role, active, password_hash, must_change_password FROM users WHERE email = ? AND LOWER(email) COLLATE utf8mb4_bin = ?';
+// Forgot-password finds the login with this same statement (src/auth/resetRoutes.ts), so an e-mail that signs in is the e-mail that gets a link, and no other: one copy of the rule.
+export const FIND_LOGIN_SQL = 'SELECT id, email, full_name, role, active, password_hash, must_change_password FROM users WHERE email = ? AND LOWER(email) COLLATE utf8mb4_bin = ?';
 const LOCK_USER_SQL = 'SELECT password_hash, active FROM users WHERE id = ? FOR UPDATE';
 const SET_PASSWORD_SQL = 'UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?';
 
@@ -135,7 +136,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         const right =
           lengthOf(body.password) <= PASSWORD_MAX_LENGTH &&
           (await attempt.check(async () => {
-            found.user = (await withRead(afterWait(db, request, null), (r) => r.rows<LoginRow>(LOGIN_SQL, [email, email])))[0];
+            found.user = (await withRead(afterWait(db, request, null), (r) => r.rows<LoginRow>(FIND_LOGIN_SQL, [email, email])))[0];
             return passwords.verify(body.password, found.user ? found.user.password_hash : await passwords.dummyHash());
           }));
         const user = found.user;

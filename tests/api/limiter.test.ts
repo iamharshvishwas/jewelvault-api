@@ -327,7 +327,7 @@ describe('T-D24 (API09 clause) limiterOf(app): one limiter for an application, o
 });
 
 describe('T-D24 (API09 clause) the rows of A13 that live in memory are written down once', () => {
-  it('holds the figures of A13: admin door, the Super Admin\'s password (R9), job tick, change-password, photo upload, photo read and everything else', () => {
+  it('holds the figures of A13: admin door, the Super Admin\'s password (R9), job tick, change-password, photo upload, photo read, everything else, and the two of forgot-password', () => {
     expect(THROTTLES).toEqual({
       adminCalls: { limit: 10, windowMs: MINUTE },
       adminWrongInARow: 2,
@@ -342,6 +342,8 @@ describe('T-D24 (API09 clause) the rows of A13 that live in memory are written d
       photoReadPerAddress: { limit: 600, windowMs: MINUTE },
       photoReadUntrusted: { limit: 120, windowMs: SECOND },
       everything: { limit: 300, windowMs: MINUTE },
+      resetPerEmail: { limit: 3, windowMs: HOUR },
+      resetPerAddress: { limit: 10, windowMs: HOUR },
     });
     expect(Object.isFrozen(THROTTLES)).toBe(true);
   });
